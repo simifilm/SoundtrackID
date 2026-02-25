@@ -1,0 +1,26 @@
+# FIWI Filmmusik Configuration
+
+# Directories
+video_dir: "./videos"
+output_dir: "./output"
+
+# Audio
+sample_rate: 44100
+mono: true
+
+# Chunking
+chunk_duration: 10.0  # seconds
+overlap: 2.0          # seconds
+
+# Classification
+classifier_model: "dummy"
+confidence_threshold: 0.5
+
+# Aggregation
+gap_tolerance: 1.0  # seconds - max gap to merge chunks
+
+# Isolation
+isolator_model: "dummy"  # Options: dummy, htdemucs
+
+# Identification
+identification_api: "dummy"
