@@ -10,6 +10,9 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "pyyaml>=6.0",
+    "av>=10.0",
+    "scipy>=1.10",
+    "librosa>=0.10",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +23,18 @@ dev = [
 demucs = [
     "demucs>=4.0",
     "torch>=2.0",
+]
+hf = [
+    "transformers>=4.30",
+    "torch>=2.0",
+]
+shazam = [
+    "shazamio>=0.7",
+]
+web = [
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
+    "python-multipart>=0.0.6",
 ]
 
 [tool.hatch.build.targets.wheel]

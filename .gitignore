@@ -215,3 +215,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+tests/test_video.mp4
+output/
+.DS_Store

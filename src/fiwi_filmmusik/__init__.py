@@ -4,9 +4,12 @@ __version__ = "0.1.0"
 
 from fiwi_filmmusik.aggregator import ChunkAggregator
 from fiwi_filmmusik.chunker import AudioChunker
-from fiwi_filmmusik.classifiers import BaseClassifier, DummyClassifier
+from fiwi_filmmusik.classifiers import BaseClassifier, DummyClassifier, HuggingFaceClassifier
 from fiwi_filmmusik.config import Config, load_config
-from fiwi_filmmusik.detection import BaseMusicDetectionClient, DummyDetectionClient
+from fiwi_filmmusik.detection import (
+    BaseMusicDetectionClient,
+    ShazamDetectionClient,
+)
 from fiwi_filmmusik.isolators import BaseMusicIsolator, DummyIsolator
 from fiwi_filmmusik.loaders import VideoLoader
 from fiwi_filmmusik.models import AudioChunk, ClassificationResult, DetectionResult, MusicSegment
@@ -23,10 +26,11 @@ __all__ = [
     "AudioChunker",
     "BaseClassifier",
     "DummyClassifier",
+    "HuggingFaceClassifier",
     "BaseMusicIsolator",
     "DummyIsolator",
     "ChunkAggregator",
     "BaseMusicDetectionClient",
-    "DummyDetectionClient",
+    "ShazamDetectionClient",
     "Pipeline",
 ]

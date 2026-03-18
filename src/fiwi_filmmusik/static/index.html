@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIWI Filmmusik Analyzer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+  }
+
+  header {
+    max-width: 860px;
+    margin: 0 auto 2rem;
+  }
+
+  header h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #f8fafc;
+  }
+
+  header p {
+    color: #94a3b8;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+  }
+
+  #main {
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  /* ── Drop Zone ───────────────────────────────────────── */
+  #drop-zone {
+    border: 2px dashed #334155;
+    border-radius: 12px;
+    padding: 4rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: #1e293b;
+  }
+
+  #drop-zone.dragover {
+    border-color: #6366f1;
+    background: #1e1f3b;
+  }
+
+  #drop-zone svg {
+    width: 48px;
+    height: 48px;
+    color: #475569;
+    margin-bottom: 1rem;
+  }
+
+  #drop-zone .drop-label {
+    font-size: 1.1rem;
+    color: #cbd5e1;
+    margin-bottom: 0.5rem;
+  }
+
+  #drop-zone .drop-hint {
+    font-size: 0.8rem;
+    color: #64748b;
+  }
+
+  #file-input { display: none; }
+
+  /* ── Progress View ───────────────────────────────────── */
+  #progress-view { display: none; }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+    color: #64748b;
+    transition: color 0.2s;
+  }
+
+  .step.active { color: #e2e8f0; }
+  .step.done   { color: #4ade80; }
+
+  .step-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid #334155;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    transition: background 0.2s, border-color 0.2s;
+  }
+
+  .step.active .step-icon {
+    border-color: #6366f1;
+    background: #6366f1;
+    animation: pulse 1.2s infinite;
+  }
+
+  .step.done .step-icon {
+    border-color: #4ade80;
+    background: #4ade80;
+    color: #0f1117;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+  }
+
+  #waveform-container { margin-top: 1.25rem; display: none; }
+  #waveform-canvas { width: 100%; height: 80px; border-radius: 8px; display: block; border: 1px solid #1e293b; }
+  #error-area { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+
+
+  /* ── Results View ────────────────────────────────────── */
+  #results-view { display: none; }
+
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    margin-bottom: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .section-title:first-child { margin-top: 30px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+    border-bottom: 1px solid #1e293b;
+    font-size: 0.78rem;
+  }
+
+  tbody tr:hover td { background: #1e293b44; }
+
+  tbody td {
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid #1e293b22;
+    vertical-align: middle;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: #1e293b;
+    color: #94a3b8;
+  }
+
+  .badge.music { background: #312e81; color: #a5b4fc; }
+
+  .confidence-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 4px;
+    background: #1e293b;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: #6366f1;
+    border-radius: 2px;
+    transition: width 0.4s;
+  }
+
+  .bar-label { font-size: 0.75rem; color: #64748b; min-width: 2.5rem; text-align: right; }
+
+  audio { height: 28px; vertical-align: middle; }
+
+  button.reset-btn {
+    margin-top: 1.5rem;
+    padding: 0.5rem 1.25rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+
+  button.reset-btn:hover { background: #334155; color: #e2e8f0; }
+
+  .empty-note {
+    color: #475569;
+    font-size: 0.85rem;
+    padding: 0.75rem 0;
+  }
+
+  /* ── Settings Panel ───────────────────────────────────── */
+  #settings-panel {
+    margin-bottom: 1.25rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem 1.5rem;
+  }
+
+  .setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .setting-group label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+  }
+
+  .setting-group select,
+  .setting-group input[type="range"] {
+    background: #0f1117;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    outline: none;
+    cursor: pointer;
+    width: 100%;
+    appearance: auto;
+  }
+
+  .setting-group select:focus {
+    border-color: #6366f1;
+  }
+
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .range-row input[type="range"] {
+    flex: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+    accent-color: #6366f1;
+  }
+
+  #opt-threshold-val {
+    font-size: 0.82rem;
+    color: #94a3b8;
+    min-width: 2.5rem;
+    text-align: right;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: #94a3b8;
+    cursor: pointer;
+    margin-top: 0.25rem;
+  }
+
+  .checkbox-row input[type="checkbox"] {
+    accent-color: #6366f1;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>FIWI Filmmusik Analyzer</h1>
+  <p>Detect and identify music in film — drag in a video to get started.</p>
+</header>
+
+<div id="main">
+
+  <!-- Settings Panel -->
+  <div id="settings-panel">
+    <div class="setting-group">
+      <label for="opt-api">Detection API</label>
+      <select id="opt-api">
+        <option value="shazam">Shazam</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label for="opt-chunk">Chunk Duration</label>
+      <select id="opt-chunk">
+        <option value="5">5 seconds</option>
+        <option value="10" selected>10 seconds</option>
+        <option value="15">15 seconds</option>
+        <option value="20">20 seconds</option>
+        <option value="30">30 seconds</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label for="opt-threshold">Sensitivity</label>
+      <div class="range-row">
+        <input type="range" id="opt-threshold" min="0" max="100" value="20">
+        <span id="opt-threshold-val">20%</span>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label for="opt-max-seg">Max Segment to API</label>
+      <select id="opt-max-seg">
+        <option value="10" selected>10 seconds</option>
+        <option value="15">15 seconds</option>
+        <option value="30">30 seconds</option>
+        <option value="60">60 seconds</option>
+        <option value="0">No limit</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label>Export</label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="opt-csv">
+        CSV (JSON always written)
+      </label>
+    </div>
+  </div>
+
+  <!-- Drop Zone -->
+  <div id="drop-zone">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+    </svg>
+    <p class="drop-label">Drop a video file here</p>
+    <p class="drop-hint">or click to browse — .mp4, .mov, .avi accepted</p>
+    <input type="file" id="file-input" accept=".mp4,.mov,.avi,video/*">
+  </div>
+
+  <!-- Progress View -->
+  <div id="progress-view">
+    <div class="steps" id="steps-list">
+      <div class="step" data-step="loading">
+        <div class="step-icon">1</div><span>Loading audio</span>
+      </div>
+      <div class="step" data-step="classifying">
+        <div class="step-icon">2</div><span>Classifying chunks</span>
+        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+      </div>
+      <div class="step" data-step="aggregating">
+        <div class="step-icon">3</div><span>Aggregating segments</span>
+        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+      </div>
+      <div class="step" data-step="detecting">
+        <div class="step-icon">4</div><span>Identifying music</span>
+        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+      </div>
+      <div class="step" data-step="writing">
+        <div class="step-icon">5</div><span>Writing results</span>
+        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+      </div>
+    </div>
+    <div id="waveform-container">
+      <canvas id="waveform-canvas" height="80"></canvas>
+    </div>
+    <div id="error-area"></div>
+  </div>
+
+  <!-- Results View -->
+  <div id="results-view">
+    <p class="section-title">Segments</p>
+    <table id="segments-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Start</th><th>Duration</th><th>Audio</th>
+        </tr>
+      </thead>
+      <tbody id="segments-body"></tbody>
+    </table>
+
+    <p class="section-title">Identifications</p>
+    <table id="idents-table">
+      <thead>
+        <tr>
+          <th>Segment</th><th>Provider</th><th>Title</th><th>Artist</th><th>Album</th>
+        </tr>
+      </thead>
+      <tbody id="idents-body"></tbody>
+    </table>
+
+    <button class="reset-btn" id="reset-btn">Analyze another file</button>
+  </div>
+
+</div>
+
+<script>
+const dropZone        = document.getElementById('drop-zone');
+const fileInput       = document.getElementById('file-input');
+const settingsPanel   = document.getElementById('settings-panel');
+const progressView    = document.getElementById('progress-view');
+const resultsView     = document.getElementById('results-view');
+const waveformContainer = document.getElementById('waveform-container');
+const waveformCanvas  = document.getElementById('waveform-canvas');
+const errorArea       = document.getElementById('error-area');
+const segmentsBody    = document.getElementById('segments-body');
+const identsBody      = document.getElementById('idents-body');
+const resetBtn        = document.getElementById('reset-btn');
+
+// ── Settings wiring ───────────────────────────────────────────────────────────
+document.getElementById('opt-threshold').addEventListener('input', function() {
+  document.getElementById('opt-threshold-val').textContent = this.value + '%';
+});
+
+// ── Drag & Drop ──────────────────────────────────────────────────────────────
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) startAnalysis(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) startAnalysis(fileInput.files[0]);
+});
+
+// ── Steps helper ─────────────────────────────────────────────────────────────
+const STEP_ORDER = ['loading', 'classifying', 'aggregating', 'detecting', 'writing'];
+let currentStep = null;
+
+function activateStep(stepName) {
+  if (currentStep === stepName) return;
+  // Mark previous steps done
+  if (currentStep) {
+    const prev = document.querySelector(`.step[data-step="${currentStep}"]`);
+    if (prev) { prev.classList.remove('active'); prev.classList.add('done'); prev.querySelector('.step-icon').textContent = '✓'; const d = prev.querySelector('.step-detail'); if (d) d.textContent = ''; }
+  }
+  currentStep = stepName;
+  const el = document.querySelector(`.step[data-step="${stepName}"]`);
+  if (el) el.classList.add('active');
+}
+
+function markAllDone() {
+  document.querySelectorAll('.step').forEach(el => {
+    el.classList.remove('active');
+    el.classList.add('done');
+    el.querySelector('.step-icon').textContent = '✓';
+  });
+}
+
+function updateStepDetail(stepName, detail) {
+  const el = document.querySelector(`.step[data-step="${stepName}"] .step-detail`);
+  if (el) el.textContent = detail;
+}
+
+// ── Waveform ──────────────────────────────────────────────────────────────────
+let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null;
+
+function redrawWaveform(canvas) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth;
+  const H = canvas.height;
+  canvas.width = W;
+
+  const n = wfSamples.length;
+  const barW = W / n;
+
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * wfDuration;
+    // Determine color based on chunk classification
+    let color = '#141e2b'; // unprocessed
+    for (const c of wfChunks) {
+      if (t >= c.start && t < c.end) {
+        color = c.isMusic ? '#6366f1' : '#1e293b';
+        break;
+      }
+    }
+    // If within current progress edge
+    if (wfCurrentEnd !== null && t < wfCurrentEnd) {
+      // Already colored above; draw edge line at boundary
+    }
+    const barH = Math.max(1, wfSamples[i] * H);
+    const x = i * barW;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, (H - barH) / 2, Math.max(1, barW - 0.5), barH);
+  }
+
+  // Draw separator lines between chunks (gap color = page bg #0f1117)
+  for (const c of wfChunks) {
+    const x = (c.end / wfDuration) * W;
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(x - 0.5, 0, 1, H);
+  }
+
+  // Draw leading progress edge line
+  if (wfCurrentEnd !== null) {
+    const x = (wfCurrentEnd / wfDuration) * W;
+    ctx.fillStyle = '#818cf8';
+    ctx.fillRect(x - 1, 0, 1, H);
+  }
+}
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+function startAnalysis(file) {
+  // Reset state
+  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null;
+  waveformContainer.style.display = 'none';
+  errorArea.style.display = 'none';
+  errorArea.textContent = '';
+  segmentsBody.innerHTML = '';
+  identsBody.innerHTML = '';
+  currentStep = null;
+  document.querySelectorAll('.step').forEach(el => {
+    el.classList.remove('active', 'done');
+    el.querySelector('.step-icon').textContent = el.closest('[data-step]')
+      ? (STEP_ORDER.indexOf(el.closest('[data-step]').dataset.step) + 1).toString()
+      : '';
+  });
+  // Re-number icons cleanly
+  STEP_ORDER.forEach((s, i) => {
+    const icon = document.querySelector(`.step[data-step="${s}"] .step-icon`);
+    if (icon) icon.textContent = i + 1;
+    const detail = document.querySelector(`.step[data-step="${s}"] .step-detail`);
+    if (detail) detail.textContent = '';
+  });
+
+  dropZone.style.display = 'none';
+  progressView.style.display = 'block';
+  resultsView.style.display  = 'none';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('api', document.getElementById('opt-api').value);
+  formData.append('chunk_duration', document.getElementById('opt-chunk').value);
+  formData.append('threshold', document.getElementById('opt-threshold').value / 100);
+  formData.append('max_segment', document.getElementById('opt-max-seg').value);
+  formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
+
+  fetch('/analyze', { method: 'POST', body: formData })
+    .then(res => {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop(); // keep incomplete chunk
+          parts.forEach(part => {
+            if (part.startsWith('data: ')) {
+              try {
+                const ev = JSON.parse(part.slice(6));
+                handleEvent(ev);
+              } catch (_) {}
+            }
+          });
+          pump();
+        });
+      }
+      pump();
+    })
+    .catch(err => { errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
+}
+
+const CHUNK_RE = /(\d+\.?\d*)s\s*-\s*(\d+\.?\d*)s:\s*(MUSIC|-+)/;
+
+function handleEvent(ev) {
+  const { step, detail, results } = ev;
+
+  if (step === 'waveform') {
+    wfSamples = ev.samples;
+    wfDuration = ev.duration;
+    waveformContainer.style.display = 'block';
+    redrawWaveform(waveformCanvas);
+    return;
+  }
+
+  if (step === 'done') {
+    wfCurrentEnd = null;
+    if (wfSamples) redrawWaveform(waveformCanvas);
+    markAllDone();
+    showResults(results);
+    return;
+  }
+
+  if (step === 'error') {
+    errorArea.textContent = 'ERROR: ' + detail;
+    errorArea.style.display = 'block';
+    return;
+  }
+
+  activateStep(step);
+  updateStepDetail(step, detail ? detail.trim() : '');
+
+  if (step === 'classifying' && detail) {
+    const m = detail.match(CHUNK_RE);
+    if (m) {
+      const start = parseFloat(m[1]);
+      const end = parseFloat(m[2]);
+      const isMusic = m[3] === 'MUSIC';
+      wfChunks.push({ start, end, isMusic });
+      wfCurrentEnd = end;
+      if (wfSamples) redrawWaveform(waveformCanvas);
+    }
+  }
+}
+
+// ── Download helpers ──────────────────────────────────────────────────────────
+function triggerDownload(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+function buildCSV(results) {
+  const header = ['segment_id','start','duration','conditioning','confidence','provider','title','artist','album'];
+  const identMap = {};
+  (results.identifications || []).forEach(id => { identMap[id.segment_id] = id; });
+  const rows = (results.segments || []).map(seg => {
+    const id = identMap[seg.id] || {};
+    return [seg.id, seg.start, seg.duration, seg.conditioning ?? '', seg.confidence ?? '',
+            id.provider ?? '', id.title ?? '', id.artist ?? '', id.album ?? ''];
+  });
+  return [header, ...rows]
+    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+}
+
+// ── Results ───────────────────────────────────────────────────────────────────
+function fmt(s) { return s == null ? '—' : s; }
+function fmtTime(secs) {
+  const m = Math.floor(secs / 60);
+  const sec = (secs % 60).toFixed(1);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+function showResults(results) {
+  if (!results) {
+    errorArea.textContent = 'ERROR: server sent done event without results data';
+    errorArea.style.display = 'block';
+    return;
+  }
+  resultsView.style.display  = 'block';
+
+  const segs = results.segments || [];
+  const idents = results.identifications || [];
+
+  // Segments
+  if (segs.length === 0) {
+    segmentsBody.innerHTML = '<tr><td colspan="4" class="empty-note">No music segments detected.</td></tr>';
+  } else {
+    segs.forEach(seg => {
+      const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
+      const audioUrl = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(seg.audio_file.split('/').pop())}`;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><span class="badge music">${seg.id}</span></td>
+        <td>${fmtTime(seg.start)}</td>
+        <td>${fmtTime(seg.duration)}</td>
+        <td><audio controls src="${audioUrl}"></audio></td>`;
+      segmentsBody.appendChild(tr);
+    });
+  }
+
+  // Identifications
+  if (idents.length === 0) {
+    identsBody.innerHTML = '<tr><td colspan="5" class="empty-note">No identifications found.</td></tr>';
+  } else {
+    idents.forEach(id => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><span class="badge music">${fmt(id.segment_id)}</span></td>
+        <td><span class="badge">${fmt(id.provider)}</span></td>
+        <td>${fmt(id.title)}</td>
+        <td>${fmt(id.artist)}</td>
+        <td>${fmt(id.album)}</td>`;
+      identsBody.appendChild(tr);
+    });
+  }
+
+  // Auto-download exports
+  const stem = (results.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  triggerDownload(JSON.stringify(results, null, 2), stem + '_results.json', 'application/json');
+  if (document.getElementById('opt-csv').checked) {
+    triggerDownload(buildCSV(results), stem + '_results.csv', 'text/csv');
+  }
+}
+
+resetBtn.addEventListener('click', () => {
+  dropZone.style.display = 'block';
+  progressView.style.display = 'none';
+  resultsView.style.display = 'none';
+  fileInput.value = '';
+});
+</script>
+</body>
+</html>
