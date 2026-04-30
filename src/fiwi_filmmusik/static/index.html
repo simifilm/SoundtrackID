@@ -127,7 +127,10 @@
   }
 
   #waveform-container { margin-top: 1.25rem; display: none; }
-  #waveform-canvas { width: 100%; height: 80px; border-radius: 8px; display: block; border: 1px solid #1e293b; }
+  #waveform-canvas { width: 100%; height: 80px; border-radius: 8px 8px 0 0; display: block; border: 1px solid #1e293b; border-bottom: none; }
+  .prog-bar { height: 4px; background: #1e293b; overflow: hidden; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b; }
+  .prog-bar:last-child { border-radius: 0 0 8px 8px; }
+  .prog-fill { height: 100%; width: 0%; background: #6366f1; transition: width 0.4s ease; }
   #error-area { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
 
 
@@ -444,6 +447,7 @@
     </div>
     <div id="waveform-container">
       <canvas id="waveform-canvas" height="80"></canvas>
+      <div class="prog-bar"><div class="prog-fill" id="detect-fill"></div></div>
     </div>
     <div id="error-area"></div>
   </div>
@@ -474,6 +478,8 @@ const progressView    = document.getElementById('progress-view');
 const resultsView     = document.getElementById('results-view');
 const waveformContainer = document.getElementById('waveform-container');
 const waveformCanvas  = document.getElementById('waveform-canvas');
+const detectFill      = document.getElementById('detect-fill');
+let identFarthestEnd  = 0;
 const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
 const resetBtn        = document.getElementById('reset-btn');
@@ -530,8 +536,10 @@ function updateStepDetail(stepName, detail) {
   if (el) el.textContent = detail;
 }
 
+
 // ── Waveform ──────────────────────────────────────────────────────────────────
-let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null;
+let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null, wfIdentified = [];
+let detectingInitialized = false;
 
 function redrawWaveform(canvas) {
   const ctx = canvas.getContext('2d');
@@ -542,19 +550,26 @@ function redrawWaveform(canvas) {
   const n = wfSamples.length;
   const barW = W / n;
 
+  // Merge overlapping classifier chunks to get clean music ranges
+  const mergedMusic = [];
+  for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
+    const last = mergedMusic[mergedMusic.length - 1];
+    if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
+    else { mergedMusic.push({ start: c.start, end: c.end }); }
+  }
+
+  // ── Waveform bars ────────────────────────────────────────
   for (let i = 0; i < n; i++) {
     const t = (i / n) * wfDuration;
-    // Determine color based on chunk classification
     let color = '#141e2b'; // unprocessed
     for (const c of wfChunks) {
-      if (t >= c.start && t < c.end) {
-        color = c.isMusic ? '#6366f1' : '#1e293b';
-        break;
-      }
+      if (!c.isMusic && t >= c.start && t < c.end) { color = '#1e293b'; break; }
     }
-    // If within current progress edge
-    if (wfCurrentEnd !== null && t < wfCurrentEnd) {
-      // Already colored above; draw edge line at boundary
+    for (const r of mergedMusic) {
+      if (t >= r.start && t < r.end) { color = '#6366f1'; break; }
+    }
+    for (const r of wfIdentified) {
+      if (t >= r.start && t < r.end) { color = '#4ade80'; break; }
     }
     const barH = Math.max(1, wfSamples[i] * H);
     const x = i * barW;
@@ -562,14 +577,25 @@ function redrawWaveform(canvas) {
     ctx.fillRect(x, (H - barH) / 2, Math.max(1, barW - 0.5), barH);
   }
 
-  // Draw separator lines between chunks (gap color = page bg #0f1117)
+  // ── Separators ───────────────────────────────────────────
   for (const c of wfChunks) {
     const x = (c.end / wfDuration) * W;
     ctx.fillStyle = '#0f1117';
     ctx.fillRect(x - 0.5, 0, 1, H);
   }
 
-  // Draw leading progress edge line
+  // ── 30s tick marks ───────────────────────────────────────
+  ctx.fillStyle = '#334155';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  for (let t = 30; t < wfDuration; t += 30) {
+    const x = (t / wfDuration) * W;
+    ctx.fillRect(x - 0.5, H - 8, 1, 8);
+    const label = t >= 60 ? `${Math.floor(t/60)}m${t%60?String(t%60).padStart(2,'0')+'s':''}` : `${t}s`;
+    ctx.fillText(label, x, H - 10);
+  }
+
+  // ── Progress edge ────────────────────────────────────────
   if (wfCurrentEnd !== null) {
     const x = (wfCurrentEnd / wfDuration) * W;
     ctx.fillStyle = '#818cf8';
@@ -580,7 +606,10 @@ function redrawWaveform(canvas) {
 // ── Analysis ──────────────────────────────────────────────────────────────────
 function startAnalysis(file) {
   // Reset state
-  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null;
+  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null; wfIdentified = [];
+  detectingInitialized = false;
+  identFarthestEnd = 0;
+  detectFill.style.width = '0%';
   waveformContainer.style.display = 'none';
   errorArea.style.display = 'none';
   errorArea.textContent = '';
@@ -653,9 +682,23 @@ function handleEvent(ev) {
     return;
   }
 
+  if (step === 'identified') {
+    const d = JSON.parse(detail);
+    wfIdentified.push({ start: d.start, end: d.end });
+    identFarthestEnd = Math.max(identFarthestEnd, d.end);
+    if (wfDuration > 0) detectFill.style.width = (identFarthestEnd / wfDuration * 100) + '%';
+    if (wfSamples) redrawWaveform(waveformCanvas);
+    return;
+  }
+
   if (step === 'done') {
     wfCurrentEnd = null;
+    wfIdentified = (results.cues || [])
+      .filter(c => c.title)
+      .map(c => ({ start: c.start, end: c.start + c.duration }));
     if (wfSamples) redrawWaveform(waveformCanvas);
+    detectFill.style.width = '100%';
+    setTimeout(() => { document.querySelector('.prog-bar').style.display = 'none'; }, 400);
     markAllDone();
     showResults(results);
     return;
@@ -668,7 +711,25 @@ function handleEvent(ev) {
   }
 
   activateStep(step);
-  updateStepDetail(step, detail ? detail.trim() : '');
+  if (step === 'detecting') {
+    if (!detectingInitialized) {
+      detectingInitialized = true;
+      identFarthestEnd = 0;
+      detectFill.style.width = '0%';
+    }
+    if (detail) {
+      const m = detail.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);
+      if (m) {
+        detectFill.style.width = (parseInt(m[1]) / parseInt(m[2]) * 100) + '%';
+        const label = m[3].includes('no match') ? 'No match' : m[3].replace(/\s*–\s*/, ' – ');
+        updateStepDetail(step, label);
+      } else {
+        updateStepDetail(step, detail.trim());
+      }
+    }
+  } else if (step !== 'classifying') {
+    updateStepDetail(step, detail ? detail.trim() : '');
+  }
 
   if (step === 'classifying' && detail) {
     const m = detail.match(CHUNK_RE);
@@ -678,7 +739,9 @@ function handleEvent(ev) {
       const isMusic = m[3] === 'MUSIC';
       wfChunks.push({ start, end, isMusic });
       wfCurrentEnd = end;
+      updateStepDetail(step, isMusic ? 'Music' : 'No music');
       if (wfSamples) redrawWaveform(waveformCanvas);
+      if (wfDuration > 0) detectFill.style.width = (end / wfDuration * 100) + '%';
     }
   }
 }

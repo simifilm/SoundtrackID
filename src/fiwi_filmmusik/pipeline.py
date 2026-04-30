@@ -218,7 +218,7 @@ class Pipeline:
         for chunk in self.chunker.chunk(audio, sample_rate):
             result = self.classifier.classify(chunk)
             status = "MUSIC" if result.is_music else "-----"
-            detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status} ({result.confidence * 100:.1f}%)"
+            detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
             print(f"  {detail}")
             progress("classifying", detail)
             classification_results.append(result)
@@ -227,17 +227,21 @@ class Pipeline:
         segments = self.aggregator.aggregate(classification_results, audio, sample_rate)
         progress("aggregating", f"Found {len(segments)} music segment(s)")
 
-        progress("detecting", "Isolating and detecting music...")
-        detection_results: list[tuple[MusicSegment, DetectionResult]] = []
-        for i, segment in enumerate(segments):
-            seg_detail = f"Segment {i + 1}/{len(segments)}: {segment.start_time:.1f}s - {segment.end_time:.1f}s"
-            print(f"  {seg_detail}")
-            progress("detecting", seg_detail)
+        # Pre-compute total number of detection chunks so progress is meaningful
+        total_chunks = 0
+        for segment in segments:
+            if max_segment_duration:
+                max_samples = int(max_segment_duration * segment.sample_rate)
+                total_chunks += max(1, -(-len(segment.audio) // max_samples))
+            else:
+                total_chunks += 1
 
-            # Isolate music (remove vocals if using DemucsIsolator)
+        progress("detecting", f"Identifying {total_chunks} chunk(s)...")
+        detection_results: list[tuple[MusicSegment, DetectionResult]] = []
+        chunk_idx = 0
+        for segment in segments:
             seg_audio = self.isolator.isolate(segment.audio, segment.sample_rate)
 
-            # Split into chunks for API detection (or treat whole segment as one chunk)
             if max_segment_duration:
                 max_samples = int(max_segment_duration * segment.sample_rate)
                 chunk_audios = [
@@ -248,6 +252,7 @@ class Pipeline:
                 chunk_audios = [seg_audio]
 
             for ci, chunk_audio in enumerate(chunk_audios):
+                chunk_idx += 1
                 chunk_start = segment.start_time + ci * (max_segment_duration or 0)
                 chunk_end = chunk_start + len(chunk_audio) / segment.sample_rate
                 chunk_seg = MusicSegment(
@@ -258,15 +263,18 @@ class Pipeline:
                 )
                 detection = self.detection_client.detect(chunk_seg)
                 if detection.title:
-                    det_detail = f"Detected: {detection.title} - {detection.artist}"
-                    print(f"    {det_detail}")
+                    det_detail = f"[{chunk_idx}/{total_chunks}] {detection.title} – {detection.artist}"
+                    print(f"  {det_detail}")
                     progress("detecting", det_detail)
+                    progress("identified", json.dumps({"start": round(chunk_start, 3), "end": round(chunk_end, 3)}))
                 else:
-                    progress("detecting", "No match found")
+                    no_match = f"[{chunk_idx}/{total_chunks}] {chunk_start:.0f}s–{chunk_end:.0f}s: no match"
+                    print(f"  {no_match}")
+                    progress("detecting", no_match)
                 detection_results.append((chunk_seg, detection))
 
         found = sum(1 for _, d in detection_results if d.title)
-        progress("detecting", f"{found}/{len(segments)} identified")
+        progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
         return self.output_writer.write(video_path, detection_results)
