@@ -96,13 +96,31 @@ class ResultsOutput:
     ID: str | None = None
     fiwi_id: str | None = None
 
+    def _build_cues(self) -> list[dict[str, Any]]:
+        ident_map = {id_.segment_id: id_ for id_ in self.identifications}
+        cues = []
+        for seg in self.segments:
+            ident = ident_map.get(seg.id)
+            cues.append({
+                "segment_id": seg.id,
+                "start": seg.start,
+                "duration": seg.duration,
+                "conditioning": seg.conditioning,
+                "audio_file": seg.audio_file,
+                "confidence": seg.confidence,
+                "provider": ident.provider if ident else None,
+                "title": ident.title if ident else None,
+                "artist": ident.artist if ident else None,
+                "album": ident.album if ident else None,
+            })
+        return cues
+
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "ID": self.ID,
             "fiwi_id": self.fiwi_id,
             "source": self.source,
-            "segments": [seg.to_dict() for seg in self.segments],
-            "identifications": [ident.to_dict() for ident in self.identifications],
+            "cues": self._build_cues(),
         }
         return result
 

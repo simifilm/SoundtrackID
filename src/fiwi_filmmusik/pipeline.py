@@ -21,6 +21,49 @@ from fiwi_filmmusik.models import (
 )
 
 
+def _det_key(det: DetectionResult) -> tuple | None:
+    return (det.title, det.artist, det.metadata.get("album")) if det.title else None
+
+
+def _group_detections(
+    results: list[tuple[MusicSegment, DetectionResult]],
+    gap_tolerance_s: float = 30.0,
+) -> list[list[tuple[MusicSegment, DetectionResult]]]:
+    """Group detection results into cue-level blocks.
+
+    Pass 1 — consecutive same-key runs (None==None so unidentified also merge).
+    Pass 2 — bridge unidentified gaps ≤ gap_tolerance_s between identical tracks.
+    """
+    # Pass 1: consecutive same-key grouping
+    groups: list[list[tuple[MusicSegment, DetectionResult]]] = []
+    for item in results:
+        key = _det_key(item[1])
+        if groups and key == _det_key(groups[-1][-1][1]):
+            groups[-1].append(item)
+        else:
+            groups.append([item])
+
+    # Pass 2: bridge short unidentified gaps between the same identified track
+    i = 1
+    while i < len(groups) - 1:
+        prev, curr, nxt = groups[i - 1], groups[i], groups[i + 1]
+        gap_key = _det_key(curr[0][1])
+        prev_key = _det_key(prev[0][1])
+        if (
+            gap_key is None
+            and prev_key is not None
+            and prev_key == _det_key(nxt[0][1])
+            and sum(seg.end_time - seg.start_time for seg, _ in curr) <= gap_tolerance_s
+        ):
+            groups[i - 1] = prev + curr + nxt
+            groups.pop(i + 1)
+            groups.pop(i)
+        else:
+            i += 1
+
+    return groups
+
+
 class OutputWriter:
     """Handles writing detection results to disk."""
 
@@ -36,7 +79,8 @@ class OutputWriter:
     ) -> ResultsOutput:
         """Write detection results to disk.
 
-        Creates:
+        Consecutive detections with the same identification are concatenated
+        into a single WAV file. Creates:
         - output_dir/<video_name>/results.json
         - output_dir/<video_name>/segments/seg_001.wav
         """
@@ -45,48 +89,45 @@ class OutputWriter:
         segments_dir = video_output_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
 
+        groups = _group_detections(results)
+
         segment_outputs: list[SegmentOutput] = []
         identification_outputs: list[IdentificationOutput] = []
 
-        for i, (segment, detection) in enumerate(results):
+        for i, group in enumerate(groups):
             segment_id = f"seg_{i + 1:03d}"
             audio_filename = f"{segment_id}.wav"
             audio_path = segments_dir / audio_filename
 
-            # Write segment audio to WAV
-            audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(audio_path, segment.sample_rate, audio_int16)
+            combined_audio = np.concatenate([seg.audio for seg, _ in group])
+            sample_rate = group[0][0].sample_rate
+            audio_int16 = (np.clip(combined_audio, -1.0, 1.0) * 32767).astype(np.int16)
+            wavfile.write(audio_path, sample_rate, audio_int16)
 
-            # Calculate confidence from classification (average would need to be passed through)
-            # For now, use detection confidence or 1.0 if detected
-            confidence = detection.confidence if detection.title else 0.5
+            first_seg, last_seg = group[0][0], group[-1][0]
+            identified = [d for _, d in group if d.title]
+            confidence = sum(d.confidence for d in identified) / len(identified) if identified else 0.5
 
-            segment_output = SegmentOutput(
+            segment_outputs.append(SegmentOutput(
                 id=segment_id,
-                start=segment.start_time,
-                duration=segment.end_time - segment.start_time,
+                start=first_seg.start_time,
+                duration=last_seg.end_time - first_seg.start_time,
                 conditioning=self.conditioning,
                 audio_file=f"segments/{audio_filename}",
                 confidence=confidence,
-            )
-            segment_outputs.append(segment_output)
+            ))
 
-            # Add identification if music was detected
-            if detection.title:
-                identification = IdentificationOutput(
+            first_detection = next((d for _, d in group if d.title), None)
+            if first_detection:
+                identification_outputs.append(IdentificationOutput(
                     segment_id=segment_id,
                     provider="shazam",
-                    title=detection.title,
-                    artist=detection.artist,
-                    album=detection.metadata.get("album"),
-                    confidence=detection.confidence,
-                    metadata={
-                        k: v
-                        for k, v in detection.metadata.items()
-                        if k != "album" and v is not None
-                    },
-                )
-                identification_outputs.append(identification)
+                    title=first_detection.title,
+                    artist=first_detection.artist,
+                    album=first_detection.metadata.get("album"),
+                    confidence=first_detection.confidence,
+                    metadata={k: v for k, v in first_detection.metadata.items() if k != "album" and v is not None},
+                ))
 
         results_output = ResultsOutput(
             source=str(video_path),
@@ -94,12 +135,10 @@ class OutputWriter:
             identifications=identification_outputs,
         )
 
-        # Write results.json
         results_path = video_output_dir / "results.json"
         results_path.write_text(results_output.to_json())
         print(f"  Results written to: {results_path}")
 
-        # Optionally write results.csv
         if self.export_csv:
             import csv
             ident_map = {id_.segment_id: id_ for id_ in identification_outputs}
@@ -110,11 +149,7 @@ class OutputWriter:
                 for seg in segment_outputs:
                     ident = ident_map.get(seg.id)
                     writer.writerow([
-                        seg.id,
-                        seg.start,
-                        seg.duration,
-                        seg.conditioning,
-                        seg.confidence,
+                        seg.id, seg.start, seg.duration, seg.conditioning, seg.confidence,
                         ident.provider if ident else "",
                         ident.title if ident else "",
                         ident.artist if ident else "",
