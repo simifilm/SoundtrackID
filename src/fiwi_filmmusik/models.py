@@ -112,6 +112,10 @@ class ResultsOutput:
                 "title": ident.title if ident else None,
                 "artist": ident.artist if ident else None,
                 "album": ident.album if ident else None,
+                "photo_url": ident.metadata.get("photo_url") if ident else None,
+                "youtube_link": ident.metadata.get("youtube_link") if ident else None,
+                "spotify_url": ident.metadata.get("spotify_url") if ident else None,
+                "apple_music_url": ident.metadata.get("apple_music_url") if ident else None,
             })
         return cues
 

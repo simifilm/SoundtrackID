@@ -66,6 +66,20 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             if metadata:
                 album = metadata[0].get("text")
 
+        # Extract track link: YouTube > Spotify > Apple Music
+        youtube_link = None
+        for section in sections:
+            if section.get("type") == "VIDEO":
+                youtube_link = section.get("youtubeurl")
+                break
+
+        hub = track.get("hub", {})
+        providers = hub.get("providers", [])
+        spotify_url = providers[0]["actions"][0]["uri"] if providers and providers[0].get("actions") else None
+
+        options = hub.get("options", [])
+        apple_music_url = options[0]["actions"][0]["uri"] if options and options[0].get("actions") else None
+
         return DetectionResult(
             segment=segment,
             title=track.get("title"),
@@ -76,6 +90,10 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
                 "album": album,
                 "genre": track.get("genres", {}).get("primary"),
                 "isrc": track.get("isrc"),
+                "photo_url": track.get("images", {}).get("coverart"),
+                "youtube_link": youtube_link,
+                "spotify_url": spotify_url,
+                "apple_music_url": apple_music_url,
             },
         )
 

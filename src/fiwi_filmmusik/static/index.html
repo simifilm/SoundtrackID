@@ -210,6 +210,35 @@
 
   audio { height: 28px; vertical-align: middle; }
 
+  .cover-thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    object-fit: cover;
+    display: block;
+  }
+
+  .cover-placeholder {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    background: #1e293b;
+    display: block;
+  }
+
+  .track-link {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.4rem;
+    text-decoration: none;
+    opacity: 0.7;
+    vertical-align: middle;
+    transition: opacity 0.15s;
+  }
+
+  .track-link:hover { opacity: 1; }
+  .track-link svg { width: 15px; height: 15px; }
+
   button.reset-btn {
     margin-top: 1.5rem;
     padding: 0.5rem 1.25rem;
@@ -459,7 +488,7 @@
       <thead>
         <tr>
           <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
-          <th>Title</th><th>Artist</th><th>Album</th>
+          <th></th><th>Title</th><th>Artist</th><th>Album</th>
         </tr>
       </thead>
       <tbody id="results-body"></tbody>
@@ -776,6 +805,36 @@ function buildCSV(results) {
 
 // ── Results ───────────────────────────────────────────────────────────────────
 function fmt(s) { return s == null ? '—' : s; }
+
+const PLATFORM_ICONS = {
+  youtube: {
+    color: '#ef4444',
+    title: 'Watch on YouTube',
+    path: '<path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.8 15.5V8.5l6.2 3.5-6.2 3.5z"/>',
+  },
+  spotify: {
+    color: '#1db954',
+    title: 'Open in Spotify',
+    path: '<path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.52 17.28c-.24.36-.66.48-1.02.24-2.82-1.74-6.36-2.1-10.56-1.14-.42.12-.78-.18-.9-.54-.12-.42.18-.78.54-.9 4.56-1.02 8.52-.6 11.64 1.32.42.18.48.66.3 1.02zm1.44-3.3c-.3.42-.84.6-1.26.3-3.24-1.98-8.16-2.58-11.94-1.38-.48.12-.99-.12-1.11-.6-.12-.48.12-.99.6-1.11 4.38-1.32 9.78-.66 13.5 1.62.36.18.54.78.21 1.17zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.3c-.6.18-1.2-.18-1.38-.78-.18-.6.18-1.2.78-1.38 4.26-1.26 11.28-1.02 15.72 1.62.54.3.72 1.02.42 1.56-.3.42-1.02.6-1.56.3z"/>',
+  },
+  apple: {
+    color: '#fc3c44',
+    title: 'Open in Apple Music',
+    path: '<path d="M23.994 6.124a9.23 9.23 0 0 0-.24-2.19c-.317-1.31-1.062-2.31-2.18-3.043a5.022 5.022 0 0 0-1.769-.65c-.69-.12-1.385-.14-2.078-.13H6.272c-.692-.01-1.387.01-2.077.13-.692.12-1.356.35-1.769.65C1.308 1.624.563 2.624.246 3.934a9.23 9.23 0 0 0-.24 2.19C-.006 6.5 0 6.876 0 7.25v9.5c0 .374-.006.75.006 1.126a9.23 9.23 0 0 0 .24 2.19c.317 1.31 1.062 2.31 2.18 3.043.413.3 1.077.53 1.769.65.69.12 1.385.14 2.077.13h11.455c.692.01 1.387-.01 2.078-.13.691-.12 1.356-.35 1.769-.65 1.118-.733 1.863-1.733 2.18-3.043a9.23 9.23 0 0 0 .24-2.19c.012-.376.006-.752.006-1.126v-9.5c0-.374.006-.75-.006-1.126zM15.5 6.25H13v7.5a2.25 2.25 0 0 1-4.5 0 2.25 2.25 0 0 1 2.25-2.25c.402 0 .775.11 1.1.295V5h3.65v1.25z"/>',
+  },
+};
+
+function platformLinkIcons(cue) {
+  const links = [
+    { url: cue.youtube_link, platform: 'youtube' },
+    { url: cue.spotify_url,  platform: 'spotify' },
+    { url: cue.apple_music_url, platform: 'apple' },
+  ].filter(l => l.url);
+  return links.map(({ url, platform }) => {
+    const { color, title, path } = PLATFORM_ICONS[platform];
+    return `<a class="track-link" href="${url}" target="_blank" rel="noopener" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
+  }).join('');
+}
 function fmtTime(secs) {
   const m = Math.floor(secs / 60);
   const sec = (secs % 60).toFixed(1);
@@ -794,17 +853,22 @@ function showResults(results) {
   const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
 
   if (cues.length === 0) {
-    resultsBody.innerHTML = '<tr><td colspan="7" class="empty-note">No music segments detected.</td></tr>';
+    resultsBody.innerHTML = '<tr><td colspan="8" class="empty-note">No music segments detected.</td></tr>';
   } else {
     cues.forEach(cue => {
       const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
+      const cover = cue.photo_url
+        ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">`
+        : `<span class="cover-placeholder"></span>`;
+      const linkIcon = platformLinkIcons(cue);
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td><span class="badge music">${cue.segment_id}</span></td>
         <td>${fmtTime(cue.start)}</td>
         <td>${fmtTime(cue.duration)}</td>
         <td><audio controls src="${url}"></audio></td>
-        <td>${fmt(cue.title)}</td>
+        <td style="padding:0.3rem 0.75rem">${cover}</td>
+        <td>${fmt(cue.title)}${linkIcon}</td>
         <td>${fmt(cue.artist)}</td>
         <td>${fmt(cue.album)}</td>`;
       resultsBody.appendChild(tr);
