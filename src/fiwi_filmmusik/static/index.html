@@ -9,28 +9,55 @@
 
   body {
     font-family: 'Segoe UI', system-ui, sans-serif;
-    background: #0f1117;
-    color: #e2e8f0;
+    background: #f5f3ff;
+    color: #1e1b4b;
     min-height: 100vh;
     padding: 2rem 1rem;
   }
 
   header {
     max-width: 1200px;
-    margin: 0 auto 2rem;
+    margin: 0 auto 1.5rem;
+  }
+
+  .header-card {
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 12px;
+    padding: 1.1rem 1.75rem;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
   }
 
   header h1 {
-    font-size: 1.6rem;
+    font-size: 1.35rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    color: #f8fafc;
+    color: #1e1b4b;
   }
 
   header p {
-    color: #94a3b8;
-    font-size: 0.9rem;
-    margin-top: 0.25rem;
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin-top: 0.15rem;
+  }
+
+  .header-dept {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.1rem;
+    font-size: 0.75rem;
+    color: #a09cb8;
+    line-height: 1.4;
   }
 
   #main {
@@ -38,43 +65,47 @@
     margin: 0 auto;
   }
 
-  /* ── Drop Zone ───────────────────────────────────────── */
+  /* Drop Zone */
   #drop-zone {
-    border: 2px dashed #334155;
+    border: 2px dashed #ddd6fe;
     border-radius: 12px;
     padding: 4rem 2rem;
     text-align: center;
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
-    background: #1e293b;
+    background: #ffffff;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
   }
 
   #drop-zone.dragover {
-    border-color: #6366f1;
-    background: #1e1f3b;
+    border-color: #7c3aed;
+    background: #f5f0ff;
   }
 
   #drop-zone svg {
     width: 48px;
     height: 48px;
-    color: #475569;
+    color: #c4b5fd;
     margin-bottom: 1rem;
+    transition: transform 0.2s;
   }
+
+  #drop-zone:hover svg { transform: scale(1.08); }
 
   #drop-zone .drop-label {
     font-size: 1.1rem;
-    color: #cbd5e1;
+    color: #1e1b4b;
     margin-bottom: 0.5rem;
   }
 
   #drop-zone .drop-hint {
     font-size: 0.8rem;
-    color: #64748b;
+    color: #a09cb8;
   }
 
   #file-input { display: none; }
 
-  /* ── Progress View ───────────────────────────────────── */
+  /* Progress View */
   #progress-view { display: none; }
 
   .steps {
@@ -82,6 +113,18 @@
     flex-direction: column;
     gap: 0.6rem;
     margin-bottom: 1.5rem;
+    position: relative;
+  }
+
+  .steps::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 14px;
+    bottom: 14px;
+    width: 2px;
+    background: #ede9fe;
+    z-index: 0;
   }
 
   .step {
@@ -89,18 +132,21 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.9rem;
-    color: #64748b;
+    color: #a09cb8;
     transition: color 0.2s;
+    position: relative;
+    z-index: 1;
   }
 
-  .step.active { color: #e2e8f0; }
-  .step.done   { color: #4ade80; }
+  .step.active { color: #1e1b4b; }
+  .step.done   { color: #16a34a; }
 
   .step-icon {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    border: 2px solid #334155;
+    border: 2px solid #ddd6fe;
+    background: #f5f3ff;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -110,15 +156,15 @@
   }
 
   .step.active .step-icon {
-    border-color: #6366f1;
-    background: #6366f1;
+    border-color: #7c3aed;
+    background: #7c3aed;
     animation: pulse 1.2s infinite;
   }
 
   .step.done .step-icon {
-    border-color: #4ade80;
-    background: #4ade80;
-    color: #0f1117;
+    border-color: #16a34a;
+    background: #16a34a;
+    color: #ffffff;
   }
 
   @keyframes pulse {
@@ -126,21 +172,20 @@
     50%       { opacity: 0.5; }
   }
 
-  #waveform-container { margin-top: 1.25rem; display: none; }
-  #waveform-canvas { width: 100%; height: 80px; border-radius: 8px 8px 0 0; display: block; border: 1px solid #1e293b; border-bottom: none; }
-  .prog-bar { height: 4px; background: #1e293b; overflow: hidden; border-left: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b; }
-  .prog-bar:last-child { border-radius: 0 0 8px 8px; }
-  .prog-fill { height: 100%; width: 0%; background: #6366f1; transition: width 0.4s ease; }
-  #error-area { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+  #waveform-container { margin-top: 1.25rem; display: none; border: 1px solid #ddd6fe; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05); }
+  #waveform-canvas { width: 100%; height: 80px; display: block; background: #ffffff; }
+  .prog-bar { height: 4px; background: #ddd6fe; overflow: hidden; }
+  .prog-fill { height: 100%; width: 0%; background: #7c3aed; transition: width 0.4s ease; }
+  #error-area { color: #dc2626; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
 
   #wf-tooltip {
     position: fixed;
-    background: #1e293b;
-    border: 1px solid #334155;
+    background: #1e1b4b;
+    border: 1px solid #3730a3;
     border-radius: 6px;
     padding: 0.35rem 0.65rem;
     font-size: 0.78rem;
-    color: #e2e8f0;
+    color: #f5f3ff;
     pointer-events: none;
     display: none;
     z-index: 200;
@@ -148,25 +193,20 @@
     max-width: 320px;
     overflow: hidden;
     text-overflow: ellipsis;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    box-shadow: 0 2px 8px rgba(109,40,217,0.18);
   }
 
-
-  /* ── Results View ────────────────────────────────────── */
+  /* Results View */
   #results-view { display: none; }
 
-  .section-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #64748b;
-    margin-bottom: 0.75rem;
+  .results-card {
     margin-top: 1.5rem;
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
   }
-
-  .section-title:first-child { margin-top: 30px; }
-
 
   table {
     width: 100%;
@@ -177,17 +217,17 @@
   thead th {
     text-align: left;
     padding: 0.5rem 0.75rem;
-    color: #64748b;
+    color: #a09cb8;
     font-weight: 500;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid #e9e5ff;
     font-size: 0.78rem;
   }
 
-  tbody tr:hover td { background: #1e293b44; }
+  tbody tr:hover td { background: #f0ebff; }
 
   tbody td {
     padding: 0.55rem 0.75rem;
-    border-bottom: 1px solid #1e293b22;
+    border-bottom: 1px solid #f0ebff;
     vertical-align: middle;
   }
 
@@ -197,34 +237,30 @@
     border-radius: 4px;
     font-size: 0.72rem;
     font-weight: 600;
-    background: #1e293b;
-    color: #94a3b8;
+    background: #f0ebff;
+    color: #6b7280;
   }
 
-  .badge.music { background: #312e81; color: #a5b4fc; }
+  .badge.music { background: #ede9fe; color: #7c3aed; border-radius: 12px; }
 
-  .confidence-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
+  .confidence-bar { display: flex; align-items: center; gap: 0.5rem; }
 
   .bar-track {
     flex: 1;
     height: 4px;
-    background: #1e293b;
+    background: #e9e5ff;
     border-radius: 2px;
     overflow: hidden;
   }
 
   .bar-fill {
     height: 100%;
-    background: #6366f1;
+    background: #7c3aed;
     border-radius: 2px;
     transition: width 0.4s;
   }
 
-  .bar-label { font-size: 0.75rem; color: #64748b; min-width: 2.5rem; text-align: right; }
+  .bar-label { font-size: 0.75rem; color: #a09cb8; min-width: 2.5rem; text-align: right; }
 
   audio { height: 28px; vertical-align: middle; }
 
@@ -233,14 +269,6 @@
     height: 40px;
     border-radius: 4px;
     object-fit: cover;
-    display: block;
-  }
-
-  .cover-placeholder {
-    width: 40px;
-    height: 40px;
-    border-radius: 4px;
-    background: #1e293b;
     display: block;
   }
 
@@ -257,14 +285,15 @@
   .track-link:hover { opacity: 1; }
   .track-link svg { width: 15px; height: 15px; }
 
-  /* ── History Panel ───────────────────────────────────── */
+  /* History Panel */
   #history-panel {
     margin-top: 1.25rem;
     margin-bottom: 1.25rem;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 12px;
     overflow: hidden;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
   }
 
   #history-panel summary {
@@ -274,7 +303,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #64748b;
+    color: #a09cb8;
     list-style: none;
     display: flex;
     align-items: center;
@@ -293,36 +322,39 @@
   }
 
   #history-panel[open] summary::before { transform: rotate(90deg); }
-  #history-panel summary:hover { color: #94a3b8; }
+  #history-panel summary:hover { color: #7c3aed; }
 
-  #history-list { border-top: 1px solid #334155; }
+  #history-list { border-top: 1px solid #ede9fe; }
 
   .history-item {
     display: flex;
     align-items: center;
     gap: 1rem;
     padding: 0.55rem 0.75rem;
-    border-bottom: 1px solid #1e293b44;
+    border-bottom: 1px solid #f5f3ff;
     border-radius: 6px;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 0.15s, box-shadow 0.15s;
   }
 
-  .history-item:hover { background: #334155; }
+  .history-item:hover {
+    background: #f0ebff;
+    box-shadow: inset 3px 0 0 #7c3aed;
+  }
 
   .history-item::after {
     content: '›';
     font-size: 1.1rem;
-    color: #334155;
+    color: #ddd6fe;
     transition: color 0.15s;
     flex-shrink: 0;
   }
 
-  .history-item:hover::after { color: #94a3b8; }
+  .history-item:hover::after { color: #7c3aed; }
 
   .history-name {
     font-size: 0.88rem;
-    color: #e2e8f0;
+    color: #1e1b4b;
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -331,37 +363,38 @@
 
   .history-meta {
     font-size: 0.76rem;
-    color: #64748b;
+    color: #a09cb8;
     white-space: nowrap;
   }
 
   button.reset-btn {
     margin-top: 1.5rem;
     padding: 0.5rem 1.25rem;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    color: #94a3b8;
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 8px;
+    color: #6b7280;
     cursor: pointer;
     font-size: 0.85rem;
-    transition: background 0.15s;
+    transition: background 0.15s, color 0.15s;
   }
 
-  button.reset-btn:hover { background: #334155; color: #e2e8f0; }
+  button.reset-btn:hover { background: #f0ebff; color: #7c3aed; }
 
   .empty-note {
-    color: #475569;
+    color: #a09cb8;
     font-size: 0.85rem;
     padding: 0.75rem 0;
   }
 
-  /* ── Settings Panel ───────────────────────────────────── */
+  /* Settings Panel */
   #settings-panel {
     margin-bottom: 1.25rem;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 12px;
     overflow: hidden;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
   }
 
   #settings-panel summary {
@@ -371,7 +404,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #64748b;
+    color: #a09cb8;
     list-style: none;
     display: flex;
     align-items: center;
@@ -390,15 +423,14 @@
   }
 
   #settings-panel[open] summary::before { transform: rotate(90deg); }
-
-  #settings-panel summary:hover { color: #94a3b8; }
+  #settings-panel summary:hover { color: #7c3aed; }
 
   .settings-grid {
     padding: 0.75rem 1.25rem 1rem;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 0 1.5rem;
-    border-top: 1px solid #334155;
+    border-top: 1px solid #ede9fe;
   }
 
   .setting-group {
@@ -412,15 +444,15 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #64748b;
+    color: #a09cb8;
   }
 
   .setting-group select,
   .setting-group input[type="range"] {
-    background: #0f1117;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    color: #e2e8f0;
+    background: #f8f6ff;
+    border: 1px solid #ddd6fe;
+    border-radius: 8px;
+    color: #1e1b4b;
     font-size: 0.85rem;
     padding: 0.35rem 0.6rem;
     outline: none;
@@ -430,10 +462,13 @@
   }
 
   .setting-group select:focus {
-    border-color: #6366f1;
+    border-color: #7c3aed;
+    outline: 2px solid #c4b5fd;
+    outline-offset: 1px;
   }
 
   .range-row {
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -444,23 +479,26 @@
     padding: 0;
     border: none;
     background: transparent;
-    accent-color: #6366f1;
+    accent-color: #7c3aed;
   }
 
   #opt-threshold-val {
     font-size: 0.82rem;
-    color: #94a3b8;
+    color: #6b7280;
     min-width: 2.5rem;
     text-align: right;
   }
 
   .toggle-row {
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    margin-top: 0.25rem;
     font-size: 0.85rem;
-    color: #94a3b8;
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #6b7280;
     cursor: pointer;
     user-select: none;
   }
@@ -470,7 +508,7 @@
   .toggle-track {
     width: 32px;
     height: 18px;
-    background: #4f46e5;
+    background: #7c3aed;
     border-radius: 9px;
     position: relative;
     transition: background 0.2s;
@@ -487,14 +525,24 @@
     transition: transform 0.2s, background 0.2s;
   }
 
-  .toggle-row input:checked + .toggle-track { background: #4f46e5; }
+  .toggle-row input:checked + .toggle-track { background: #7c3aed; }
   .toggle-row input:checked + .toggle-track::after { transform: translateX(14px); background: #fff; }
 </style>
 </head>
 <body>
 <header>
-  <h1>FIWI Filmmusik Analyzer</h1>
-  <p>Detect and identify music in film. Drag in a video to get started.</p>
+  <div class="header-card">
+    <div class="header-brand">
+      <div>
+        <h1>FIWI Filmmusik</h1>
+        <p>Film music identification and analysis</p>
+      </div>
+    </div>
+    <div class="header-dept">
+      <span>Department of Film Studies</span>
+      <span>University of Zurich</span>
+    </div>
+  </div>
 </header>
 
 <div id="main">
@@ -531,10 +579,10 @@
       <div class="setting-group">
         <label>Export</label>
         <label class="toggle-row">
-          <span id="json-label" style="color:#e2e8f0">JSON</span>
+          <span id="json-label" style="color:#6b7280">JSON</span>
           <input type="checkbox" id="opt-csv">
           <span class="toggle-track"></span>
-          <span id="csv-label" style="color:#475569">CSV</span>
+          <span id="csv-label" style="color:#c4b5fd">CSV</span>
         </label>
       </div>
     </div>
@@ -547,7 +595,7 @@
         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
     </svg>
     <p class="drop-label">Drop a video file here</p>
-    <p class="drop-hint">or click to browse · .mp4, .mov, .avi accepted</p>
+    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi accepted</p>
     <input type="file" id="file-input" accept=".mp4,.mov,.avi,video/*">
   </div>
 
@@ -565,15 +613,15 @@
       </div>
       <div class="step" data-step="classifying">
         <div class="step-icon">2</div><span>Detecting music</span>
-        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+        <span class="step-detail" style="margin-left:auto;color:#7c3aed;font-size:0.78rem;"></span>
       </div>
       <div class="step" data-step="detecting">
         <div class="step-icon">3</div><span>Identifying music</span>
-        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+        <span class="step-detail" style="margin-left:auto;color:#7c3aed;font-size:0.78rem;"></span>
       </div>
       <div class="step" data-step="writing">
         <div class="step-icon">4</div><span>Writing results</span>
-        <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
+        <span class="step-detail" style="margin-left:auto;color:#7c3aed;font-size:0.78rem;"></span>
       </div>
     </div>
     <div id="error-area"></div>
@@ -588,16 +636,17 @@
 
   <!-- Results View -->
   <div id="results-view">
-    <p class="section-title">Music Segments</p>
-    <table id="results-table">
-      <thead>
-        <tr>
-          <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
-          <th></th><th>Title</th><th>Artist</th><th>Album</th>
-        </tr>
-      </thead>
-      <tbody id="results-body"></tbody>
-    </table>
+    <div class="results-card">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
+            <th></th><th>Title</th><th>Artist</th><th>Album</th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
 
     <button class="reset-btn" id="reset-btn">Analyze another file</button>
   </div>
@@ -618,16 +667,16 @@ const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
 const resetBtn        = document.getElementById('reset-btn');
 
-// ── Settings wiring ───────────────────────────────────────────────────────────
+// Settings wiring
 document.getElementById('opt-threshold').addEventListener('input', function() {
   document.getElementById('opt-threshold-val').textContent = this.value + '%';
 });
 document.getElementById('opt-csv').addEventListener('change', function() {
-  document.getElementById('json-label').style.color = this.checked ? '#475569' : '#e2e8f0';
-  document.getElementById('csv-label').style.color  = this.checked ? '#e2e8f0' : '#475569';
+  document.getElementById('json-label').style.color = this.checked ? '#c4b5fd' : '#6b7280';
+  document.getElementById('csv-label').style.color  = this.checked ? '#6b7280' : '#c4b5fd';
 });
 
-// ── Drag & Drop ──────────────────────────────────────────────────────────────
+// Drag & Drop
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -641,13 +690,12 @@ fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) startAnalysis(fileInput.files[0]);
 });
 
-// ── Steps helper ─────────────────────────────────────────────────────────────
+// Steps helper
 const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing'];
 let currentStep = null;
 
 function activateStep(stepName) {
   if (currentStep === stepName) return;
-  // Mark previous steps done
   if (currentStep) {
     const prev = document.querySelector(`.step[data-step="${currentStep}"]`);
     if (prev) { prev.classList.remove('active'); prev.classList.add('done'); prev.querySelector('.step-icon').textContent = '✓'; const d = prev.querySelector('.step-detail'); if (d) d.textContent = ''; }
@@ -670,8 +718,7 @@ function updateStepDetail(stepName, detail) {
   if (el) el.textContent = detail;
 }
 
-
-// ── Waveform tooltip ──────────────────────────────────────────────────────────
+// Waveform tooltip
 const wfTooltip = document.getElementById('wf-tooltip');
 
 function showWfTooltip(x, y, text) {
@@ -690,14 +737,11 @@ waveformCanvas.addEventListener('mousemove', e => {
   let text = null;
 
   if (wfCues.length > 0) {
-    // Post-done: authoritative segment data; anything outside a cue is no music
     const cue = wfCues.find(c => t >= c.start && t < c.end);
     text = cue
-      ? (cue.title ? `${cue.artist}, ${cue.title}` : 'Music, not identified')
+      ? (cue.title ? `${cue.artist}, ${cue.title}` : 'Unidentified music')
       : 'No music';
-  } else if (wfChunks.length > 0 && wfCurrentEnd !== null && t <= wfCurrentEnd) {
-    // During analysis: use merged music ranges (same logic as drawing) to avoid
-    // overlapping-window false positives
+  } else if (wfChunks.length > 0) {
     const merged = [];
     for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
       const last = merged[merged.length - 1];
@@ -711,20 +755,22 @@ waveformCanvas.addEventListener('mousemove', e => {
 });
 waveformCanvas.addEventListener('mouseleave', hideWfTooltip);
 
-// ── Waveform ──────────────────────────────────────────────────────────────────
-let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null, wfIdentified = [], wfCues = [];
+// Waveform
+let wfSamples = null, wfDuration = 0, wfChunks = [], wfIdentified = [], wfCues = [];
 let detectingInitialized = false;
 
 function redrawWaveform(canvas) {
   const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth;
-  const H = canvas.height;
-  canvas.width = W;
+  const H = canvas.offsetHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
 
   const n = wfSamples.length;
   const barW = W / n;
 
-  // Merge overlapping classifier chunks to get clean music ranges
   const mergedMusic = [];
   for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
     const last = mergedMusic[mergedMusic.length - 1];
@@ -732,18 +778,23 @@ function redrawWaveform(canvas) {
     else { mergedMusic.push({ start: c.start, end: c.end }); }
   }
 
-  // ── Waveform bars ────────────────────────────────────────
+  ctx.fillStyle = '#d1d5db';
+  for (let t = 30; t < wfDuration; t += 30) {
+    const x = Math.round((t / wfDuration) * W);
+    ctx.fillRect(x, 0, 1, H);
+  }
+
   for (let i = 0; i < n; i++) {
     const t = (i / n) * wfDuration;
-    let color = '#141e2b'; // unprocessed
+    let color = '#ede9fe';
     for (const c of wfChunks) {
-      if (!c.isMusic && t >= c.start && t < c.end) { color = '#1e293b'; break; }
+      if (!c.isMusic && t >= c.start && t < c.end) { color = '#ddd6fe'; break; }
     }
     for (const r of mergedMusic) {
-      if (t >= r.start && t < r.end) { color = '#6366f1'; break; }
+      if (t >= r.start && t < r.end) { color = '#7c3aed'; break; }
     }
     for (const r of wfIdentified) {
-      if (t >= r.start && t < r.end) { color = '#4ade80'; break; }
+      if (t >= r.start && t < r.end) { color = '#16a34a'; break; }
     }
     const barH = Math.max(1, wfSamples[i] * H);
     const x = i * barW;
@@ -751,15 +802,7 @@ function redrawWaveform(canvas) {
     ctx.fillRect(x, (H - barH) / 2, Math.max(1, barW - 0.5), barH);
   }
 
-  // ── Separators ───────────────────────────────────────────
-  for (const c of wfChunks) {
-    const x = (c.end / wfDuration) * W;
-    ctx.fillStyle = '#0f1117';
-    ctx.fillRect(x - 0.5, 0, 1, H);
-  }
-
-  // ── 30s tick marks ───────────────────────────────────────
-  ctx.fillStyle = '#334155';
+  ctx.fillStyle = '#a09cb8';
   ctx.font = '9px sans-serif';
   ctx.textAlign = 'center';
   for (let t = 30; t < wfDuration; t += 30) {
@@ -769,18 +812,11 @@ function redrawWaveform(canvas) {
     ctx.fillText(label, x, H - 10);
   }
 
-  // ── Progress edge ────────────────────────────────────────
-  if (wfCurrentEnd !== null) {
-    const x = (wfCurrentEnd / wfDuration) * W;
-    ctx.fillStyle = '#818cf8';
-    ctx.fillRect(x - 1, 0, 1, H);
-  }
 }
 
-// ── Analysis ──────────────────────────────────────────────────────────────────
+// Analysis
 function startAnalysis(file) {
-  // Reset state
-  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null; wfIdentified = []; wfCues = [];
+  wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   identFarthestEnd = 0;
   detectFill.style.width = '0%';
@@ -795,7 +831,6 @@ function startAnalysis(file) {
       ? (STEP_ORDER.indexOf(el.closest('[data-step]').dataset.step) + 1).toString()
       : '';
   });
-  // Re-number icons cleanly
   STEP_ORDER.forEach((s, i) => {
     const icon = document.querySelector(`.step[data-step="${s}"] .step-icon`);
     if (icon) icon.textContent = i + 1;
@@ -827,7 +862,7 @@ function startAnalysis(file) {
           if (done) return;
           buf += decoder.decode(value, { stream: true });
           const parts = buf.split('\n\n');
-          buf = parts.pop(); // keep incomplete chunk
+          buf = parts.pop();
           parts.forEach(part => {
             if (part.startsWith('data: ')) {
               try {
@@ -873,7 +908,6 @@ function handleEvent(ev) {
   }
 
   if (step === 'done') {
-    wfCurrentEnd = null;
     wfCues = (results.cues || []).map(c => ({
       start: c.start,
       end: c.start + c.duration,
@@ -923,7 +957,6 @@ function handleEvent(ev) {
       const end = parseFloat(m[2]);
       const isMusic = m[3] === 'MUSIC';
       wfChunks.push({ start, end, isMusic });
-      wfCurrentEnd = end;
       updateStepDetail(step, isMusic ? 'Music' : 'No music');
       if (wfSamples) redrawWaveform(waveformCanvas);
       if (wfDuration > 0) detectFill.style.width = (end / wfDuration * 100) + '%';
@@ -931,7 +964,7 @@ function handleEvent(ev) {
   }
 }
 
-// ── Download helpers ──────────────────────────────────────────────────────────
+// Download helpers
 function triggerDownload(content, filename, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -959,7 +992,7 @@ function buildCSV(results) {
     .join('\r\n');
 }
 
-// ── Results ───────────────────────────────────────────────────────────────────
+// Results
 function fmt(s) { return s == null ? '' : s; }
 
 const PLATFORM_ICONS = {
@@ -980,17 +1013,27 @@ const PLATFORM_ICONS = {
   },
 };
 
+function cleanAppleMusicUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    const i = u.searchParams.get('i');
+    return (u.origin + u.pathname) + (i ? `?i=${i}` : '');
+  } catch (_) { return url; }
+}
+
 function platformLinkIcons(cue) {
   const links = [
     { url: cue.youtube_link, platform: 'youtube' },
     { url: cue.spotify_url,  platform: 'spotify' },
-    { url: cue.apple_music_url, platform: 'apple' },
+    { url: cleanAppleMusicUrl(cue.apple_music_url), platform: 'apple' },
   ].filter(l => l.url);
   return links.map(({ url, platform }) => {
     const { color, title, path } = PLATFORM_ICONS[platform];
     return `<a class="track-link" href="${url}" target="_blank" rel="noopener" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
   }).join('');
 }
+
 function fmtTime(secs) {
   const m = Math.floor(secs / 60);
   const sec = (secs % 60).toFixed(1);
@@ -1015,15 +1058,15 @@ function showResults(results, { autoDownload = true } = {}) {
       const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
       const cover = cue.photo_url
         ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">`
-        : `<span class="cover-placeholder"></span>`;
+        : '';
       const linkIcon = platformLinkIcons(cue);
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><span class="badge music">${cue.segment_id}</span></td>
+        <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
         <td>${fmtTime(cue.start)}</td>
         <td>${fmtTime(cue.duration)}</td>
         <td><audio controls src="${url}"></audio></td>
-        <td style="padding:0.3rem 0.75rem">${cover}</td>
+        <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
         <td>${fmt(cue.title)}${linkIcon}</td>
         <td>${fmt(cue.artist)}</td>
         <td>${fmt(cue.album)}</td>`;
@@ -1031,7 +1074,6 @@ function showResults(results, { autoDownload = true } = {}) {
     });
   }
 
-  // Auto-download exports (skipped when loading from history)
   if (autoDownload) {
     const stem = (results.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     triggerDownload(JSON.stringify(results, null, 2), stem + '_results.json', 'application/json');
@@ -1073,7 +1115,6 @@ async function loadHistory() {
         panel.style.display = 'none';
         progressView.style.display = 'none';
         resultsView.style.display = 'block';
-        // Restore waveform state from persisted data
         const wf = item.results.waveform;
         if (wf) {
           wfSamples    = wf.samples;
@@ -1081,7 +1122,6 @@ async function loadHistory() {
           wfChunks     = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
           wfCues       = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, title: c.title || null, artist: c.artist || null }));
           wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
-          wfCurrentEnd = null;
           document.querySelector('.prog-bar').style.display = 'none';
           waveformContainer.style.display = 'block';
           redrawWaveform(waveformCanvas);
