@@ -133,6 +133,24 @@
   .prog-fill { height: 100%; width: 0%; background: #6366f1; transition: width 0.4s ease; }
   #error-area { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
 
+  #wf-tooltip {
+    position: fixed;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.78rem;
+    color: #e2e8f0;
+    pointer-events: none;
+    display: none;
+    z-index: 200;
+    white-space: nowrap;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+
 
   /* ── Results View ────────────────────────────────────── */
   #results-view { display: none; }
@@ -238,6 +256,84 @@
 
   .track-link:hover { opacity: 1; }
   .track-link svg { width: 15px; height: 15px; }
+
+  /* ── History Panel ───────────────────────────────────── */
+  #history-panel {
+    margin-top: 1.25rem;
+    margin-bottom: 1.25rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  #history-panel summary {
+    padding: 0.65rem 1.25rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    user-select: none;
+  }
+
+  #history-panel summary::-webkit-details-marker { display: none; }
+
+  #history-panel summary::before {
+    content: '›';
+    font-size: 1rem;
+    line-height: 1;
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+
+  #history-panel[open] summary::before { transform: rotate(90deg); }
+  #history-panel summary:hover { color: #94a3b8; }
+
+  #history-list { border-top: 1px solid #334155; }
+
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid #1e293b44;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .history-item:hover { background: #334155; }
+
+  .history-item::after {
+    content: '›';
+    font-size: 1.1rem;
+    color: #334155;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+
+  .history-item:hover::after { color: #94a3b8; }
+
+  .history-name {
+    font-size: 0.88rem;
+    color: #e2e8f0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-meta {
+    font-size: 0.76rem;
+    color: #64748b;
+    white-space: nowrap;
+  }
 
   button.reset-btn {
     margin-top: 1.5rem;
@@ -398,7 +494,7 @@
 <body>
 <header>
   <h1>FIWI Filmmusik Analyzer</h1>
-  <p>Detect and identify music in film — drag in a video to get started.</p>
+  <p>Detect and identify music in film. Drag in a video to get started.</p>
 </header>
 
 <div id="main">
@@ -451,9 +547,15 @@
         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
     </svg>
     <p class="drop-label">Drop a video file here</p>
-    <p class="drop-hint">or click to browse — .mp4, .mov, .avi accepted</p>
+    <p class="drop-hint">or click to browse · .mp4, .mov, .avi accepted</p>
     <input type="file" id="file-input" accept=".mp4,.mov,.avi,video/*">
   </div>
+
+  <!-- History Panel -->
+  <details id="history-panel" style="display:none">
+    <summary>Recent runs</summary>
+    <div id="history-list"></div>
+  </details>
 
   <!-- Progress View -->
   <div id="progress-view">
@@ -474,11 +576,14 @@
         <span class="step-detail" style="margin-left:auto;color:#6366f1;font-size:0.78rem;"></span>
       </div>
     </div>
-    <div id="waveform-container">
-      <canvas id="waveform-canvas" height="80"></canvas>
-      <div class="prog-bar"><div class="prog-fill" id="detect-fill"></div></div>
-    </div>
     <div id="error-area"></div>
+  </div>
+
+  <!-- Waveform (shown during analysis and when viewing results/history) -->
+  <div id="waveform-container" style="display:none; margin-top:1.25rem;">
+    <canvas id="waveform-canvas" height="80"></canvas>
+    <div class="prog-bar"><div class="prog-fill" id="detect-fill"></div></div>
+    <div id="wf-tooltip"></div>
   </div>
 
   <!-- Results View -->
@@ -566,8 +671,48 @@ function updateStepDetail(stepName, detail) {
 }
 
 
+// ── Waveform tooltip ──────────────────────────────────────────────────────────
+const wfTooltip = document.getElementById('wf-tooltip');
+
+function showWfTooltip(x, y, text) {
+  wfTooltip.textContent = text;
+  wfTooltip.style.display = 'block';
+  const tw = wfTooltip.offsetWidth;
+  wfTooltip.style.left = Math.min(x + 14, window.innerWidth - tw - 8) + 'px';
+  wfTooltip.style.top = (y - 44) + 'px';
+}
+function hideWfTooltip() { wfTooltip.style.display = 'none'; }
+
+waveformCanvas.addEventListener('mousemove', e => {
+  if (!wfSamples || wfDuration === 0) return;
+  const rect = waveformCanvas.getBoundingClientRect();
+  const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
+  let text = null;
+
+  if (wfCues.length > 0) {
+    // Post-done: authoritative segment data; anything outside a cue is no music
+    const cue = wfCues.find(c => t >= c.start && t < c.end);
+    text = cue
+      ? (cue.title ? `${cue.artist}, ${cue.title}` : 'Music, not identified')
+      : 'No music';
+  } else if (wfChunks.length > 0 && wfCurrentEnd !== null && t <= wfCurrentEnd) {
+    // During analysis: use merged music ranges (same logic as drawing) to avoid
+    // overlapping-window false positives
+    const merged = [];
+    for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
+      const last = merged[merged.length - 1];
+      if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
+      else { merged.push({ start: c.start, end: c.end }); }
+    }
+    text = merged.some(r => t >= r.start && t < r.end) ? 'Music detected' : 'No music';
+  }
+
+  text ? showWfTooltip(e.clientX, e.clientY, text) : hideWfTooltip();
+});
+waveformCanvas.addEventListener('mouseleave', hideWfTooltip);
+
 // ── Waveform ──────────────────────────────────────────────────────────────────
-let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null, wfIdentified = [];
+let wfSamples = null, wfDuration = 0, wfChunks = [], wfCurrentEnd = null, wfIdentified = [], wfCues = [];
 let detectingInitialized = false;
 
 function redrawWaveform(canvas) {
@@ -635,7 +780,7 @@ function redrawWaveform(canvas) {
 // ── Analysis ──────────────────────────────────────────────────────────────────
 function startAnalysis(file) {
   // Reset state
-  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null; wfIdentified = [];
+  wfSamples = null; wfDuration = 0; wfChunks = []; wfCurrentEnd = null; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   identFarthestEnd = 0;
   detectFill.style.width = '0%';
@@ -658,6 +803,7 @@ function startAnalysis(file) {
     if (detail) detail.textContent = '';
   });
 
+  document.getElementById('history-panel').style.display = 'none';
   dropZone.style.display = 'none';
   progressView.style.display = 'block';
   resultsView.style.display  = 'none';
@@ -713,7 +859,13 @@ function handleEvent(ev) {
 
   if (step === 'identified') {
     const d = JSON.parse(detail);
-    wfIdentified.push({ start: d.start, end: d.end });
+    const GAP_TOLERANCE = 30;
+    const last = wfIdentified[wfIdentified.length - 1];
+    if (last && last.title === d.title && (d.start - last.end) <= GAP_TOLERANCE) {
+      last.end = d.end;
+    } else {
+      wfIdentified.push({ start: d.start, end: d.end, title: d.title });
+    }
     identFarthestEnd = Math.max(identFarthestEnd, d.end);
     if (wfDuration > 0) detectFill.style.width = (identFarthestEnd / wfDuration * 100) + '%';
     if (wfSamples) redrawWaveform(waveformCanvas);
@@ -722,9 +874,13 @@ function handleEvent(ev) {
 
   if (step === 'done') {
     wfCurrentEnd = null;
-    wfIdentified = (results.cues || [])
-      .filter(c => c.title)
-      .map(c => ({ start: c.start, end: c.start + c.duration }));
+    wfCues = (results.cues || []).map(c => ({
+      start: c.start,
+      end: c.start + c.duration,
+      title: c.title || null,
+      artist: c.artist || null,
+    }));
+    wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
     if (wfSamples) redrawWaveform(waveformCanvas);
     detectFill.style.width = '100%';
     setTimeout(() => { document.querySelector('.prog-bar').style.display = 'none'; }, 400);
@@ -804,7 +960,7 @@ function buildCSV(results) {
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function fmt(s) { return s == null ? '—' : s; }
+function fmt(s) { return s == null ? '' : s; }
 
 const PLATFORM_ICONS = {
   youtube: {
@@ -841,7 +997,7 @@ function fmtTime(secs) {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-function showResults(results) {
+function showResults(results, { autoDownload = true } = {}) {
   if (!results) {
     errorArea.textContent = 'ERROR: server sent done event without results data';
     errorArea.style.display = 'block';
@@ -875,11 +1031,13 @@ function showResults(results) {
     });
   }
 
-  // Auto-download exports
-  const stem = (results.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
-  triggerDownload(JSON.stringify(results, null, 2), stem + '_results.json', 'application/json');
-  if (document.getElementById('opt-csv').checked) {
-    triggerDownload(buildCSV(results), stem + '_results.csv', 'text/csv');
+  // Auto-download exports (skipped when loading from history)
+  if (autoDownload) {
+    const stem = (results.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    triggerDownload(JSON.stringify(results, null, 2), stem + '_results.json', 'application/json');
+    if (document.getElementById('opt-csv').checked) {
+      triggerDownload(buildCSV(results), stem + '_results.csv', 'text/csv');
+    }
   }
 }
 
@@ -887,8 +1045,56 @@ resetBtn.addEventListener('click', () => {
   dropZone.style.display = 'block';
   progressView.style.display = 'none';
   resultsView.style.display = 'none';
+  waveformContainer.style.display = 'none';
   fileInput.value = '';
+  loadHistory();
 });
+
+async function loadHistory() {
+  const panel = document.getElementById('history-panel');
+  const list = document.getElementById('history-list');
+  try {
+    const items = await fetch('/history').then(r => r.json());
+    if (!items.length) { panel.style.display = 'none'; return; }
+    list.innerHTML = '';
+    items.forEach(item => {
+      const d = new Date(item.timestamp * 1000);
+      const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const meta = `${dateStr}, ${timeStr} · ${item.total} seg${item.total !== 1 ? 's' : ''}` +
+        (item.identified > 0 ? ` · ${item.identified} identified` : '');
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <span class="history-name">${item.video_name}</span>
+        <span class="history-meta">${meta}</span>`;
+      div.addEventListener('click', () => {
+        dropZone.style.display = 'none';
+        panel.style.display = 'none';
+        progressView.style.display = 'none';
+        resultsView.style.display = 'block';
+        // Restore waveform state from persisted data
+        const wf = item.results.waveform;
+        if (wf) {
+          wfSamples    = wf.samples;
+          wfDuration   = wf.duration;
+          wfChunks     = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
+          wfCues       = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, title: c.title || null, artist: c.artist || null }));
+          wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
+          wfCurrentEnd = null;
+          document.querySelector('.prog-bar').style.display = 'none';
+          waveformContainer.style.display = 'block';
+          redrawWaveform(waveformCanvas);
+        }
+        showResults(item.results, { autoDownload: false });
+      });
+      list.appendChild(div);
+    });
+    panel.style.display = 'block';
+  } catch (_) { panel.style.display = 'none'; }
+}
+
+loadHistory();
 </script>
 </body>
 </html>

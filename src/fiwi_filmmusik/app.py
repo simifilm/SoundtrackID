@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 _STATIC_DIR = Path(__file__).parent / "static"
-_OUTPUT_DIR = Path("./output")
+_OUTPUT_DIR = Path("./output/cache")
 
 # ── Singleton classifier (loaded once at startup) ─────────────────────────────
 _classifier = None
@@ -162,6 +162,37 @@ async def _run_pipeline_sse(
             return
 
         await asyncio.sleep(0.05)
+
+
+@app.get("/history")
+async def history() -> list[dict]:
+    """Return the last 10 completed runs, newest first."""
+    items = []
+    if _OUTPUT_DIR.exists():
+        dirs = sorted(
+            (p for p in _OUTPUT_DIR.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for run_dir in dirs:
+            results_path = run_dir / "results.json"
+            if not results_path.exists():
+                continue
+            try:
+                data = json.loads(results_path.read_text())
+                cues = data.get("cues", [])
+                items.append({
+                    "video_name": run_dir.name,
+                    "timestamp": results_path.stat().st_mtime,
+                    "total": len(cues),
+                    "identified": sum(1 for c in cues if c.get("title")),
+                    "results": data,
+                })
+            except Exception:
+                pass
+            if len(items) >= 10:
+                break
+    return items
 
 
 @app.get("/output/{video_name}/segments/{filename}")

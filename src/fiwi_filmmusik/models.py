@@ -95,6 +95,7 @@ class ResultsOutput:
     identifications: list[IdentificationOutput] = field(default_factory=list)
     ID: str | None = None
     fiwi_id: str | None = None
+    waveform: dict | None = None
 
     def _build_cues(self) -> list[dict[str, Any]]:
         ident_map = {id_.segment_id: id_ for id_ in self.identifications}
@@ -125,6 +126,7 @@ class ResultsOutput:
             "fiwi_id": self.fiwi_id,
             "source": self.source,
             "cues": self._build_cues(),
+            "waveform": self.waveform,
         }
         return result
 

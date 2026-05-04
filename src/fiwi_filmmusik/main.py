@@ -1,4 +1,4 @@
-"""Main module — launches the FIWI Filmmusik web server."""
+"""Main module: launches the FIWI Filmmusik web server."""
 
 
 def main() -> None:

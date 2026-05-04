@@ -31,8 +31,8 @@ def _group_detections(
 ) -> list[list[tuple[MusicSegment, DetectionResult]]]:
     """Group detection results into cue-level blocks.
 
-    Pass 1 — consecutive same-key runs (None==None so unidentified also merge).
-    Pass 2 — bridge unidentified gaps ≤ gap_tolerance_s between identical tracks.
+    Pass 1: consecutive same-key runs (None==None so unidentified also merge).
+    Pass 2: bridge unidentified gaps <= gap_tolerance_s between identical tracks.
     """
     # Pass 1: consecutive same-key grouping
     groups: list[list[tuple[MusicSegment, DetectionResult]]] = []
@@ -76,6 +76,7 @@ class OutputWriter:
         self,
         video_path: Path,
         results: list[tuple[MusicSegment, DetectionResult]],
+        waveform: dict | None = None,
     ) -> ResultsOutput:
         """Write detection results to disk.
 
@@ -133,6 +134,7 @@ class OutputWriter:
             source=str(video_path),
             segments=segment_outputs,
             identifications=identification_outputs,
+            waveform=waveform,
         )
 
         results_path = video_output_dir / "results.json"
@@ -204,14 +206,17 @@ class Pipeline:
         audio, sample_rate = self.loader.load(video_path)
         progress("loading", f"Duration: {len(audio) / sample_rate:.1f}s")
 
+        n_pts = min(1000, len(audio))
+        block = max(1, len(audio) // n_pts)
+        trimmed = (len(audio) // block) * block
+        peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
+        max_p = float(peaks.max())
+        waveform_data = {
+            "samples": [round(float(x / max_p), 3) for x in peaks] if max_p > 0 else [0.0] * len(peaks),
+            "duration": round(float(len(audio) / sample_rate), 2),
+        }
         if on_progress:
-            n_pts = min(1000, len(audio))
-            block = max(1, len(audio) // n_pts)
-            trimmed = (len(audio) // block) * block
-            peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
-            max_p = float(peaks.max())
-            norm = [round(float(x / max_p), 3) for x in peaks] if max_p > 0 else [0.0]*len(peaks)
-            on_progress("waveform", json.dumps({"samples": norm, "duration": round(float(len(audio)/sample_rate), 2)}))
+            on_progress("waveform", json.dumps(waveform_data))
 
         progress("classifying", "Starting chunk classification...")
         classification_results = []
@@ -266,7 +271,7 @@ class Pipeline:
                     det_detail = f"[{chunk_idx}/{total_chunks}] {detection.title} – {detection.artist}"
                     print(f"  {det_detail}")
                     progress("detecting", det_detail)
-                    progress("identified", json.dumps({"start": round(chunk_start, 3), "end": round(chunk_end, 3)}))
+                    progress("identified", json.dumps({"start": round(chunk_start, 3), "end": round(chunk_end, 3), "title": detection.title, "artist": detection.artist}))
                 else:
                     no_match = f"[{chunk_idx}/{total_chunks}] {chunk_start:.0f}s–{chunk_end:.0f}s: no match"
                     print(f"  {no_match}")
@@ -277,7 +282,7 @@ class Pipeline:
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
-        return self.output_writer.write(video_path, detection_results)
+        return self.output_writer.write(video_path, detection_results, waveform=waveform_data)
 
 
 if __name__ == "__main__":

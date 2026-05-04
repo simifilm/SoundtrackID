@@ -32,7 +32,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
         """Async implementation of music detection."""
         from shazamio import Shazam
 
-        # Fresh instance per call — shazamio's aiohttp session is bound to the
+        # Fresh instance per call; shazamio's aiohttp session is bound to the
         # current event loop; reusing an instance across asyncio.run() calls
         # causes silent failures on the second and subsequent detections.
         shazam = Shazam(language=self._language)
