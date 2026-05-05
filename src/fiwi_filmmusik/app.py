@@ -2,10 +2,12 @@
 
 import asyncio
 import json
+import os
 import queue
 import shutil
 import tempfile
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -14,12 +16,30 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-_STATIC_DIR = Path(__file__).parent / "static"
-_OUTPUT_DIR = Path("./output/cache")
+import sys as _sys
+
+if getattr(_sys, "frozen", False):
+    _STATIC_DIR = Path(_sys._MEIPASS) / "static"
+else:
+    _STATIC_DIR = Path(__file__).parent / "static"
+
+if getattr(_sys, "frozen", False):
+    # Writable user directory inside the macOS app sandbox
+    _OUTPUT_DIR = Path.home() / "Library" / "Application Support" / "FIWI Filmmusik" / "cache"
+else:
+    _OUTPUT_DIR = Path("./output/cache")
 
 # ── Singleton classifier (loaded once at startup) ─────────────────────────────
 _classifier = None
 _classifier_lock = threading.Lock()
+
+# ── Per-run cancellation registry ─────────────────────────────────────────────
+_cancel_events: dict[str, threading.Event] = {}
+_cancel_lock = threading.Lock()
+
+
+class _PipelineCancelled(Exception):
+    pass
 
 
 def _get_classifier(threshold: float = 0.2):
@@ -27,9 +47,23 @@ def _get_classifier(threshold: float = 0.2):
     if _classifier is None:
         with _classifier_lock:
             if _classifier is None:
-                from fiwi_filmmusik.classifiers import HuggingFaceClassifier
-                _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
-    # Update threshold on the cached singleton (cheap attribute write)
+                if getattr(_sys, "frozen", False):
+                    from fiwi_filmmusik.classifiers import OnnxClassifier
+                    _classifier = OnnxClassifier(
+                        model_dir=str(Path(_sys._MEIPASS) / "ast_model"),
+                        music_labels=["Music"],
+                        threshold=threshold,
+                    )
+                elif os.environ.get("FIWI_ONNX"):
+                    from fiwi_filmmusik.classifiers import OnnxClassifier
+                    _classifier = OnnxClassifier(
+                        model_dir=str(Path(__file__).parents[2] / "assets" / "ast_model"),
+                        music_labels=["Music"],
+                        threshold=threshold,
+                    )
+                else:
+                    from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+                    _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
     _classifier.threshold = threshold
     return _classifier
 
@@ -44,7 +78,7 @@ def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: f
 
     return Pipeline(
         loader=VideoLoader(),
-        chunker=AudioChunker(chunk_duration=chunk_duration, overlap=2.0),
+        chunker=AudioChunker(chunk_duration=chunk_duration, overlap=0.0),
         classifier=_get_classifier(threshold=threshold),
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
@@ -65,9 +99,24 @@ app = FastAPI(title="FIWI Filmmusik Analyzer", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.post("/cancel/{run_id}")
+async def cancel_run(run_id: str) -> dict:
+    with _cancel_lock:
+        ev = _cancel_events.get(run_id)
+    if ev:
+        ev.set()
+        return {"status": "cancelled"}
+    raise HTTPException(status_code=404, detail="Run not found")
 
 
 @app.post("/analyze")
@@ -82,11 +131,13 @@ async def analyze(
     """Accept a video file and stream SSE progress events while running the pipeline."""
     contents = await file.read()
     original_name = file.filename or "video.mp4"
+    run_id = str(uuid.uuid4())
 
     return StreamingResponse(
         _run_pipeline_sse(
             contents,
             original_name,
+            run_id=run_id,
             chunk_duration=chunk_duration,
             threshold=threshold,
             max_segment_duration=max_segment or None,
@@ -103,22 +154,28 @@ async def analyze(
 async def _run_pipeline_sse(
     video_bytes: bytes,
     original_name: str,
+    run_id: str,
     chunk_duration: float = 10.0,
     threshold: float = 0.2,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Run the pipeline in a thread and yield SSE events."""
+    cancel_event = threading.Event()
+    with _cancel_lock:
+        _cancel_events[run_id] = cancel_event
+
     ev_queue: queue.Queue[dict] = queue.Queue()
 
     def on_progress(step: str, detail: str) -> None:
+        if cancel_event.is_set():
+            raise _PipelineCancelled()
         if step == "waveform":
             ev_queue.put({"step": "waveform", **json.loads(detail)})
         else:
             ev_queue.put({"step": step, "detail": detail})
 
     def run_sync() -> None:
-        # Use original filename so output dir has the right name (e.g. output/test_video/)
         tmp_dir = Path(tempfile.mkdtemp())
         tmp_path = tmp_dir / original_name
         try:
@@ -126,16 +183,22 @@ async def _run_pipeline_sse(
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration)
             ev_queue.put({"step": "done", "results": results.to_dict()})
+        except _PipelineCancelled:
+            ev_queue.put({"step": "cancelled"})
         except Exception as exc:
             import traceback
             ev_queue.put({"step": "error", "detail": str(exc), "traceback": traceback.format_exc()})
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+            with _cancel_lock:
+                _cancel_events.pop(run_id, None)
 
     task = asyncio.create_task(asyncio.to_thread(run_sync))
 
     def encode(ev: dict) -> str:
         return f"data: {json.dumps(ev)}\n\n"
+
+    yield encode({"step": "run_id", "run_id": run_id})
 
     while True:
         # Drain all pending events
@@ -143,7 +206,7 @@ async def _run_pipeline_sse(
             try:
                 ev = ev_queue.get_nowait()
                 yield encode(ev)
-                if ev.get("step") in ("done", "error"):
+                if ev.get("step") in ("done", "error", "cancelled"):
                     return
             except queue.Empty:
                 break
@@ -153,9 +216,9 @@ async def _run_pipeline_sse(
             while not ev_queue.empty():
                 ev = ev_queue.get_nowait()
                 yield encode(ev)
-                if ev.get("step") in ("done", "error"):
+                if ev.get("step") in ("done", "error", "cancelled"):
                     return
-            # Task ended without a done/error event
+            # Task ended without a terminal event
             exc = task.exception()
             if exc:
                 yield encode({"step": "error", "detail": str(exc)})

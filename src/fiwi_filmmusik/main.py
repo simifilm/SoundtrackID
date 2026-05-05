@@ -3,13 +3,20 @@
 
 def main() -> None:
     """Entry point: start the FastAPI/uvicorn server."""
+    import argparse
+
     try:
         import uvicorn
     except ImportError:
         print("uvicorn is not installed. Run: pip install -e '.[web]'")
         raise SystemExit(1)
 
-    uvicorn.run("fiwi_filmmusik.app:app", host="0.0.0.0", port=8000, reload=False)
+    parser = argparse.ArgumentParser(description="FIWI Filmmusik web server")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default="127.0.0.1")
+    args = parser.parse_args()
+
+    uvicorn.run("fiwi_filmmusik.app:app", host=args.host, port=args.port, reload=False)
 
 
 if __name__ == "__main__":

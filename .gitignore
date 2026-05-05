@@ -27,10 +27,9 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!fiwi-server.spec
 
 # Installer logs
 pip-log.txt
@@ -218,3 +217,10 @@ __marimo__/
 tests/test_video.mp4
 output/
 .DS_Store
+
+
+# Tauri / Rust
+src-tauri/target/
+
+# Node
+node_modules/

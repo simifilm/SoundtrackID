@@ -367,19 +367,48 @@
     white-space: nowrap;
   }
 
-  button.reset-btn {
+  .results-actions {
+    display: flex;
+    gap: 0.75rem;
     margin-top: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  button.reset-btn, button.download-btn {
     padding: 0.5rem 1.25rem;
-    background: #ffffff;
-    border: 1px solid #ddd6fe;
     border-radius: 8px;
-    color: #6b7280;
     cursor: pointer;
     font-size: 0.85rem;
     transition: background 0.15s, color 0.15s;
   }
 
+  button.reset-btn {
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    color: #6b7280;
+  }
   button.reset-btn:hover { background: #f0ebff; color: #7c3aed; }
+
+  button.download-btn {
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    color: #6b7280;
+  }
+  button.download-btn:hover { background: #f0ebff; color: #7c3aed; }
+
+  button.cancel-btn {
+    display: none;
+    margin-top: 1rem;
+    padding: 0.4rem 1rem;
+    background: #fff;
+    border: 1px solid #fca5a5;
+    border-radius: 8px;
+    color: #dc2626;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: background 0.15s, color 0.15s;
+  }
+  button.cancel-btn:hover { background: #fef2f2; }
 
   .empty-note {
     color: #a09cb8;
@@ -534,7 +563,7 @@
   <div class="header-card">
     <div class="header-brand">
       <div>
-        <h1>FIWI Filmmusik</h1>
+        <h1>FIWI Filmmusik Analyzer</h1>
         <p>Film music identification and analysis</p>
       </div>
     </div>
@@ -596,7 +625,7 @@
     </svg>
     <p class="drop-label">Drop a video file here</p>
     <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi accepted</p>
-    <input type="file" id="file-input" accept=".mp4,.mov,.avi,video/*">
+    <input type="file" id="file-input" accept="video/*">
   </div>
 
   <!-- History Panel -->
@@ -625,6 +654,7 @@
       </div>
     </div>
     <div id="error-area"></div>
+    <button class="cancel-btn" id="cancel-btn">Cancel analysis</button>
   </div>
 
   <!-- Waveform (shown during analysis and when viewing results/history) -->
@@ -648,7 +678,10 @@
       </table>
     </div>
 
-    <button class="reset-btn" id="reset-btn">Analyze another file</button>
+    <div class="results-actions">
+      <button class="reset-btn" id="reset-btn">Analyze another file</button>
+      <button class="download-btn" id="download-btn">Download results</button>
+    </div>
   </div>
 
 </div>
@@ -666,6 +699,12 @@ let identFarthestEnd  = 0;
 const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
 const resetBtn        = document.getElementById('reset-btn');
+const cancelBtn       = document.getElementById('cancel-btn');
+const downloadBtn     = document.getElementById('download-btn');
+
+let currentRunId  = null;
+let activeReader  = null;
+let currentResults = null;
 
 // Settings wiring
 document.getElementById('opt-threshold').addEventListener('input', function() {
@@ -680,14 +719,30 @@ document.getElementById('opt-csv').addEventListener('change', function() {
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+const VIDEO_EXTS = new Set(['.mp4','.mov','.avi','.mkv','.webm','.m4v','.mpg','.mpeg','.wmv','.flv']);
+function isVideoFile(file) {
+  if (file.type.startsWith('video/')) return true;
+  const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+  return VIDEO_EXTS.has(ext);
+}
+function rejectFile() {
+  errorArea.textContent = 'Only video files are supported (.mp4, .mov, .avi, .mkv …)';
+  errorArea.style.display = 'block';
+}
+
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
-  if (file) startAnalysis(file);
+  if (!file) return;
+  if (!isVideoFile(file)) { rejectFile(); return; }
+  startAnalysis(file);
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) startAnalysis(fileInput.files[0]);
+  const file = fileInput.files[0];
+  if (!file) return;
+  if (!isVideoFile(file)) { rejectFile(); fileInput.value = ''; return; }
+  startAnalysis(file);
 });
 
 // Steps helper
@@ -838,6 +893,11 @@ function startAnalysis(file) {
     if (detail) detail.textContent = '';
   });
 
+  currentRunId = null;
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = 'Cancel analysis';
+  cancelBtn.style.display = 'block';
+
   document.getElementById('history-panel').style.display = 'none';
   dropZone.style.display = 'none';
   progressView.style.display = 'block';
@@ -854,6 +914,7 @@ function startAnalysis(file) {
   fetch('/analyze', { method: 'POST', body: formData })
     .then(res => {
       const reader = res.body.getReader();
+      activeReader = reader;
       const decoder = new TextDecoder();
       let buf = '';
 
@@ -881,8 +942,29 @@ function startAnalysis(file) {
 
 const CHUNK_RE = /(\d+\.?\d*)s\s*-\s*(\d+\.?\d*)s:\s*(MUSIC|-+)/;
 
+function finishRun() {
+  cancelBtn.style.display = 'none';
+  currentRunId = null;
+  activeReader = null;
+}
+
 function handleEvent(ev) {
   const { step, detail, results } = ev;
+
+  if (step === 'run_id') {
+    currentRunId = ev.run_id;
+    return;
+  }
+
+  if (step === 'cancelled') {
+    finishRun();
+    dropZone.style.display = 'block';
+    progressView.style.display = 'none';
+    waveformContainer.style.display = 'none';
+    fileInput.value = '';
+    loadHistory();
+    return;
+  }
 
   if (step === 'waveform') {
     wfSamples = ev.samples;
@@ -908,6 +990,7 @@ function handleEvent(ev) {
   }
 
   if (step === 'done') {
+    finishRun();
     wfCues = (results.cues || []).map(c => ({
       start: c.start,
       end: c.start + c.duration,
@@ -924,6 +1007,7 @@ function handleEvent(ev) {
   }
 
   if (step === 'error') {
+    finishRun();
     errorArea.textContent = 'ERROR: ' + detail;
     errorArea.style.display = 'block';
     return;
@@ -1040,17 +1124,19 @@ function fmtTime(secs) {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-function showResults(results, { autoDownload = true } = {}) {
+function showResults(results) {
   if (!results) {
     errorArea.textContent = 'ERROR: server sent done event without results data';
     errorArea.style.display = 'block';
     return;
   }
+  currentResults = results;
   resultsView.style.display  = 'block';
 
   const cues = results.cues || [];
   const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
 
+  resultsBody.innerHTML = '';
   if (cues.length === 0) {
     resultsBody.innerHTML = '<tr><td colspan="8" class="empty-note">No music segments detected.</td></tr>';
   } else {
@@ -1074,13 +1160,6 @@ function showResults(results, { autoDownload = true } = {}) {
     });
   }
 
-  if (autoDownload) {
-    const stem = (results.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
-    triggerDownload(JSON.stringify(results, null, 2), stem + '_results.json', 'application/json');
-    if (document.getElementById('opt-csv').checked) {
-      triggerDownload(buildCSV(results), stem + '_results.csv', 'text/csv');
-    }
-  }
 }
 
 resetBtn.addEventListener('click', () => {
@@ -1090,6 +1169,22 @@ resetBtn.addEventListener('click', () => {
   waveformContainer.style.display = 'none';
   fileInput.value = '';
   loadHistory();
+});
+
+downloadBtn.addEventListener('click', () => {
+  if (!currentResults) return;
+  const stem = (currentResults.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
+  if (document.getElementById('opt-csv').checked) {
+    triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
+  }
+});
+
+cancelBtn.addEventListener('click', async () => {
+  if (!currentRunId) return;
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling…';
+  try { await fetch('/cancel/' + currentRunId, { method: 'POST' }); } catch (_) {}
 });
 
 async function loadHistory() {
@@ -1126,7 +1221,7 @@ async function loadHistory() {
           waveformContainer.style.display = 'block';
           redrawWaveform(waveformCanvas);
         }
-        showResults(item.results, { autoDownload: false });
+        showResults(item.results);
       });
       list.appendChild(div);
     });
