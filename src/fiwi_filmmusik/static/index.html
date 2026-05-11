@@ -1150,7 +1150,7 @@ function platformLinkIcons(cue) {
   ].filter(l => l.url);
   return links.map(({ url, platform }) => {
     const { color, title, path } = PLATFORM_ICONS[platform];
-    return `<a class="track-link" href="${url}" target="_blank" rel="noopener" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
+    return `<a class="track-link" href="${url}" onclick="event.preventDefault();location.href=this.href;" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
   }).join('');
 }
 
