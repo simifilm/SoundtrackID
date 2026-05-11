@@ -130,14 +130,43 @@ This produces `dist/fiwi-server/` (~300 MB), which Tauri copies into the `.app` 
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri build
 ```
 
-Output: `src-tauri/target/release/bundle/macos/FIWI Filmmusik.app`
+Output:
+- `src-tauri/target/release/bundle/macos/FIWI Filmmusik.app`
+- `src-tauri/target/release/bundle/dmg/FIWI Filmmusik_0.1.0_aarch64.dmg`
 
-To create a distributable zip:
+### Code signing and notarization (macOS)
+
+Without signing, recipients see a *"damaged and can't be opened"* Gatekeeper error. Signing requires a **Developer ID Application** certificate, which is only available to the **Account Holder** or **Admin** of the Apple Developer team.
+
+**Option A — Account Holder builds and distributes**
+
+The Account Holder runs the build with their credentials:
 
 ```bash
-cd src-tauri/target/release/bundle/macos
-zip -r --symlinks ~/Desktop/FIWI-Filmmusik.zip "FIWI Filmmusik.app"
+APPLE_SIGNING_IDENTITY="Developer ID Application: Your Org (TEAMID)" \
+APPLE_ID="holder@example.com" \
+APPLE_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
+APPLE_TEAM_ID="TEAMID" \
+PATH="$HOME/.cargo/bin:$PATH" npm run tauri build
 ```
+
+`APPLE_PASSWORD` is an app-specific password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. Tauri signs, notarizes, and staples automatically.
+
+**Option B — Export certificate to a team member**
+
+1. Account Holder: Keychain Access → find *Developer ID Application: …* → right-click → **Export** → save as `.p12` with a password
+2. Share the `.p12` + password securely with the developer
+3. Developer: double-click the `.p12` to import it into Keychain, then run the build with the signing env vars above
+
+**Option C — Distribute unsigned (workaround for recipients)**
+
+Recipients run this once in Terminal after moving the app to `/Applications`:
+
+```bash
+xattr -cr /Applications/FIWI\ Filmmusik.app
+```
+
+After that the app opens normally without any warning.
 
 ### Build the installer (Windows)
 

@@ -138,6 +138,18 @@ fn main() {
             .title("FIWI Filmmusik")
             .inner_size(1280.0, 860.0)
             .min_inner_size(900.0, 600.0)
+            .disable_drag_drop_handler()
+            .on_navigation(|url| {
+                if url.host_str() == Some("127.0.0.1") {
+                    return true;
+                }
+                // Open external links (Spotify, Apple Music, YouTube) in the system browser
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(url.as_str()).spawn();
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("cmd").args(["/c", "start", "", url.as_str()]).spawn();
+                false
+            })
             .build()?;
             Ok(())
         })

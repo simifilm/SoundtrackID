@@ -227,6 +227,18 @@ async def _run_pipeline_sse(
         await asyncio.sleep(0.05)
 
 
+@app.delete("/history/{video_name}")
+async def delete_history_item(video_name: str) -> dict:
+    """Delete a run directory from the cache."""
+    run_dir = (_OUTPUT_DIR / video_name).resolve()
+    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not run_dir.exists() or not run_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+    shutil.rmtree(run_dir)
+    return {"status": "deleted"}
+
+
 @app.get("/history")
 async def history() -> list[dict]:
     """Return the last 10 completed runs, newest first."""

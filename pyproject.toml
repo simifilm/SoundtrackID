@@ -30,6 +30,7 @@ hf = [
 ]
 shazam = [
     "shazamio>=0.7",
+    "truststore>=0.9",
 ]
 web = [
     "fastapi>=0.100",

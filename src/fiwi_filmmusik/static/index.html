@@ -342,15 +342,45 @@
     box-shadow: inset 3px 0 0 #7c3aed;
   }
 
-  .history-item::after {
-    content: '›';
+  .history-chevron {
     font-size: 1.1rem;
     color: #ddd6fe;
-    transition: color 0.15s;
+    line-height: 1;
     flex-shrink: 0;
+    pointer-events: none;
+    transition: color 0.15s;
   }
+  .history-item:hover .history-chevron { color: #7c3aed; }
 
-  .history-item:hover::after { color: #7c3aed; }
+  .history-delete-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #d1d5db;
+    padding: 0.3rem 0.4rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+    display: none;
+    align-items: center;
+    transition: color 0.15s, background 0.15s;
+  }
+  .history-item:hover .history-delete-btn { display: flex; }
+  .history-delete-btn:hover { color: #ef4444; background: #fef2f2; }
+
+  #empty-state {
+    padding: 3.5rem 2rem;
+    text-align: center;
+  }
+  #empty-state p {
+    color: #1e1b4b;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+  }
+  #empty-state small {
+    color: #a09cb8;
+    font-size: 0.82rem;
+  }
 
   .history-name {
     font-size: 0.88rem;
@@ -667,6 +697,10 @@
   <!-- Results View -->
   <div id="results-view">
     <div class="results-card">
+      <div id="empty-state" style="display:none">
+        <p>No music segments detected</p>
+        <small>Try lowering the Sensitivity threshold and analyzing again.</small>
+      </div>
       <table id="results-table">
         <thead>
           <tr>
@@ -698,6 +732,8 @@ const detectFill      = document.getElementById('detect-fill');
 let identFarthestEnd  = 0;
 const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
+const resultsTable    = document.getElementById('results-table');
+const emptyState      = document.getElementById('empty-state');
 const resetBtn        = document.getElementById('reset-btn');
 const cancelBtn       = document.getElementById('cancel-btn');
 const downloadBtn     = document.getElementById('download-btn');
@@ -1138,8 +1174,11 @@ function showResults(results) {
 
   resultsBody.innerHTML = '';
   if (cues.length === 0) {
-    resultsBody.innerHTML = '<tr><td colspan="8" class="empty-note">No music segments detected.</td></tr>';
+    resultsTable.style.display = 'none';
+    emptyState.style.display = 'block';
   } else {
+    resultsTable.style.display = '';
+    emptyState.style.display = 'none';
     cues.forEach(cue => {
       const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
       const cover = cue.photo_url
@@ -1204,7 +1243,14 @@ async function loadHistory() {
       div.className = 'history-item';
       div.innerHTML = `
         <span class="history-name">${item.video_name}</span>
-        <span class="history-meta">${meta}</span>`;
+        <span class="history-meta">${meta}</span>
+        <button class="history-delete-btn" title="Delete run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg></button>
+        <span class="history-chevron">›</span>`;
+      div.querySelector('.history-delete-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await fetch('/history/' + encodeURIComponent(item.video_name), { method: 'DELETE' }); } catch (_) {}
+        loadHistory();
+      });
       div.addEventListener('click', () => {
         dropZone.style.display = 'none';
         panel.style.display = 'none';

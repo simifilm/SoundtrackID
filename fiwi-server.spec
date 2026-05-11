@@ -52,12 +52,13 @@ a = Analysis(
         "anyio._backends._asyncio",
         "h11",
         "python_multipart",
-        # async / network
+        # async / network / ssl
         "asyncio",
         "aiohttp",
         "aiosignal",
         "multidict",
         "yarl",
+        "truststore",
         # audio
         "librosa",
         "scipy",

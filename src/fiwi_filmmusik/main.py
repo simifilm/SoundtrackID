@@ -1,5 +1,11 @@
 """Main module: launches the FIWI Filmmusik web server."""
 
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 
 def main() -> None:
     """Entry point: start the FastAPI/uvicorn server."""
