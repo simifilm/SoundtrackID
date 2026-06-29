@@ -172,11 +172,77 @@
     50%       { opacity: 0.5; }
   }
 
-  #waveform-container { margin-top: 1.25rem; display: none; border: 1px solid #ddd6fe; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05); }
-  #waveform-canvas { width: 100%; height: 80px; display: block; background: #ffffff; }
+  #waveform-container { margin-top: 1.25rem; display: none; border: 1px solid #ddd6fe; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05); background: #ffffff; }
+
+  #wf-zoom-controls {
+    display: none;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid #ede9fe;
+    background: #faf8ff;
+    font-size: 0.78rem;
+    color: #6b7280;
+  }
+  #wf-zoom-controls button {
+    background: #ffffff;
+    border: 1px solid #ddd6fe;
+    border-radius: 6px;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.85rem;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+  #wf-zoom-controls button:hover { background: #f0ebff; color: #7c3aed; }
+  #wf-zoom-controls button:disabled { opacity: 0.4; cursor: default; }
+  #wf-zoom-label { margin-left: 0.4rem; font-variant-numeric: tabular-nums; min-width: 3rem; }
+  #wf-zoom-hint { margin-left: auto; font-size: 0.72rem; color: #a09cb8; }
+
+  #waveform-scroll {
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: #ffffff;
+    cursor: grab;
+  }
+  #waveform-scroll.grabbing { cursor: grabbing; }
+  #waveform-scroll.grabbing #wf-tooltip { display: none !important; }
+  #waveform-canvas { height: 80px; display: block; background: #ffffff; }
+
+  #wf-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.6s ease-out;
+    z-index: 5;
+  }
+  #wf-marker.active { opacity: 1; transition: opacity 0s; }
+
+  #minimap-canvas {
+    display: none;
+    width: 100%;
+    height: 22px;
+    background: #faf8ff;
+    border-top: 1px solid #ede9fe;
+    cursor: pointer;
+  }
+
   .prog-bar { height: 4px; background: #ddd6fe; overflow: hidden; }
   .prog-fill { height: 100%; width: 0%; background: #7c3aed; transition: width 0.4s ease; }
   #error-area { color: #dc2626; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+
+  @keyframes rowPulse {
+    0%   { background: #fef08a; }
+    100% { background: transparent; }
+  }
+  tbody tr.cue-flash td { animation: rowPulse 1.5s ease-out; }
 
   #wf-tooltip {
     position: fixed;
@@ -689,7 +755,18 @@
 
   <!-- Waveform (shown during analysis and when viewing results/history) -->
   <div id="waveform-container" style="display:none; margin-top:1.25rem;">
-    <canvas id="waveform-canvas" height="80"></canvas>
+    <div id="wf-zoom-controls">
+      <button type="button" id="wf-zoom-out" title="Zoom out">−</button>
+      <button type="button" id="wf-zoom-reset" title="Reset zoom">Reset</button>
+      <button type="button" id="wf-zoom-in" title="Zoom in">+</button>
+      <span id="wf-zoom-label">1.0×</span>
+      <span id="wf-zoom-hint">Ctrl/⌘ + scroll to zoom · drag to pan</span>
+    </div>
+    <div id="waveform-scroll">
+      <canvas id="waveform-canvas" height="80"></canvas>
+      <div id="wf-marker"></div>
+    </div>
+    <canvas id="minimap-canvas" height="22"></canvas>
     <div class="prog-bar"><div class="prog-fill" id="detect-fill"></div></div>
     <div id="wf-tooltip"></div>
   </div>
@@ -728,6 +805,14 @@ const progressView    = document.getElementById('progress-view');
 const resultsView     = document.getElementById('results-view');
 const waveformContainer = document.getElementById('waveform-container');
 const waveformCanvas  = document.getElementById('waveform-canvas');
+const waveformScroll  = document.getElementById('waveform-scroll');
+const minimapCanvas   = document.getElementById('minimap-canvas');
+const wfMarker        = document.getElementById('wf-marker');
+const zoomControls    = document.getElementById('wf-zoom-controls');
+const zoomInBtn       = document.getElementById('wf-zoom-in');
+const zoomOutBtn      = document.getElementById('wf-zoom-out');
+const zoomResetBtn    = document.getElementById('wf-zoom-reset');
+const zoomLabel       = document.getElementById('wf-zoom-label');
 const detectFill      = document.getElementById('detect-fill');
 let identFarthestEnd  = 0;
 const errorArea       = document.getElementById('error-area');
@@ -850,24 +935,61 @@ waveformCanvas.addEventListener('mouseleave', hideWfTooltip);
 let wfSamples = null, wfDuration = 0, wfChunks = [], wfIdentified = [], wfCues = [];
 let detectingInitialized = false;
 
+// Zoom & pan state
+let wfZoom = 1;
+const WF_ZOOM_MIN = 1;
+const WF_ZOOM_MAX_HARD = 50;
+let cachedMergedMusic = [];   // recomputed inside redrawAll
+let markerTimer = null;
+let suppressNextClick = false;
+let resizeTimer = null;
+
+function rebuildMergedMusic() {
+  cachedMergedMusic = [];
+  for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
+    const last = cachedMergedMusic[cachedMergedMusic.length - 1];
+    if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
+    else { cachedMergedMusic.push({ start: c.start, end: c.end }); }
+  }
+}
+
+function colorAt(t) {
+  for (const r of wfIdentified) {
+    if (t >= r.start && t < r.end) return '#16a34a';
+  }
+  for (const r of cachedMergedMusic) {
+    if (t >= r.start && t < r.end) return '#7c3aed';
+  }
+  for (const c of wfChunks) {
+    if (!c.isMusic && t >= c.start && t < c.end) return '#ddd6fe';
+  }
+  return '#ede9fe';
+}
+
+function effectiveMaxZoom() {
+  const scrollW = waveformScroll.clientWidth || 1;
+  const dpr = window.devicePixelRatio || 1;
+  const pxLimit = 16000;
+  const cap = pxLimit / (scrollW * dpr);
+  return Math.max(WF_ZOOM_MIN, Math.min(WF_ZOOM_MAX_HARD, cap));
+}
+
 function redrawWaveform(canvas) {
+  const scrollW = waveformScroll.clientWidth || canvas.parentElement.clientWidth || 1;
+  canvas.style.width = (scrollW * wfZoom) + 'px';
+
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth;
   const H = canvas.offsetHeight;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
 
   const n = wfSamples.length;
   const barW = W / n;
-
-  const mergedMusic = [];
-  for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
-    const last = mergedMusic[mergedMusic.length - 1];
-    if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
-    else { mergedMusic.push({ start: c.start, end: c.end }); }
-  }
 
   ctx.fillStyle = '#d1d5db';
   for (let t = 30; t < wfDuration; t += 30) {
@@ -877,19 +999,9 @@ function redrawWaveform(canvas) {
 
   for (let i = 0; i < n; i++) {
     const t = (i / n) * wfDuration;
-    let color = '#ede9fe';
-    for (const c of wfChunks) {
-      if (!c.isMusic && t >= c.start && t < c.end) { color = '#ddd6fe'; break; }
-    }
-    for (const r of mergedMusic) {
-      if (t >= r.start && t < r.end) { color = '#7c3aed'; break; }
-    }
-    for (const r of wfIdentified) {
-      if (t >= r.start && t < r.end) { color = '#16a34a'; break; }
-    }
     const barH = Math.max(1, wfSamples[i] * H);
     const x = i * barW;
-    ctx.fillStyle = color;
+    ctx.fillStyle = colorAt(t);
     ctx.fillRect(x, (H - barH) / 2, Math.max(1, barW - 0.5), barH);
   }
 
@@ -902,7 +1014,88 @@ function redrawWaveform(canvas) {
     const label = t >= 60 ? `${Math.floor(t/60)}m${t%60?String(t%60).padStart(2,'0')+'s':''}` : `${t}s`;
     ctx.fillText(label, x, H - 10);
   }
+}
 
+function redrawMinimap() {
+  if (!wfSamples || wfDuration === 0) return;
+  const ctx = minimapCanvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = minimapCanvas.clientWidth;
+  const H = minimapCanvas.clientHeight;
+  if (W === 0 || H === 0) return;
+  minimapCanvas.width = W * dpr;
+  minimapCanvas.height = H * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const n = wfSamples.length;
+  const barW = W / n;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * wfDuration;
+    const barH = Math.max(1, wfSamples[i] * H);
+    ctx.fillStyle = colorAt(t);
+    ctx.fillRect(i * barW, (H - barH) / 2, Math.max(1, barW), barH);
+  }
+
+  // Viewport rectangle
+  const fullW = waveformCanvas.clientWidth || (W * wfZoom);
+  if (fullW > 0) {
+    const scrollW = waveformScroll.clientWidth;
+    const vx = (waveformScroll.scrollLeft / fullW) * W;
+    const vw = Math.max(2, (scrollW / fullW) * W);
+    const atFull = wfZoom <= 1.001;
+    ctx.fillStyle = atFull ? 'rgba(124,58,237,0.05)' : 'rgba(124,58,237,0.12)';
+    ctx.fillRect(vx, 0, vw, H);
+    ctx.strokeStyle = atFull ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.9)';
+    ctx.lineWidth = atFull ? 1 : 1.5;
+    ctx.strokeRect(vx + 0.5, 0.5, vw - 1, H - 1);
+  }
+}
+
+function redrawAll() {
+  if (!wfSamples) return;
+  rebuildMergedMusic();
+  redrawWaveform(waveformCanvas);
+  redrawMinimap();
+  updateZoomUI();
+}
+
+function updateZoomUI() {
+  zoomLabel.textContent = wfZoom.toFixed(1) + '×';
+  const max = effectiveMaxZoom();
+  zoomInBtn.disabled = wfZoom >= max - 0.01;
+  zoomOutBtn.disabled = wfZoom <= WF_ZOOM_MIN + 0.01;
+  zoomResetBtn.disabled = wfZoom <= WF_ZOOM_MIN + 0.01;
+}
+
+// setZoom: newZoom = target zoom; anchorFraction = 0..1 position on full timeline
+// that should remain at cursorOffset px from left edge of viewport (defaults to centered).
+function setZoom(newZoom, anchorFraction, cursorOffset) {
+  if (!wfSamples) return;
+  const max = effectiveMaxZoom();
+  newZoom = Math.max(WF_ZOOM_MIN, Math.min(max, newZoom));
+  const scrollW = waveformScroll.clientWidth;
+  if (anchorFraction == null) anchorFraction = 0.5;
+  if (cursorOffset == null) cursorOffset = scrollW / 2;
+  wfZoom = newZoom;
+  redrawWaveform(waveformCanvas);
+  const fullW = waveformCanvas.clientWidth;
+  const target = anchorFraction * fullW - cursorOffset;
+  waveformScroll.scrollLeft = Math.max(0, Math.min(Math.max(0, fullW - scrollW), target));
+  redrawMinimap();
+  updateZoomUI();
+}
+
+function applyZoomVisibility() {
+  // Show/hide zoom controls + minimap based on whether zooming is meaningful.
+  const showZoom = !!wfSamples && wfDuration > 30 && wfSamples.length > 80;
+  zoomControls.style.display = showZoom ? 'flex' : 'none';
+  minimapCanvas.style.display = showZoom ? 'block' : 'none';
+  if (!showZoom && wfZoom !== 1) {
+    wfZoom = 1;
+    if (wfSamples) redrawWaveform(waveformCanvas);
+  }
 }
 
 // Analysis
@@ -910,7 +1103,12 @@ function startAnalysis(file) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   identFarthestEnd = 0;
+  wfZoom = 1;
+  if (waveformScroll) waveformScroll.scrollLeft = 0;
+  if (wfMarker) wfMarker.classList.remove('active');
+  if (markerTimer) { clearTimeout(markerTimer); markerTimer = null; }
   detectFill.style.width = '0%';
+  document.querySelector('.prog-bar').style.display = '';
   waveformContainer.style.display = 'none';
   errorArea.style.display = 'none';
   errorArea.textContent = '';
@@ -1006,7 +1204,8 @@ function handleEvent(ev) {
     wfSamples = ev.samples;
     wfDuration = ev.duration;
     waveformContainer.style.display = 'block';
-    redrawWaveform(waveformCanvas);
+    applyZoomVisibility();
+    redrawAll();
     return;
   }
 
@@ -1021,20 +1220,22 @@ function handleEvent(ev) {
     }
     identFarthestEnd = Math.max(identFarthestEnd, d.end);
     if (wfDuration > 0) detectFill.style.width = (identFarthestEnd / wfDuration * 100) + '%';
-    if (wfSamples) redrawWaveform(waveformCanvas);
+    if (wfSamples) redrawAll();
     return;
   }
 
   if (step === 'done') {
     finishRun();
     wfCues = (results.cues || []).map(c => ({
+      segment_id: c.segment_id,
       start: c.start,
       end: c.start + c.duration,
+      duration: c.duration,
       title: c.title || null,
       artist: c.artist || null,
     }));
     wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
-    if (wfSamples) redrawWaveform(waveformCanvas);
+    if (wfSamples) redrawAll();
     detectFill.style.width = '100%';
     setTimeout(() => { document.querySelector('.prog-bar').style.display = 'none'; }, 400);
     markAllDone();
@@ -1078,7 +1279,7 @@ function handleEvent(ev) {
       const isMusic = m[3] === 'MUSIC';
       wfChunks.push({ start, end, isMusic });
       updateStepDetail(step, isMusic ? 'Music' : 'No music');
-      if (wfSamples) redrawWaveform(waveformCanvas);
+      if (wfSamples) redrawAll();
       if (wfDuration > 0) detectFill.style.width = (end / wfDuration * 100) + '%';
     }
   }
@@ -1186,6 +1387,8 @@ function showResults(results) {
         : '';
       const linkIcon = platformLinkIcons(cue);
       const tr = document.createElement('tr');
+      tr.dataset.segmentId = cue.segment_id;
+      tr.style.cursor = 'pointer';
       tr.innerHTML = `
         <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
         <td>${fmtTime(cue.start)}</td>
@@ -1195,6 +1398,11 @@ function showResults(results) {
         <td>${fmt(cue.title)}${linkIcon}</td>
         <td>${fmt(cue.artist)}</td>
         <td>${fmt(cue.album)}</td>`;
+      tr.addEventListener('click', e => {
+        if (e.target.closest('audio, a, button')) return;
+        const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
+        focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
+      });
       resultsBody.appendChild(tr);
     });
   }
@@ -1261,11 +1469,22 @@ async function loadHistory() {
           wfSamples    = wf.samples;
           wfDuration   = wf.duration;
           wfChunks     = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
-          wfCues       = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, title: c.title || null, artist: c.artist || null }));
+          wfCues       = (item.results.cues || []).map(c => ({
+            segment_id: c.segment_id,
+            start: c.start,
+            end: c.start + c.duration,
+            duration: c.duration,
+            title: c.title || null,
+            artist: c.artist || null,
+          }));
           wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
+          wfZoom = 1;
+          if (waveformScroll) waveformScroll.scrollLeft = 0;
+          if (wfMarker) wfMarker.classList.remove('active');
           document.querySelector('.prog-bar').style.display = 'none';
           waveformContainer.style.display = 'block';
-          redrawWaveform(waveformCanvas);
+          applyZoomVisibility();
+          redrawAll();
         }
         showResults(item.results);
       });
@@ -1274,6 +1493,131 @@ async function loadHistory() {
     panel.style.display = 'block';
   } catch (_) { panel.style.display = 'none'; }
 }
+
+// Zoom controls
+zoomInBtn.addEventListener('click', () => setZoom(wfZoom * 1.5, 0.5, waveformScroll.clientWidth / 2));
+zoomOutBtn.addEventListener('click', () => setZoom(wfZoom / 1.5, 0.5, waveformScroll.clientWidth / 2));
+zoomResetBtn.addEventListener('click', () => setZoom(1, 0, 0));
+
+waveformScroll.addEventListener('wheel', e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!wfSamples) return;
+  e.preventDefault();
+  const fullW = waveformCanvas.clientWidth;
+  if (fullW === 0) return;
+  const rect = waveformScroll.getBoundingClientRect();
+  const cursorOffset = e.clientX - rect.left;
+  const fraction = (waveformScroll.scrollLeft + cursorOffset) / fullW;
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  setZoom(wfZoom * factor, fraction, cursorOffset);
+}, { passive: false });
+
+waveformScroll.addEventListener('scroll', () => {
+  if (!wfSamples) return;
+  redrawMinimap();
+});
+
+// Drag-pan on main waveform
+let panState = null;  // {startX, startScroll, dragged}
+waveformScroll.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (!wfSamples) return;
+  panState = { startX: e.clientX, startScroll: waveformScroll.scrollLeft, dragged: false };
+  suppressNextClick = false;
+});
+window.addEventListener('mousemove', e => {
+  if (!panState) return;
+  const dx = e.clientX - panState.startX;
+  if (Math.abs(dx) > 4) {
+    if (!panState.dragged) {
+      panState.dragged = true;
+      waveformScroll.classList.add('grabbing');
+      hideWfTooltip();
+    }
+    waveformScroll.scrollLeft = panState.startScroll - dx;
+  }
+});
+window.addEventListener('mouseup', () => {
+  if (!panState) return;
+  if (panState.dragged) {
+    suppressNextClick = true;
+    waveformScroll.classList.remove('grabbing');
+  }
+  panState = null;
+});
+
+// Minimap drag/click to recenter
+function minimapJump(clientX) {
+  if (!wfSamples) return;
+  const rect = minimapCanvas.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const fullW = waveformCanvas.clientWidth;
+  const scrollW = waveformScroll.clientWidth;
+  const target = fraction * fullW - scrollW / 2;
+  waveformScroll.scrollLeft = Math.max(0, Math.min(Math.max(0, fullW - scrollW), target));
+}
+
+let miniDragging = false;
+minimapCanvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  miniDragging = true;
+  minimapJump(e.clientX);
+});
+window.addEventListener('mousemove', e => {
+  if (!miniDragging) return;
+  minimapJump(e.clientX);
+});
+window.addEventListener('mouseup', () => { miniDragging = false; });
+
+// Click on waveform → scroll to and flash result row
+waveformCanvas.addEventListener('click', e => {
+  if (suppressNextClick) { suppressNextClick = false; return; }
+  if (!wfSamples || wfDuration === 0) return;
+  if (wfCues.length === 0) return;
+  const rect = waveformCanvas.getBoundingClientRect();
+  const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
+  const cue = wfCues.find(c => t >= c.start && t < c.end);
+  if (!cue || !cue.segment_id) return;
+  const row = resultsBody.querySelector(`tr[data-segment-id="${cue.segment_id}"]`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.remove('cue-flash');
+  void row.offsetWidth;
+  row.classList.add('cue-flash');
+});
+
+// Focus a cue on the timeline: zoom out enough to see it, pan to center, show marker.
+function focusCueOnTimeline(cue) {
+  if (!wfSamples || wfDuration === 0) return;
+  const midT = cue.start + (cue.duration || (cue.end - cue.start)) / 2;
+  const dur = (cue.duration || (cue.end - cue.start)) || 1;
+  const desiredZoom = Math.max(1, wfDuration / (dur * 2));
+  const targetZoom = Math.min(effectiveMaxZoom(), desiredZoom);
+  const fraction = midT / wfDuration;
+  setZoom(Math.max(wfZoom, targetZoom), fraction, waveformScroll.clientWidth / 2);
+
+  const fullW = waveformCanvas.clientWidth;
+  if (fullW > 0) {
+    wfMarker.style.left = (fraction * fullW) + 'px';
+    wfMarker.classList.remove('active');
+    void wfMarker.offsetWidth;
+    wfMarker.classList.add('active');
+    if (markerTimer) clearTimeout(markerTimer);
+    markerTimer = setTimeout(() => { wfMarker.classList.remove('active'); markerTimer = null; }, 2500);
+  }
+}
+
+// Resize observer for debounced redraw + zoom-cap re-clamp
+window.addEventListener('resize', () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    if (!wfSamples) return;
+    const max = effectiveMaxZoom();
+    if (wfZoom > max) wfZoom = max;
+    redrawAll();
+  }, 100);
+});
 
 loadHistory();
 </script>

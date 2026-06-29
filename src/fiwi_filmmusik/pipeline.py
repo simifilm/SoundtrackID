@@ -206,7 +206,11 @@ class Pipeline:
         audio, sample_rate = self.loader.load(video_path)
         progress("loading", f"Duration: {len(audio) / sample_rate:.1f}s")
 
-        n_pts = min(1000, len(audio))
+        WAVEFORM_HZ = 5
+        WAVEFORM_MAX_PTS = 60_000
+        duration_s = len(audio) / sample_rate
+        n_pts = min(WAVEFORM_MAX_PTS, max(1, int(round(duration_s * WAVEFORM_HZ))))
+        n_pts = min(n_pts, len(audio))
         block = max(1, len(audio) // n_pts)
         trimmed = (len(audio) // block) * block
         peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
