@@ -118,8 +118,8 @@ npm install
 
 ```bash
 source .venv/bin/activate
-pip install pyinstaller
-pyinstaller fiwi-server.spec
+pip install -e ".[build]"
+pyinstaller --noconfirm fiwi-server.spec
 ```
 
 This produces `dist/fiwi-server/` (~300 MB), which Tauri copies into the `.app` bundle.
@@ -185,8 +185,7 @@ winget install OpenJS.NodeJS
 # Python 3.10+ with dependencies
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[onnx,shazam,web]"
-pip install pyinstaller
+pip install -e ".[onnx,shazam,web,build]"
 
 # Install npm packages
 npm install
@@ -195,7 +194,7 @@ npm install
 **Bundle the Python server:**
 ```powershell
 .venv\Scripts\activate
-pyinstaller fiwi-server.spec
+pyinstaller --noconfirm fiwi-server.spec
 ```
 
 **Build the Windows installer:**
