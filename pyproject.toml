@@ -28,6 +28,9 @@ hf = [
     "transformers>=4.30",
     "torch>=2.0",
 ]
+onnx = [
+    "onnxruntime>=1.16",
+]
 shazam = [
     "shazamio>=0.7",
     "truststore>=0.9",
@@ -36,6 +39,9 @@ web = [
     "fastapi>=0.100",
     "uvicorn>=0.23",
     "python-multipart>=0.0.6",
+]
+build = [
+    "pyinstaller>=6.0",
 ]
 
 [tool.hatch.build.targets.wheel]
