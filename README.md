@@ -55,7 +55,7 @@ The default classifier uses ONNX Runtime (fast, no GPU needed). To use the origi
 
 ```bash
 pip install -e ".[hf,shazam,web]"
-python3 -m fiwi_filmmusik          # set FIWI_ONNX= (unset) to use HuggingFace
+FIWI_HF=1 python3 -m fiwi_filmmusik
 ```
 
 ### Optional: vocal isolation with Demucs

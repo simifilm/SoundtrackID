@@ -54,16 +54,19 @@ def _get_classifier(threshold: float = 0.2):
                         music_labels=["Music"],
                         threshold=threshold,
                     )
-                elif os.environ.get("FIWI_ONNX"):
-                    from fiwi_filmmusik.classifiers import OnnxClassifier
-                    _classifier = OnnxClassifier(
-                        model_dir=str(Path(__file__).parents[2] / "assets" / "ast_model"),
-                        music_labels=["Music"],
-                        threshold=threshold,
-                    )
                 else:
-                    from fiwi_filmmusik.classifiers import HuggingFaceClassifier
-                    _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
+                    onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
+                    use_hf = os.environ.get("FIWI_HF") or not onnx_model_dir.exists()
+                    if use_hf:
+                        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+                        _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
+                    else:
+                        from fiwi_filmmusik.classifiers import OnnxClassifier
+                        _classifier = OnnxClassifier(
+                            model_dir=str(onnx_model_dir),
+                            music_labels=["Music"],
+                            threshold=threshold,
+                        )
     _classifier.threshold = threshold
     return _classifier
 
