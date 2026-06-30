@@ -215,9 +215,10 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 2px;
-    background: #f59e0b;
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    background: rgba(245, 158, 11, 0.28);
+    border-left: 2px solid #f59e0b;
+    border-right: 2px solid #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.6s ease-out;
@@ -1598,7 +1599,10 @@ function focusCueOnTimeline(cue) {
 
   const fullW = waveformCanvas.clientWidth;
   if (fullW > 0) {
-    wfMarker.style.left = (fraction * fullW) + 'px';
+    const left = (cue.start / wfDuration) * fullW;
+    const width = Math.max(3, (dur / wfDuration) * fullW);
+    wfMarker.style.left = left + 'px';
+    wfMarker.style.width = width + 'px';
     wfMarker.classList.remove('active');
     void wfMarker.offsetWidth;
     wfMarker.classList.add('active');
