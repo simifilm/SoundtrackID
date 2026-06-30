@@ -17,18 +17,29 @@ class AudioChunker:
         """Split audio into overlapping chunks.
 
         Yields chunks of chunk_duration seconds, stepping by (chunk_duration - overlap).
-        Discards the final chunk if shorter than chunk_duration.
+        Always emits a final chunk anchored to the end of the audio so the tail is
+        covered even when its length is not a multiple of the step size.
         """
         chunk_samples = int(self.chunk_duration * sample_rate)
         step_samples = int((self.chunk_duration - self.overlap) * sample_rate)
+        if len(audio) < chunk_samples:
+            return
 
+        last_start = -1
         for i in range(0, len(audio) - chunk_samples + 1, step_samples):
-            chunk_data = audio[i : i + chunk_samples]
-            start_time = i / sample_rate
-            end_time = (i + chunk_samples) / sample_rate
+            last_start = i
             yield AudioChunk(
-                data=chunk_data,
-                start_time=start_time,
-                end_time=end_time,
+                data=audio[i : i + chunk_samples],
+                start_time=i / sample_rate,
+                end_time=(i + chunk_samples) / sample_rate,
+                sample_rate=sample_rate,
+            )
+
+        tail_start = len(audio) - chunk_samples
+        if tail_start > last_start:
+            yield AudioChunk(
+                data=audio[tail_start : tail_start + chunk_samples],
+                start_time=tail_start / sample_rate,
+                end_time=len(audio) / sample_rate,
                 sample_rate=sample_rate,
             )
