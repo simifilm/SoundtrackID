@@ -224,3 +224,8 @@ src-tauri/target/
 
 # Node
 node_modules/
+
+# Downloaded test/sample videos (not part of the repo)
+
+/YTDown_*.mp4
+CLAUDE.md
