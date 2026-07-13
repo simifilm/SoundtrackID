@@ -160,6 +160,10 @@ Output:
 
 Without signing, recipients see a *"damaged and can't be opened"* Gatekeeper error. Signing requires a **Developer ID Application** certificate, which is only available to the **Account Holder** or **Admin** of the Apple Developer team.
 
+For distribution outside the App Store, **notarization is mandatory** — a valid signature alone is not enough. Gatekeeper blocks any Developer-ID-signed app that Apple has not notarized. Tauri runs signing, notarization, and stapling automatically when the credentials below are present.
+
+Because the bundled `fiwi-server` (a PyInstaller directory of Python `.so`/`.dylib` files) is copied in as a Tauri **resource** — which Tauri does *not* auto-sign — it must be deep-signed with Hardened Runtime before notarization. This is handled automatically by `scripts/sign-fiwi-server.sh` (with `scripts/fiwi-server.entitlements`), wired into the build via `beforeBundleCommand` in `tauri.conf.json`. No manual step is needed; it only runs when `APPLE_SIGNING_IDENTITY` is set.
+
 **Option A — Account Holder builds and distributes**
 
 The Account Holder runs the build with their credentials:
@@ -172,7 +176,12 @@ APPLE_TEAM_ID="TEAMID" \
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri build
 ```
 
-`APPLE_PASSWORD` is an app-specific password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. Tauri signs, notarizes, and staples automatically.
+`APPLE_PASSWORD` is an app-specific password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. `APPLE_TEAM_ID` is the 10-character team ID from [developer.apple.com/account](https://developer.apple.com/account) → Membership. Verify the finished app after building:
+
+```bash
+spctl -a -vvv --type exec "src-tauri/target/release/bundle/macos/FIWI Filmmusik.app"
+# expect: "accepted" + "source=Notarized Developer ID"
+```
 
 **Option B — Export certificate to a team member**
 

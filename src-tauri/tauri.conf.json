@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "ch.uzh.fiwi.filmmusik",
   "build": {
-    "frontendDist": "../src/fiwi_filmmusik/static"
+    "frontendDist": "../src/fiwi_filmmusik/static",
+    "beforeBundleCommand": "bash \"$(git rev-parse --show-toplevel)/scripts/sign-fiwi-server.sh\""
   },
   "app": {
     "withGlobalTauri": false,
