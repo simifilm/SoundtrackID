@@ -507,6 +507,139 @@
   }
   button.cancel-btn:hover { background: #fef2f2; }
 
+  button.enrich-btn {
+    padding: 0.5rem 1.25rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    background: #7c3aed;
+    border: 1px solid #7c3aed;
+    color: #ffffff;
+    transition: background 0.15s, color 0.15s;
+  }
+  button.enrich-btn:hover { background: #6d28d9; border-color: #6d28d9; }
+  button.enrich-btn:disabled { background: #c4b5fd; border-color: #c4b5fd; cursor: not-allowed; }
+
+  #film-metadata-header {
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.8rem;
+    background: #faf7ff;
+    border: 1px solid #ddd6fe;
+    border-radius: 8px;
+    color: #4c1d95;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  #film-metadata-header .film-title { font-weight: 600; font-size: 1.0rem; color: #3b0764; }
+  #film-metadata-header .film-meta { color: #6b7280; font-size: 0.82rem; }
+  #film-metadata-header small {
+    display: block;
+    margin-top: 0.4rem;
+    color: #6b7280;
+    font-size: 0.74rem;
+    font-style: italic;
+  }
+
+  td.composer-uncertain {
+    font-style: italic;
+    color: #9ca3af;
+  }
+  td.composer-uncertain::after {
+    content: "";
+  }
+  .composer-uncertain-badge {
+    display: inline-block;
+    margin-left: 0.3rem;
+    padding: 0 0.3rem;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-style: normal;
+    cursor: help;
+  }
+
+  #enrich-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  }
+  .enrich-modal-card {
+    background: #ffffff;
+    border: 1px solid #7c3aed;
+    border-radius: 12px;
+    padding: 1.5rem 1.75rem;
+    width: 420px;
+    max-width: 92vw;
+    box-shadow: 0 14px 40px rgba(60, 30, 120, 0.18);
+  }
+  .enrich-modal-card h3 {
+    margin: 0 0 0.3rem 0;
+    color: #4c1d95;
+    font-size: 1.05rem;
+  }
+  .enrich-modal-hint {
+    margin: 0 0 1rem 0;
+    color: #6b7280;
+    font-size: 0.78rem;
+  }
+  .enrich-modal-card label {
+    display: block;
+    margin-bottom: 0.55rem;
+    color: #6b7280;
+    font-size: 0.78rem;
+  }
+  .enrich-modal-card input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.2rem;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid #ddd6fe;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    color: #3b0764;
+  }
+  .enrich-modal-card input:focus { outline: none; border-color: #7c3aed; }
+  .enrich-modal-actions {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: flex-end;
+    margin-top: 1rem;
+  }
+  #enrich-progress { margin-top: 0.8rem; }
+  .enrich-progress-bar {
+    height: 6px;
+    background: #f0ebff;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .enrich-progress-fill {
+    height: 100%;
+    background: #7c3aed;
+    width: 0%;
+    transition: width 0.2s ease;
+  }
+  #enrich-progress-text {
+    display: block;
+    margin-top: 0.4rem;
+    color: #6b7280;
+    font-size: 0.76rem;
+  }
+  #enrich-error {
+    margin-top: 0.8rem;
+    padding: 0.55rem 0.7rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    color: #b91c1c;
+    font-size: 0.8rem;
+  }
+
   .empty-note {
     color: #a09cb8;
     font-size: 0.85rem;
@@ -775,6 +908,7 @@
   <!-- Results View -->
   <div id="results-view">
     <div class="results-card">
+      <div id="film-metadata-header" style="display:none"></div>
       <div id="empty-state" style="display:none">
         <p>No music segments detected</p>
         <small>Try lowering the Sensitivity threshold and analyzing again.</small>
@@ -784,6 +918,7 @@
           <tr>
             <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
             <th></th><th>Title</th><th>Artist</th><th>Album</th>
+            <th>Komponist</th><th>†</th><th>Werk</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -793,6 +928,28 @@
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="download-btn" id="download-btn">Download results</button>
+      <button class="enrich-btn" id="enrich-btn">Metadaten anreichern</button>
+    </div>
+  </div>
+
+  <!-- Enrich Modal -->
+  <div id="enrich-modal" style="display:none">
+    <div class="enrich-modal-card">
+      <h3>Metadaten anreichern</h3>
+      <p class="enrich-modal-hint">Optional vorausgefüllt aus MP4-Tags. Mindestens eine ID oder Titel benötigt.</p>
+      <label>IMDb ID <input type="text" id="enrich-imdb" placeholder="tt0043014"></label>
+      <label>TMDb ID <input type="text" id="enrich-tmdb" placeholder="123"></label>
+      <label>Titel <input type="text" id="enrich-title" placeholder="Sunset Boulevard"></label>
+      <label>Jahr <input type="text" id="enrich-year" placeholder="1950"></label>
+      <div id="enrich-progress" style="display:none">
+        <div class="enrich-progress-bar"><div class="enrich-progress-fill" id="enrich-progress-fill"></div></div>
+        <small id="enrich-progress-text">Filmdaten werden geladen…</small>
+      </div>
+      <div id="enrich-error" style="display:none"></div>
+      <div class="enrich-modal-actions">
+        <button type="button" class="reset-btn" id="enrich-cancel-btn">Abbrechen</button>
+        <button type="button" class="download-btn" id="enrich-submit-btn">Anreichern</button>
+      </div>
     </div>
   </div>
 
@@ -1362,6 +1519,51 @@ function fmtTime(secs) {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
+function renderFilmHeader(film) {
+  const el = document.getElementById('film-metadata-header');
+  if (!el) return;
+  if (!film || (!film.title && !film.director && !film.imdb_id && !film.tmdb_id)) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const yearPart = film.year ? ` (${film.year})` : '';
+  const directorPart = film.director
+    ? `Regie: ${film.director}${film.director_death_year ? ` † ${film.director_death_year}` : ''}`
+    : '';
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div class="film-title">${fmt(film.title || '—')}${yearPart}</div>
+    <div class="film-meta">${directorPart}</div>
+    <small>Hinweis: PD-Status der Musik richtet sich nach Todesjahr des Komponisten, nicht des Regisseurs.</small>`;
+}
+
+function buildCueRowHTML(cue, videoName) {
+  const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
+  const cover = cue.photo_url
+    ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">`
+    : '';
+  const linkIcon = platformLinkIcons(cue);
+  const enr = cue.enrichment || {};
+  const uncertain = enr.composer_match === 'search';
+  const cls = uncertain ? ' class="composer-uncertain"' : '';
+  const badge = uncertain
+    ? '<span class="composer-uncertain-badge" title="Per Titel-Suche zugeordnet, nicht via ISRC — manuell prüfen.">?</span>'
+    : '';
+  return `
+    <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
+    <td>${fmtTime(cue.start)}</td>
+    <td>${fmtTime(cue.duration)}</td>
+    <td><audio controls src="${url}"></audio></td>
+    <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
+    <td>${fmt(cue.title)}${linkIcon}</td>
+    <td>${fmt(cue.artist)}</td>
+    <td>${fmt(cue.album)}</td>
+    <td${cls}>${fmt(enr.composer)}${badge}</td>
+    <td${cls}>${fmt(enr.composer_death_year)}</td>
+    <td${cls}>${fmt(enr.work_title)}</td>`;
+}
+
 function showResults(results) {
   if (!results) {
     errorArea.textContent = 'ERROR: server sent done event without results data';
@@ -1374,6 +1576,8 @@ function showResults(results) {
   const cues = results.cues || [];
   const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
 
+  renderFilmHeader(results.film);
+
   resultsBody.innerHTML = '';
   if (cues.length === 0) {
     resultsTable.style.display = 'none';
@@ -1382,23 +1586,10 @@ function showResults(results) {
     resultsTable.style.display = '';
     emptyState.style.display = 'none';
     cues.forEach(cue => {
-      const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
-      const cover = cue.photo_url
-        ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">`
-        : '';
-      const linkIcon = platformLinkIcons(cue);
       const tr = document.createElement('tr');
       tr.dataset.segmentId = cue.segment_id;
       tr.style.cursor = 'pointer';
-      tr.innerHTML = `
-        <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
-        <td>${fmtTime(cue.start)}</td>
-        <td>${fmtTime(cue.duration)}</td>
-        <td><audio controls src="${url}"></audio></td>
-        <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
-        <td>${fmt(cue.title)}${linkIcon}</td>
-        <td>${fmt(cue.artist)}</td>
-        <td>${fmt(cue.album)}</td>`;
+      tr.innerHTML = buildCueRowHTML(cue, videoName);
       tr.addEventListener('click', e => {
         if (e.target.closest('audio, a, button')) return;
         const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
@@ -1434,6 +1625,212 @@ cancelBtn.addEventListener('click', async () => {
   cancelBtn.textContent = 'Cancelling…';
   try { await fetch('/cancel/' + currentRunId, { method: 'POST' }); } catch (_) {}
 });
+
+// ── Enrich modal ────────────────────────────────────────────────────────────
+const enrichBtn         = document.getElementById('enrich-btn');
+const enrichModal       = document.getElementById('enrich-modal');
+const enrichSubmitBtn   = document.getElementById('enrich-submit-btn');
+const enrichCancelBtn   = document.getElementById('enrich-cancel-btn');
+const enrichImdb        = document.getElementById('enrich-imdb');
+const enrichTmdb        = document.getElementById('enrich-tmdb');
+const enrichTitle       = document.getElementById('enrich-title');
+const enrichYear        = document.getElementById('enrich-year');
+const enrichProgress    = document.getElementById('enrich-progress');
+const enrichProgressFill= document.getElementById('enrich-progress-fill');
+const enrichProgressText= document.getElementById('enrich-progress-text');
+const enrichError       = document.getElementById('enrich-error');
+let currentEnrichId   = null;
+let activeEnrichReader = null;
+
+function openEnrichModal() {
+  if (!currentResults) return;
+  const film = currentResults.film || {};
+  enrichImdb.value = film.imdb_id || '';
+  enrichTmdb.value = film.tmdb_id || '';
+  enrichTitle.value = film.title || '';
+  enrichYear.value = film.year || '';
+  enrichProgress.style.display = 'none';
+  enrichError.style.display = 'none';
+  enrichError.textContent = '';
+  enrichSubmitBtn.disabled = false;
+  enrichSubmitBtn.textContent = 'Anreichern';
+  enrichCancelBtn.textContent = 'Abbrechen';
+  enrichModal.style.display = 'flex';
+}
+
+function closeEnrichModal() {
+  enrichModal.style.display = 'none';
+  if (activeEnrichReader) {
+    try { activeEnrichReader.cancel(); } catch (_) {}
+    activeEnrichReader = null;
+  }
+  currentEnrichId = null;
+}
+
+enrichBtn.addEventListener('click', openEnrichModal);
+
+enrichCancelBtn.addEventListener('click', async () => {
+  if (currentEnrichId) {
+    enrichCancelBtn.disabled = true;
+    enrichCancelBtn.textContent = 'Abbrechen…';
+    try { await fetch('/enrich/cancel/' + currentEnrichId, { method: 'POST' }); } catch (_) {}
+    return;
+  }
+  closeEnrichModal();
+});
+
+enrichSubmitBtn.addEventListener('click', () => {
+  if (!currentResults) return;
+  const videoName = (currentResults.source || '').split('/').pop().replace(/\.[^.]+$/, '');
+  if (!videoName) {
+    enrichError.textContent = 'Kein Videoname verfügbar.';
+    enrichError.style.display = 'block';
+    return;
+  }
+  const payload = {
+    imdb_id: enrichImdb.value.trim() || null,
+    tmdb_id: enrichTmdb.value.trim() ? parseInt(enrichTmdb.value.trim(), 10) : null,
+    title: enrichTitle.value.trim() || null,
+    year: enrichYear.value.trim() ? parseInt(enrichYear.value.trim(), 10) : null,
+  };
+  if (!payload.imdb_id && !payload.tmdb_id && !payload.title) {
+    enrichError.textContent = 'Bitte mindestens eine ID oder einen Titel angeben.';
+    enrichError.style.display = 'block';
+    return;
+  }
+  enrichError.style.display = 'none';
+  enrichSubmitBtn.disabled = true;
+  enrichSubmitBtn.textContent = 'Läuft…';
+  enrichProgress.style.display = 'block';
+  enrichProgressFill.style.width = '0%';
+  enrichProgressText.textContent = 'Filmdaten werden geladen…';
+
+  fetch('/enrich/' + encodeURIComponent(videoName), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+    .then(res => {
+      const reader = res.body.getReader();
+      activeEnrichReader = reader;
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();
+          parts.forEach(part => {
+            if (part.startsWith('data: ')) {
+              try {
+                const ev = JSON.parse(part.slice(6));
+                handleEnrichEvent(ev);
+              } catch (_) {}
+            }
+          });
+          pump();
+        });
+      }
+      pump();
+    })
+    .catch(err => {
+      enrichError.textContent = 'Verbindungsfehler: ' + err.message;
+      enrichError.style.display = 'block';
+      enrichSubmitBtn.disabled = false;
+      enrichSubmitBtn.textContent = 'Anreichern';
+    });
+});
+
+function handleEnrichEvent(ev) {
+  const { step } = ev;
+
+  if (step === 'enrich_id') {
+    currentEnrichId = ev.enrich_id;
+    return;
+  }
+
+  if (step === 'film_start') {
+    enrichProgressText.textContent = 'Filmdaten werden geladen…';
+    return;
+  }
+
+  if (step === 'film_done') {
+    currentResults.film = ev.film;
+    renderFilmHeader(ev.film);
+    enrichProgressText.textContent = 'Komponisten werden ermittelt…';
+    return;
+  }
+
+  if (step === 'music_start') {
+    enrichProgressFill.style.width = '0%';
+    enrichProgressText.textContent = `Komponisten: 0 / ${ev.total}`;
+    return;
+  }
+
+  if (step === 'music_cue') {
+    if (currentResults && currentResults.cues) {
+      const cue = currentResults.cues.find(c => c.segment_id === ev.segment_id);
+      if (cue) {
+        cue.enrichment = ev.enrichment;
+        const tr = resultsBody.querySelector(`tr[data-segment-id="${cue.segment_id}"]`);
+        if (tr) {
+          const videoName = (currentResults.source || '').split('/').pop().replace(/\.[^.]+$/, '');
+          tr.innerHTML = buildCueRowHTML(cue, videoName);
+          tr.addEventListener('click', e => {
+            if (e.target.closest('audio, a, button')) return;
+            const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
+            focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
+          });
+        }
+      }
+    }
+    if (ev.total > 0) {
+      const pct = (ev.index / ev.total) * 100;
+      enrichProgressFill.style.width = pct + '%';
+      enrichProgressText.textContent = `Komponisten: ${ev.index} / ${ev.total}`;
+    }
+    return;
+  }
+
+  if (step === 'music_done') {
+    enrichProgressFill.style.width = '100%';
+    enrichProgressText.textContent = 'Fertig.';
+    return;
+  }
+
+  if (step === 'done') {
+    currentResults = ev.results;
+    enrichSubmitBtn.disabled = false;
+    enrichSubmitBtn.textContent = 'Anreichern';
+    setTimeout(closeEnrichModal, 600);
+    loadHistory();
+    return;
+  }
+
+  if (step === 'cancelled') {
+    enrichError.textContent = 'Anreicherung abgebrochen. Teilweise Daten wurden gespeichert.';
+    enrichError.style.display = 'block';
+    enrichSubmitBtn.disabled = false;
+    enrichSubmitBtn.textContent = 'Anreichern';
+    enrichCancelBtn.disabled = false;
+    enrichCancelBtn.textContent = 'Schließen';
+    currentEnrichId = null;
+    return;
+  }
+
+  if (step === 'error') {
+    enrichError.textContent = 'Fehler: ' + (ev.detail || 'Unbekannt');
+    enrichError.style.display = 'block';
+    enrichSubmitBtn.disabled = false;
+    enrichSubmitBtn.textContent = 'Anreichern';
+    enrichCancelBtn.disabled = false;
+    enrichCancelBtn.textContent = 'Schließen';
+    currentEnrichId = null;
+    return;
+  }
+}
 
 async function loadHistory() {
   const panel = document.getElementById('history-panel');

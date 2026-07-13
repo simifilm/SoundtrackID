@@ -43,6 +43,11 @@ web = [
 build = [
     "pyinstaller>=6.0",
 ]
+metadata = [
+    "httpx>=0.27",
+    "mutagen>=1.47",
+    "python-dotenv>=1.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fiwi_filmmusik"]

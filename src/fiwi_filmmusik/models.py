@@ -73,6 +73,7 @@ class IdentificationOutput:
     album: str | None
     confidence: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    enrichment: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +84,7 @@ class IdentificationOutput:
             "album": self.album,
             "confidence": self.confidence,
             "metadata": self.metadata,
+            "enrichment": self.enrichment,
         }
 
 
@@ -96,6 +98,7 @@ class ResultsOutput:
     ID: str | None = None
     fiwi_id: str | None = None
     waveform: dict | None = None
+    film: dict[str, Any] | None = None
 
     def _build_cues(self) -> list[dict[str, Any]]:
         ident_map = {id_.segment_id: id_ for id_ in self.identifications}
@@ -113,10 +116,13 @@ class ResultsOutput:
                 "title": ident.title if ident else None,
                 "artist": ident.artist if ident else None,
                 "album": ident.album if ident else None,
+                "isrc": ident.metadata.get("isrc") if ident else None,
+                "genre": ident.metadata.get("genre") if ident else None,
                 "photo_url": ident.metadata.get("photo_url") if ident else None,
                 "youtube_link": ident.metadata.get("youtube_link") if ident else None,
                 "spotify_url": ident.metadata.get("spotify_url") if ident else None,
                 "apple_music_url": ident.metadata.get("apple_music_url") if ident else None,
+                "enrichment": ident.enrichment if ident else None,
             })
         return cues
 
@@ -125,6 +131,7 @@ class ResultsOutput:
             "ID": self.ID,
             "fiwi_id": self.fiwi_id,
             "source": self.source,
+            "film": self.film,
             "cues": self._build_cues(),
             "waveform": self.waveform,
         }

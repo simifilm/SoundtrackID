@@ -1,6 +1,7 @@
 # PyInstaller spec for fiwi-server
 # Run: .venv/bin/pyinstaller fiwi-server.spec
 
+import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
@@ -8,15 +9,19 @@ block_cipher = None
 # Collect data/binaries for packages that scatter files at runtime
 shazamio_datas, shazamio_bins, shazamio_hidden = collect_all("shazamio")
 aiohttp_datas, aiohttp_bins, aiohttp_hidden = collect_all("aiohttp")
+mutagen_datas, mutagen_bins, mutagen_hidden = collect_all("mutagen")
+
+# Bundle .env if present so the .app has TMDb credentials
+_env_extra = [(".env", ".")] if os.path.exists(".env") else []
 
 a = Analysis(
     ["src/fiwi_filmmusik/__main__.py"],
     pathex=["."],
-    binaries=shazamio_bins + aiohttp_bins,
+    binaries=shazamio_bins + aiohttp_bins + mutagen_bins,
     datas=[
         ("src/fiwi_filmmusik/static", "static"),
         ("assets/ast_model", "ast_model"),
-    ] + shazamio_datas + aiohttp_datas,
+    ] + shazamio_datas + aiohttp_datas + mutagen_datas + _env_extra,
     hiddenimports=[
         # fiwi_filmmusik modules
         "fiwi_filmmusik",
@@ -30,6 +35,15 @@ a = Analysis(
         "fiwi_filmmusik.isolators",
         "fiwi_filmmusik.models",
         "fiwi_filmmusik.config",
+        # metadata enrichment
+        "fiwi_filmmusik.metadata",
+        "fiwi_filmmusik.metadata.enricher",
+        "fiwi_filmmusik.metadata.film",
+        "fiwi_filmmusik.metadata.music",
+        "fiwi_filmmusik.metadata.mp4_tags",
+        "httpx",
+        "mutagen",
+        "dotenv",
         # uvicorn
         "uvicorn",
         "uvicorn.main",
@@ -70,7 +84,7 @@ a = Analysis(
         "yaml",
         "email.mime.text",
         "email.mime.multipart",
-    ] + shazamio_hidden + aiohttp_hidden,
+    ] + shazamio_hidden + aiohttp_hidden + mutagen_hidden,
     excludes=[
         "torch",
         "torchvision",

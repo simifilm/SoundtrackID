@@ -26,6 +26,28 @@ Drag a video file onto the drop zone. Configure analysis settings in the sidebar
 
 When analysis completes, a **Download results** button appears. Click it to save `results.json` (and optionally `results.csv`). Previous runs are listed under **Recent runs** and can be downloaded at any time.
 
+### Metadata enrichment
+
+After analysis, click **Metadaten anreichern** to enrich the run with film and composer metadata:
+
+- **Film** — title, year, director and director's death year via TMDb (primary), Wikidata, and imdbapi.dev.
+- **Composer** — composer name, work title and death year via MusicBrainz (ISRC chain, high confidence) with Wikidata as a fallback (title+artist search, flagged as low confidence with a `?` badge).
+
+The modal is pre-filled from MP4 container tags (Subler-compatible iTunes Movie atoms: title, year, IMDb ID, TMDb ID) when present. For history runs without IDs, type them manually.
+
+**Note**: copyright (PD) status of the music depends on the *composer*'s death year, not the director's. The film header shows the director's death year only for context.
+
+#### TMDb credentials
+
+Enrichment uses TMDb. Put your credentials into a `.env` file at the project root (gitignored):
+
+```
+FIWI_TMDB_API_TOKEN=eyJhbGc...   # v4 Bearer JWT (preferred — header auth, not query param)
+FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
+```
+
+The server reads `.env` at startup. For the bundled `.app`, the spec file bundles `.env` into the application so the production build picks up the same credentials.
+
 ---
 
 ## Running from source (Python)
@@ -38,7 +60,7 @@ cd FIWI-Filmmusik
 git lfs pull                          # downloads the ONNX model (~331 MB)
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[onnx,shazam,web]"
+pip install -e ".[onnx,shazam,web,metadata]"
 ```
 
 Start the server:
@@ -185,7 +207,7 @@ winget install OpenJS.NodeJS
 # Python 3.10+ with dependencies
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[onnx,shazam,web,build]"
+pip install -e ".[onnx,shazam,web,metadata,build]"
 
 # Install npm packages
 npm install

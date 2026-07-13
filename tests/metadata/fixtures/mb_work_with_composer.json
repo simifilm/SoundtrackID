@@ -1,0 +1,16 @@
+{
+  "id": "10c1a66a-8166-32ec-a00f-540f111ce7a3",
+  "title": "Symphony no. 5 in C minor, op. 67",
+  "type": "Symphony",
+  "relations": [
+    {
+      "type": "composer",
+      "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+      "artist": {
+        "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+        "name": "Ludwig van Beethoven",
+        "sort-name": "Beethoven, Ludwig van"
+      }
+    }
+  ]
+}

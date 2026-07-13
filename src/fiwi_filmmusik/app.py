@@ -12,11 +12,28 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import sys as _sys
+
+# Load .env early so TMDb credentials are available downstream
+try:
+    from dotenv import load_dotenv
+    if getattr(_sys, "frozen", False):
+        # In the bundled .app, .env lives next to the binary
+        _env_path = Path(_sys.executable).parent / ".env"
+        if _env_path.exists():
+            load_dotenv(_env_path)
+        # Also try _MEIPASS for spec-bundled .env
+        _meipass_env = Path(getattr(_sys, "_MEIPASS", ".")) / ".env"
+        if _meipass_env.exists():
+            load_dotenv(_meipass_env, override=False)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
 
 if getattr(_sys, "frozen", False):
     _STATIC_DIR = Path(_sys._MEIPASS) / "static"
@@ -36,6 +53,10 @@ _classifier_lock = threading.Lock()
 # ── Per-run cancellation registry ─────────────────────────────────────────────
 _cancel_events: dict[str, threading.Event] = {}
 _cancel_lock = threading.Lock()
+
+# ── Per-enrich cancellation registry ──────────────────────────────────────────
+_enrich_cancel_events: dict[str, threading.Event] = {}
+_enrich_cancel_lock = threading.Lock()
 
 
 class _PipelineCancelled(Exception):
@@ -183,8 +204,10 @@ async def _run_pipeline_sse(
         tmp_path = tmp_dir / original_name
         try:
             tmp_path.write_bytes(video_bytes)
+            from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
+            container_tags = read_mp4_tags(tmp_path) or None
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv)
-            results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration)
+            results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             ev_queue.put({"step": "done", "results": results.to_dict()})
         except _PipelineCancelled:
             ev_queue.put({"step": "cancelled"})
@@ -280,3 +303,155 @@ async def serve_segment(video_name: str, filename: str) -> FileResponse:
     if not seg_path.exists() or not seg_path.is_file():
         raise HTTPException(status_code=404, detail="Segment not found")
     return FileResponse(seg_path, media_type="audio/wav")
+
+
+# ── Enrichment ────────────────────────────────────────────────────────────────
+
+
+@app.post("/enrich/cancel/{enrich_id}")
+async def cancel_enrich(enrich_id: str) -> dict:
+    with _enrich_cancel_lock:
+        ev = _enrich_cancel_events.get(enrich_id)
+    if ev:
+        ev.set()
+        return {"status": "cancelled"}
+    raise HTTPException(status_code=404, detail="Enrich run not found")
+
+
+@app.post("/enrich/{video_name}")
+async def enrich_run(
+    video_name: str,
+    payload: dict = Body(default_factory=dict),
+) -> StreamingResponse:
+    """Enrich an existing results.json with film + composer metadata."""
+    run_dir = (_OUTPUT_DIR / video_name).resolve()
+    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    results_path = run_dir / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    film_hint = {
+        "imdb_id": (payload or {}).get("imdb_id") or None,
+        "tmdb_id": (payload or {}).get("tmdb_id") or None,
+        "title": (payload or {}).get("title") or None,
+        "year": (payload or {}).get("year") or None,
+    }
+    scope = (payload or {}).get("scope") or "all"
+    if scope not in ("film", "music", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'film', 'music' or 'all'")
+    enrich_id = str(uuid.uuid4())
+
+    return StreamingResponse(
+        _run_enrich_sse(results_path, film_hint, enrich_id, scope=scope),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _run_enrich_sse(
+    results_path: Path,
+    film_hint: dict,
+    enrich_id: str,
+    scope: str = "all",
+) -> AsyncGenerator[str, None]:
+    """Run enrichment in a thread and yield SSE events."""
+    cancel_event = threading.Event()
+    with _enrich_cancel_lock:
+        _enrich_cancel_events[enrich_id] = cancel_event
+
+    ev_queue: queue.Queue[dict] = queue.Queue()
+
+    from fiwi_filmmusik.metadata.enricher import EnrichmentCancelled, enrich
+
+    def progress_cb(step: str, **kwargs) -> None:
+        if cancel_event.is_set():
+            raise EnrichmentCancelled()
+        ev_queue.put({"step": step, **kwargs})
+
+    def run_sync() -> None:
+        try:
+            import httpx
+        except ImportError as exc:
+            ev_queue.put({"step": "error", "detail": f"httpx not installed: {exc}"})
+            return
+
+        try:
+            results = json.loads(results_path.read_text())
+        except Exception as exc:
+            ev_queue.put({"step": "error", "detail": f"Failed to load results.json: {exc}"})
+            return
+
+        tmdb_bearer = os.environ.get("FIWI_TMDB_API_TOKEN")
+        tmdb_key = os.environ.get("FIWI_TMDB_KEY")
+
+        client = httpx.Client(timeout=15.0)
+        try:
+            enriched = enrich(
+                results=results,
+                film_hint=film_hint,
+                http_client=client,
+                tmdb_bearer_token=tmdb_bearer,
+                tmdb_api_key=tmdb_key,
+                progress_cb=progress_cb,
+            )
+        except EnrichmentCancelled:
+            # Persist whatever we have so far
+            _atomic_write_json(results_path, results)
+            ev_queue.put({"step": "cancelled"})
+            return
+        except Exception as exc:
+            import traceback
+            ev_queue.put({"step": "error", "detail": str(exc), "traceback": traceback.format_exc()})
+            return
+        finally:
+            client.close()
+            with _enrich_cancel_lock:
+                _enrich_cancel_events.pop(enrich_id, None)
+
+        try:
+            _atomic_write_json(results_path, enriched)
+        except Exception as exc:
+            ev_queue.put({"step": "error", "detail": f"Failed to write results.json: {exc}"})
+            return
+
+        ev_queue.put({"step": "done", "results": enriched})
+
+    task = asyncio.create_task(asyncio.to_thread(run_sync))
+
+    def encode(ev: dict) -> str:
+        return f"data: {json.dumps(ev)}\n\n"
+
+    yield encode({"step": "enrich_id", "enrich_id": enrich_id})
+
+    while True:
+        while True:
+            try:
+                ev = ev_queue.get_nowait()
+                yield encode(ev)
+                if ev.get("step") in ("done", "error", "cancelled"):
+                    return
+            except queue.Empty:
+                break
+
+        if task.done():
+            while not ev_queue.empty():
+                ev = ev_queue.get_nowait()
+                yield encode(ev)
+                if ev.get("step") in ("done", "error", "cancelled"):
+                    return
+            exc = task.exception()
+            if exc:
+                yield encode({"step": "error", "detail": str(exc)})
+            return
+
+        await asyncio.sleep(0.05)
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(path)

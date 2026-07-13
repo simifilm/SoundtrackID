@@ -77,6 +77,7 @@ class OutputWriter:
         video_path: Path,
         results: list[tuple[MusicSegment, DetectionResult]],
         waveform: dict | None = None,
+        film: dict | None = None,
     ) -> ResultsOutput:
         """Write detection results to disk.
 
@@ -135,6 +136,7 @@ class OutputWriter:
             segments=segment_outputs,
             identifications=identification_outputs,
             waveform=waveform,
+            film=film,
         )
 
         results_path = video_output_dir / "results.json"
@@ -186,7 +188,7 @@ class Pipeline:
         conditioning = "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
         self.output_writer = OutputWriter(self.output_dir, conditioning=conditioning, export_csv=export_csv)
 
-    def run(self, video_path: Path, on_progress=None, max_segment_duration: float | None = None) -> ResultsOutput:
+    def run(self, video_path: Path, on_progress=None, max_segment_duration: float | None = None, container_tags: dict | None = None) -> ResultsOutput:
         """Run the pipeline on a video file.
 
         Args:
@@ -286,7 +288,7 @@ class Pipeline:
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
-        return self.output_writer.write(video_path, detection_results, waveform=waveform_data)
+        return self.output_writer.write(video_path, detection_results, waveform=waveform_data, film=container_tags or None)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "results": {
+    "bindings": [
+      {
+        "filmLabel": {"value": "Sunset Boulevard"},
+        "pubdate": {"value": "1950-08-04T00:00:00Z"},
+        "director": {"value": "http://www.wikidata.org/entity/Q57476"},
+        "directorLabel": {"value": "Billy Wilder"},
+        "death": {"value": "2002-03-27T00:00:00Z"},
+        "imdb": {"value": "tt0043014"}
+      }
+    ]
+  }
+}
