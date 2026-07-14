@@ -123,7 +123,7 @@ class OutputWriter:
             if first_detection:
                 identification_outputs.append(IdentificationOutput(
                     segment_id=segment_id,
-                    provider="shazam",
+                    provider=first_detection.provider,
                     title=first_detection.title,
                     artist=first_detection.artist,
                     album=first_detection.metadata.get("album"),
@@ -294,9 +294,14 @@ class Pipeline:
 if __name__ == "__main__":
     import argparse
 
-    from fiwi_filmmusik.classifiers import HuggingFaceClassifier
-    from fiwi_filmmusik.detection import ShazamDetectionClient
-    from fiwi_filmmusik.isolators import DemucsIsolator
+    from fiwi_filmmusik.detection import build_detection_client
+
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
 
     parser = argparse.ArgumentParser(
         description="Run the film music detection pipeline on a video file."
@@ -307,6 +312,18 @@ if __name__ == "__main__":
         type=Path,
         default=Path("./output"),
         help="Output directory (default: ./output)",
+    )
+    parser.add_argument(
+        "--api",
+        choices=("shazam", "acrcloud"),
+        default="shazam",
+        help="Detection provider (default: shazam)",
+    )
+    parser.add_argument(
+        "--classifier",
+        choices=("onnx", "hf"),
+        default="onnx",
+        help="Music classifier backend (default: onnx)",
     )
     parser.add_argument(
         "--no-isolation",
@@ -320,6 +337,12 @@ if __name__ == "__main__":
         help="Chunk duration in seconds (default: 10.0)",
     )
     parser.add_argument(
+        "--max-segment",
+        type=float,
+        default=None,
+        help="Split segments into chunks of at most N seconds before detection",
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
         default=0.2,
@@ -331,15 +354,26 @@ if __name__ == "__main__":
     # Create components
     loader = VideoLoader()
     chunker = AudioChunker(chunk_duration=args.chunk_duration, overlap=2.0)
-    classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=args.threshold)
+
+    if args.classifier == "hf":
+        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        classifier: BaseClassifier = HuggingFaceClassifier(music_labels=["Music"], threshold=args.threshold)
+    else:
+        from fiwi_filmmusik.classifiers import OnnxClassifier
+        onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
+        classifier = OnnxClassifier(
+            model_dir=str(onnx_model_dir), music_labels=["Music"], threshold=args.threshold
+        )
+
     aggregator = ChunkAggregator(gap_tolerance=1.0)
 
     if args.no_isolation:
         isolator: BaseMusicIsolator = DummyIsolator()
     else:
+        from fiwi_filmmusik.isolators import DemucsIsolator
         isolator = DemucsIsolator()
 
-    detection_client = ShazamDetectionClient()
+    detection_client = build_detection_client(args.api)
 
     # Create and run pipeline
     pipeline = Pipeline(
@@ -352,7 +386,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
     )
 
-    results = pipeline.run(args.video_path)
+    results = pipeline.run(args.video_path, max_segment_duration=args.max_segment)
 
     print(f"\nPipeline complete!")
     print(f"  Segments: {len(results.segments)}")

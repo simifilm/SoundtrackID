@@ -60,7 +60,7 @@ cd FIWI-Filmmusik
 git lfs pull                          # downloads the ONNX model (~331 MB)
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[onnx,shazam,web,metadata]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud]"
 ```
 
 Start the server:
@@ -78,6 +78,31 @@ The default classifier uses ONNX Runtime (fast, no GPU needed). To use the origi
 ```bash
 pip install -e ".[hf,shazam,web]"
 FIWI_HF=1 python3 -m fiwi_filmmusik
+```
+
+### Optional: ACRCloud identification
+
+An alternative to Shazam, selectable via the **ACRCloud** option in the
+Detection API dropdown. Like Shazam (and unlike AcoustID), ACRCloud recognises
+short, degraded, film-mixed audio, so it works on individual film cues. When a
+match carries external IDs, the results store Spotify / YouTube / MusicBrainz
+links too. See [docs/detection-providers.md](docs/detection-providers.md) for a
+detailed comparison of Shazam, ACRCloud and AcoustID and the test findings
+behind this recommendation.
+
+```bash
+pip install -e ".[acrcloud]"
+```
+
+Create a project connected to the **Music Recognition** database at
+[console.acrcloud.com](https://console.acrcloud.com) (a plain "Audio
+Fingerprinting" project only matches your own uploaded audio and will return no
+results for commercial music). Add its credentials to your `.env`:
+
+```
+ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
+ACRCLOUD_ACCESS_KEY=xxxxxxxx
+ACRCLOUD_ACCESS_SECRET=xxxxxxxx
 ```
 
 ### Optional: vocal isolation with Demucs
@@ -140,11 +165,14 @@ npm install
 
 ```bash
 source .venv/bin/activate
-pip install -e ".[build]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
 pyinstaller --noconfirm fiwi-server.spec
 ```
 
-This produces `dist/fiwi-server/` (~300 MB), which Tauri copies into the `.app` bundle.
+This produces `dist/fiwi-server/` (~300 MB), which Tauri copies into the `.app`
+bundle. Installing the `acrcloud` extra before building ensures the native
+fingerprint extractor gets bundled; otherwise the ACRCloud provider is absent
+from the `.app`.
 
 ### Build the `.app` (macOS)
 
@@ -216,7 +244,7 @@ winget install OpenJS.NodeJS
 # Python 3.10+ with dependencies
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[onnx,shazam,web,metadata,build]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
 
 # Install npm packages
 npm install

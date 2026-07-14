@@ -37,6 +37,7 @@ class DetectionResult:
     title: str | None
     artist: str | None
     confidence: float
+    provider: str = "shazam"
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -122,6 +123,8 @@ class ResultsOutput:
                 "youtube_link": ident.metadata.get("youtube_link") if ident else None,
                 "spotify_url": ident.metadata.get("spotify_url") if ident else None,
                 "apple_music_url": ident.metadata.get("apple_music_url") if ident else None,
+                "musicbrainz_recording_id": ident.metadata.get("musicbrainz_recording_id") if ident else None,
+                "musicbrainz_url": ident.metadata.get("musicbrainz_url") if ident else None,
                 "enrichment": ident.enrichment if ident else None,
             })
         return cues

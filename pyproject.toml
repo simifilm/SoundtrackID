@@ -35,6 +35,9 @@ shazam = [
     "shazamio>=0.7",
     "truststore>=0.9",
 ]
+acrcloud = [
+    "pyacrcloud>=1.0",
+]
 web = [
     "fastapi>=0.100",
     "uvicorn>=0.23",

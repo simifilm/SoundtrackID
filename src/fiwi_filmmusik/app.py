@@ -92,10 +92,10 @@ def _get_classifier(threshold: float = 0.2):
     return _classifier
 
 
-def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False):
+def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, api: str = "shazam"):
     from fiwi_filmmusik.aggregator import ChunkAggregator
     from fiwi_filmmusik.chunker import AudioChunker
-    from fiwi_filmmusik.detection import ShazamDetectionClient
+    from fiwi_filmmusik.detection import build_detection_client
     from fiwi_filmmusik.isolators import DummyIsolator
     from fiwi_filmmusik.loaders import VideoLoader
     from fiwi_filmmusik.pipeline import Pipeline
@@ -106,7 +106,7 @@ def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: f
         classifier=_get_classifier(threshold=threshold),
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
-        detection_client=ShazamDetectionClient(),
+        detection_client=build_detection_client(api),
         output_dir=output_dir,
         export_csv=export_csv,
     )
@@ -166,6 +166,7 @@ async def analyze(
             threshold=threshold,
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
+            api=api,
         ),
         media_type="text/event-stream",
         headers={
@@ -183,6 +184,7 @@ async def _run_pipeline_sse(
     threshold: float = 0.2,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
+    api: str = "shazam",
 ) -> AsyncGenerator[str, None]:
     """Run the pipeline in a thread and yield SSE events."""
     cancel_event = threading.Event()
@@ -206,7 +208,7 @@ async def _run_pipeline_sse(
             tmp_path.write_bytes(video_bytes)
             from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
             container_tags = read_mp4_tags(tmp_path) or None
-            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv)
+            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             ev_queue.put({"step": "done", "results": results.to_dict()})
         except _PipelineCancelled:
