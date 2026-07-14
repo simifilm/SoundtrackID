@@ -2129,10 +2129,10 @@ function focusCueOnTimeline(cue) {
   if (!wfSamples || wfDuration === 0) return;
   const midT = cue.start + (cue.duration || (cue.end - cue.start)) / 2;
   const dur = (cue.duration || (cue.end - cue.start)) || 1;
-  const desiredZoom = Math.max(1, wfDuration / (dur * 2));
-  const targetZoom = Math.min(effectiveMaxZoom(), desiredZoom);
   const fraction = midT / wfDuration;
-  setZoom(Math.max(wfZoom, targetZoom), fraction, waveformScroll.clientWidth / 2);
+  // Keep the user's current zoom level; just pan to centre the cue (a no-op at
+  // 1×, where the whole timeline is already visible) and highlight its band.
+  setZoom(wfZoom, fraction, waveformScroll.clientWidth / 2);
 
   const fullW = waveformCanvas.clientWidth;
   if (fullW > 0) {
