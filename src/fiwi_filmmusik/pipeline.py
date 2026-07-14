@@ -1,6 +1,7 @@
 """Pipeline orchestrator."""
 
 import json
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -175,6 +176,7 @@ class Pipeline:
         detection_client: BaseMusicDetectionClient,
         output_dir: Path | None = None,
         export_csv: bool = False,
+        detection_concurrency: int = 4,
     ) -> None:
         self.loader = loader
         self.chunker = chunker
@@ -183,6 +185,10 @@ class Pipeline:
         self.isolator = isolator
         self.detection_client = detection_client
         self.output_dir = output_dir or Path("./output")
+        # Number of identification calls dispatched concurrently. Kept modest by
+        # default: identification providers are network-bound and rate-limited
+        # (ACRCloud is metered).
+        self.detection_concurrency = max(1, detection_concurrency)
 
         # Determine conditioning based on isolator type
         conditioning = "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
@@ -194,7 +200,9 @@ class Pipeline:
         Args:
             video_path: Path to the video file.
             on_progress: Optional callable(step: str, detail: str) for progress updates.
-                Steps: "loading", "classifying", "aggregating", "detecting", "writing", "done"
+                Steps: "loading", "waveform", "classifying", "identified", "detecting",
+                "writing" (identification overlaps classification, so "classifying" and
+                "identified" events interleave). "done" is emitted by the caller.
 
         Returns:
             ResultsOutput containing all detected segments and their metadata.
@@ -225,65 +233,91 @@ class Pipeline:
             on_progress("waveform", json.dumps(waveform_data))
 
         progress("classifying", "Starting chunk classification...")
-        classification_results = []
-        for chunk in self.chunker.chunk(audio, sample_rate):
-            result = self.classifier.classify(chunk)
-            status = "MUSIC" if result.is_music else "-----"
-            detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
-            print(f"  {detail}")
-            progress("classifying", detail)
-            classification_results.append(result)
 
-        progress("aggregating", "Aggregating music segments...")
-        segments = self.aggregator.aggregate(classification_results, audio, sample_rate)
-        progress("aggregating", f"Found {len(segments)} music segment(s)")
-
-        # Pre-compute total number of detection chunks so progress is meaningful
+        # Detection runs concurrently with (and overlaps) classification: as the
+        # incremental aggregator finalizes each music segment, its identification
+        # chunks are submitted to a thread pool. Only the blocking detect() calls
+        # run in workers; all progress is emitted from this driver thread.
+        detection_results_by_idx: dict[int, tuple[MusicSegment, DetectionResult]] = {}
+        pending: dict[Future, tuple[int, MusicSegment]] = {}
         total_chunks = 0
-        for segment in segments:
-            if max_segment_duration:
-                max_samples = int(max_segment_duration * segment.sample_rate)
-                total_chunks += max(1, -(-len(segment.audio) // max_samples))
-            else:
-                total_chunks += 1
+        reaped = 0
+        executor = ThreadPoolExecutor(max_workers=self.detection_concurrency)
 
-        progress("detecting", f"Identifying {total_chunks} chunk(s)...")
-        detection_results: list[tuple[MusicSegment, DetectionResult]] = []
-        chunk_idx = 0
-        for segment in segments:
-            seg_audio = self.isolator.isolate(segment.audio, segment.sample_rate)
-
-            if max_segment_duration:
-                max_samples = int(max_segment_duration * segment.sample_rate)
-                chunk_audios = [
-                    seg_audio[s:s + max_samples]
-                    for s in range(0, len(seg_audio), max_samples)
-                ]
-            else:
-                chunk_audios = [seg_audio]
-
-            for ci, chunk_audio in enumerate(chunk_audios):
-                chunk_idx += 1
-                chunk_start = segment.start_time + ci * (max_segment_duration or 0)
-                chunk_end = chunk_start + len(chunk_audio) / segment.sample_rate
-                chunk_seg = MusicSegment(
-                    audio=chunk_audio,
-                    start_time=chunk_start,
-                    end_time=chunk_end,
-                    sample_rate=segment.sample_rate,
-                )
-                detection = self.detection_client.detect(chunk_seg)
-                if detection.title:
-                    det_detail = f"[{chunk_idx}/{total_chunks}] {detection.title} – {detection.artist}"
+        def emit_reaped(idx: int, chunk_seg: MusicSegment, detection: DetectionResult, *, label: bool) -> None:
+            # label=False while classification is still running: emit only the
+            # "identified" event (which the frontend handles without touching the
+            # step indicator), so identified bands appear live without thrashing
+            # the classifying→detecting step transition.
+            nonlocal reaped
+            reaped += 1
+            detection_results_by_idx[idx] = (chunk_seg, detection)
+            if detection.title:
+                if label:
+                    det_detail = f"[{reaped}/{total_chunks}] {detection.title} – {detection.artist}"
                     print(f"  {det_detail}")
                     progress("detecting", det_detail)
-                    progress("identified", json.dumps({"start": round(chunk_start, 3), "end": round(chunk_end, 3), "title": detection.title, "artist": detection.artist}))
-                else:
-                    no_match = f"[{chunk_idx}/{total_chunks}] {chunk_start:.0f}s–{chunk_end:.0f}s: no match"
-                    print(f"  {no_match}")
-                    progress("detecting", no_match)
-                detection_results.append((chunk_seg, detection))
+                progress("identified", json.dumps({
+                    "start": round(chunk_seg.start_time, 3),
+                    "end": round(chunk_seg.end_time, 3),
+                    "title": detection.title,
+                    "artist": detection.artist,
+                }))
+            elif label:
+                no_match = f"[{reaped}/{total_chunks}] {chunk_seg.start_time:.0f}s–{chunk_seg.end_time:.0f}s: no match"
+                print(f"  {no_match}")
+                progress("detecting", no_match)
 
+        def drain_finished() -> None:
+            # Reap already-completed futures without blocking, so identification
+            # keeps overlapping the still-running classification loop.
+            for fut in [f for f in pending if f.done()]:
+                idx, chunk_seg = pending.pop(fut)
+                emit_reaped(idx, chunk_seg, fut.result(), label=False)
+
+        def classified_stream():
+            for chunk in self.chunker.chunk(audio, sample_rate):
+                result = self.classifier.classify(chunk)
+                status = "MUSIC" if result.is_music else "-----"
+                detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
+                print(f"  {detail}")
+                progress("classifying", detail)
+                yield result
+
+        try:
+            # Windows are emitted as soon as each is fully classified (even mid
+            # cue), so identification of early windows overlaps classification of
+            # later audio. Isolation stays on this driver thread (a no-op for the
+            # default DummyIsolator; the optional GPU DemucsIsolator is per-window).
+            for window in self.aggregator.stream_windows(
+                classified_stream(), audio, sample_rate, window_duration=max_segment_duration
+            ):
+                iso_audio = self.isolator.isolate(window.audio, window.sample_rate)
+                chunk_seg = MusicSegment(
+                    audio=iso_audio,
+                    start_time=window.start_time,
+                    end_time=window.end_time,
+                    sample_rate=window.sample_rate,
+                )
+                idx = total_chunks
+                total_chunks += 1
+                pending[executor.submit(self.detection_client.detect, chunk_seg)] = (idx, chunk_seg)
+                drain_finished()
+
+            # Classification is complete: the total chunk count is now known, so
+            # switch to the "detecting" step and reap the remaining futures.
+            progress("detecting", f"Identifying {total_chunks} chunk(s)...")
+            for fut in as_completed(list(pending)):
+                idx, chunk_seg = pending.pop(fut)
+                emit_reaped(idx, chunk_seg, fut.result(), label=True)
+        except BaseException:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        executor.shutdown(wait=True)
+
+        detection_results: list[tuple[MusicSegment, DetectionResult]] = [
+            detection_results_by_idx[i] for i in range(total_chunks)
+        ]
         found = sum(1 for _, d in detection_results if d.title)
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -132,16 +133,29 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
         # well below commercial tracks (a real Interstellar cue matched at 55%).
         self._min_score = min_score
 
-        from acrcloud.recognizer import ACRCloudRecognizer
+        self._config = {
+            "host": host,
+            "access_key": access_key,
+            "access_secret": access_secret,
+            "timeout": 10,
+        }
+        # The pipeline identifies chunks concurrently across worker threads. Give
+        # each thread its own ACRCloudRecognizer (construction only stores config,
+        # no I/O) to sidestep any non-reentrancy in the native acrcloud_extr_tool.
+        self._local = threading.local()
+        # Prime the constructing thread's recognizer so a missing pyacrcloud SDK
+        # fails here rather than on the first detect().
+        _ = self._recognizer
 
-        self._recognizer = ACRCloudRecognizer(
-            {
-                "host": host,
-                "access_key": access_key,
-                "access_secret": access_secret,
-                "timeout": 10,
-            }
-        )
+    @property
+    def _recognizer(self):
+        recognizer = getattr(self._local, "recognizer", None)
+        if recognizer is None:
+            from acrcloud.recognizer import ACRCloudRecognizer
+
+            recognizer = ACRCloudRecognizer(self._config)
+            self._local.recognizer = recognizer
+        return recognizer
 
     def detect(self, segment: MusicSegment) -> DetectionResult:
         """Identify music in segment using ACRCloud."""

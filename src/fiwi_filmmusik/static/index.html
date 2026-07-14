@@ -1077,13 +1077,20 @@ waveformCanvas.addEventListener('mousemove', e => {
       ? (cue.title ? `${cue.artist}, ${cue.title}` : 'Unidentified music')
       : 'No music';
   } else if (wfChunks.length > 0) {
-    const merged = [];
-    for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
-      const last = merged[merged.length - 1];
-      if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
-      else { merged.push({ start: c.start, end: c.end }); }
+    // Live (during-run) tooltip: name tracks that have already been identified,
+    // otherwise fall back to "Music detected" for regions still being processed.
+    const ident = wfIdentified.find(r => r.title && t >= r.start && t < r.end);
+    if (ident) {
+      text = ident.artist ? `${ident.artist}, ${ident.title}` : ident.title;
+    } else {
+      const merged = [];
+      for (const c of [...wfChunks].filter(c => c.isMusic).sort((a, b) => a.start - b.start)) {
+        const last = merged[merged.length - 1];
+        if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
+        else { merged.push({ start: c.start, end: c.end }); }
+      }
+      text = merged.some(r => t >= r.start && t < r.end) ? 'Music detected' : 'No music';
     }
-    text = merged.some(r => t >= r.start && t < r.end) ? 'Music detected' : 'No music';
   }
 
   text ? showWfTooltip(e.clientX, e.clientY, text) : hideWfTooltip();
@@ -1110,6 +1117,22 @@ function rebuildMergedMusic() {
     if (last && c.start <= last.end) { last.end = Math.max(last.end, c.end); }
     else { cachedMergedMusic.push({ start: c.start, end: c.end }); }
   }
+}
+
+// Merge live identification results (which may arrive out of order under
+// concurrent identification) into ordered, same-title runs.
+function coalesceIdentified(list) {
+  const GAP_TOLERANCE = 30;
+  const out = [];
+  for (const c of [...list].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1];
+    if (last && last.title === c.title && (c.start - last.end) <= GAP_TOLERANCE) {
+      last.end = Math.max(last.end, c.end);
+    } else {
+      out.push({ start: c.start, end: c.end, title: c.title, artist: c.artist || null });
+    }
+  }
+  return out;
 }
 
 function colorAt(t) {
@@ -1370,15 +1393,22 @@ function handleEvent(ev) {
 
   if (step === 'identified') {
     const d = JSON.parse(detail);
-    const GAP_TOLERANCE = 30;
-    const last = wfIdentified[wfIdentified.length - 1];
-    if (last && last.title === d.title && (d.start - last.end) <= GAP_TOLERANCE) {
-      last.end = d.end;
-    } else {
-      wfIdentified.push({ start: d.start, end: d.end, title: d.title });
-    }
+    // Identification runs concurrently, so events can arrive out of order:
+    // push then coalesce the whole array (sort + merge same-title neighbours),
+    // rather than only merging with the previous entry.
+    wfIdentified.push({ start: d.start, end: d.end, title: d.title, artist: d.artist || null });
+    wfIdentified = coalesceIdentified(wfIdentified);
     identFarthestEnd = Math.max(identFarthestEnd, d.end);
     if (wfDuration > 0) detectFill.style.width = (identFarthestEnd / wfDuration * 100) + '%';
+    // Identification overlaps classification: surface the detecting step as
+    // active (alongside classifying) with a live count, so progress is visible
+    // during the run instead of appearing all at once at the end.
+    const detStep = document.querySelector('.step[data-step="detecting"]');
+    if (detStep && !detStep.classList.contains('done')) {
+      detStep.classList.add('active');
+      const n = wfIdentified.length;
+      updateStepDetail('detecting', `${n} identified…`);
+    }
     if (wfSamples) redrawAll();
     return;
   }
@@ -1411,11 +1441,10 @@ function handleEvent(ev) {
 
   activateStep(step);
   if (step === 'detecting') {
-    if (!detectingInitialized) {
-      detectingInitialized = true;
-      identFarthestEnd = 0;
-      detectFill.style.width = '0%';
-    }
+    // Identification overlaps classification, so it may already be underway
+    // (identFarthestEnd / detectFill driven by "identified" events) by the time
+    // the "detecting" step arrives — don't reset that progress here.
+    detectingInitialized = true;
     if (detail) {
       const m = detail.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);
       if (m) {
@@ -1439,7 +1468,9 @@ function handleEvent(ev) {
       wfChunks.push({ start, end, isMusic });
       updateStepDetail(step, isMusic ? 'Music' : 'No music');
       if (wfSamples) redrawAll();
-      if (wfDuration > 0) detectFill.style.width = (end / wfDuration * 100) + '%';
+      // Once identification has produced its first result, let the bar track the
+      // identification frontier (identFarthestEnd) instead of classification.
+      if (wfDuration > 0 && wfIdentified.length === 0) detectFill.style.width = (end / wfDuration * 100) + '%';
     }
   }
 }

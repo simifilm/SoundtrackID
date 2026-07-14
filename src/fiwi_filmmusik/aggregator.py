@@ -1,5 +1,6 @@
 """Chunk aggregation."""
 
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,72 @@ class ChunkAggregator:
     def __init__(self, gap_tolerance: float = 1.0) -> None:
         self.gap_tolerance = gap_tolerance
 
+    def stream_windows(
+        self,
+        results: Iterable[ClassificationResult],
+        full_audio: NDArray[np.float32],
+        sample_rate: int,
+        window_duration: float | None = None,
+    ) -> Iterator[MusicSegment]:
+        """Yield music windows lazily, as soon as each is fully classified.
+
+        Consumes ``results`` in chunk order and tracks the running music segment
+        exactly as :meth:`stream`/:meth:`aggregate` (chunks separated by gaps
+        <= ``gap_tolerance`` merge into one run). Within a run, if
+        ``window_duration`` is set, each fixed-length window is emitted the moment
+        classification has advanced past its end — so identification can overlap
+        classification even for a single long, uninterrupted music cue. The
+        trailing (partial) window is emitted when the run closes (a gap larger
+        than ``gap_tolerance``) or when ``results`` is exhausted. With
+        ``window_duration=None`` this degenerates to whole-segment streaming.
+
+        Assumes music chunks arrive in ``start_time`` order, which the pipeline's
+        sequential chunker guarantees.
+        """
+        run_start: float | None = None
+        run_end: float | None = None
+        emitted_until: float | None = None  # end of the last window emitted in this run
+
+        def build(start: float, end: float) -> MusicSegment:
+            return MusicSegment(
+                audio=full_audio[int(start * sample_rate) : int(end * sample_rate)],
+                start_time=start,
+                end_time=end,
+                sample_rate=sample_rate,
+            )
+
+        for result in results:
+            if not result.is_music:
+                continue
+            chunk = result.chunk
+            if run_start is None:
+                run_start, run_end, emitted_until = chunk.start_time, chunk.end_time, chunk.start_time
+            elif chunk.start_time - run_end <= self.gap_tolerance:
+                run_end = chunk.end_time
+            else:
+                # Run closed by a gap: emit its trailing window, start a new run.
+                if run_end > emitted_until:
+                    yield build(emitted_until, run_end)
+                run_start, run_end, emitted_until = chunk.start_time, chunk.end_time, chunk.start_time
+
+            if window_duration:
+                while run_end - emitted_until >= window_duration:
+                    yield build(emitted_until, emitted_until + window_duration)
+                    emitted_until += window_duration
+
+        if run_start is not None and run_end > emitted_until:
+            yield build(emitted_until, run_end)
+
+    def stream(
+        self,
+        results: Iterable[ClassificationResult],
+        full_audio: NDArray[np.float32],
+        sample_rate: int,
+    ) -> Iterator[MusicSegment]:
+        """Merge consecutive music chunks into whole segments, yielding each as it
+        finalizes (a gap larger than ``gap_tolerance``, or end of input)."""
+        yield from self.stream_windows(results, full_audio, sample_rate, window_duration=None)
+
     def aggregate(
         self,
         results: list[ClassificationResult],
@@ -20,40 +87,10 @@ class ChunkAggregator:
         sample_rate: int,
     ) -> list[MusicSegment]:
         """Merge consecutive music chunks into segments."""
-        # Filter and sort music chunks
-        music_chunks = sorted(
-            [r.chunk for r in results if r.is_music],
-            key=lambda c: c.start_time,
-        )
-
-        if not music_chunks:
-            return []
-
-        # Merge consecutive chunks
-        segments: list[tuple[float, float]] = []
-        current_start = music_chunks[0].start_time
-        current_end = music_chunks[0].end_time
-
-        for chunk in music_chunks[1:]:
-            if chunk.start_time - current_end <= self.gap_tolerance:
-                current_end = chunk.end_time
-            else:
-                segments.append((current_start, current_end))
-                current_start = chunk.start_time
-                current_end = chunk.end_time
-
-        segments.append((current_start, current_end))
-
-        # Extract audio for each segment
-        return [
-            MusicSegment(
-                audio=full_audio[int(start * sample_rate) : int(end * sample_rate)],
-                start_time=start,
-                end_time=end,
-                sample_rate=sample_rate,
-            )
-            for start, end in segments
-        ]
+        # Sort music chunks by start time so streaming sees them in order, then
+        # reuse the single-source merge logic in ``stream``.
+        ordered = sorted(results, key=lambda r: r.chunk.start_time)
+        return list(self.stream(ordered, full_audio, sample_rate))
 
 
 def export_segments(
