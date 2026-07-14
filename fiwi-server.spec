@@ -55,6 +55,7 @@ a = Analysis(
         "fiwi_filmmusik.isolators",
         "fiwi_filmmusik.models",
         "fiwi_filmmusik.config",
+        "fiwi_filmmusik.thumbnails",
         # metadata enrichment
         "fiwi_filmmusik.metadata",
         "fiwi_filmmusik.metadata.enricher",
@@ -102,6 +103,9 @@ a = Analysis(
         "scipy",
         "numpy",
         "av",
+        # video thumbnails
+        "PIL",
+        "PIL.Image",
         # onnx
         "onnxruntime",
         # misc

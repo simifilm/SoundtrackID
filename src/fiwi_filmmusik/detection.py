@@ -224,8 +224,8 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
         )
 
 
-def build_detection_client(api: str = "shazam") -> BaseMusicDetectionClient:
-    """Instantiate a detection client by name ("shazam" or "acrcloud")."""
+def build_detection_client(api: str = "acrcloud") -> BaseMusicDetectionClient:
+    """Instantiate a detection client by name ("acrcloud" or "shazam")."""
     if api == "acrcloud":
         return ACRCloudDetectionClient()
     if api == "shazam":
@@ -252,8 +252,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--api",
         choices=("shazam", "acrcloud"),
-        default="shazam",
-        help="Detection provider (default: shazam)",
+        default="acrcloud",
+        help="Detection provider (default: acrcloud)",
     )
     args = parser.parse_args()
 

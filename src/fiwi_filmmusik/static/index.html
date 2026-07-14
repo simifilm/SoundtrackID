@@ -235,6 +235,34 @@
     cursor: pointer;
   }
 
+  /* Settings-panel-style container with a summary header, open or collapsed. */
+  #video-preview-wrap {
+    display: none; margin: 1.25rem 0 0.75rem;
+    background: #ffffff; border: 1px solid #ddd6fe; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
+  }
+  #video-toggle {
+    width: 100%; border: none; background: none; cursor: pointer;
+    padding: 0.65rem 1.25rem; display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #a09cb8; user-select: none;
+  }
+  #video-toggle:hover { color: #7c3aed; }
+  #video-toggle .vt-chevron {
+    font-size: 1rem; line-height: 1; display: inline-block; transition: transform 0.15s;
+  }
+  #video-preview-wrap:not(.collapsed) #video-toggle .vt-chevron { transform: rotate(90deg); }
+  #video-preview { display: block; width: 100%; max-height: 380px; background: #000; }
+  #video-preview-wrap.collapsed #video-preview { display: none; }
+  #filmstrip {
+    display: none; height: 44px; cursor: pointer;
+    border-top: 1px solid #ede9fe;
+  }
+  #wf-playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px;
+    background: #ef4444; pointer-events: none; z-index: 6; display: none;
+  }
+
   #prog-bars { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
   .prog-row { display: flex; align-items: center; gap: 8px; }
   .prog-label { font-size: 0.68rem; color: #a09cb8; width: 96px; flex: 0 0 auto; text-align: right; }
@@ -828,8 +856,8 @@
       <div class="setting-group">
         <label for="opt-api">Detection API</label>
         <select id="opt-api">
+          <option value="acrcloud" selected>ACRCloud</option>
           <option value="shazam">Shazam</option>
-          <option value="acrcloud">ACRCloud</option>
         </select>
       </div>
 
@@ -903,6 +931,15 @@
     <button class="cancel-btn" id="cancel-btn">Cancel analysis</button>
   </div>
 
+  <!-- Video preview (dedicated container, collapsible) -->
+  <div id="video-preview-wrap">
+    <button type="button" id="video-toggle" aria-expanded="true" title="Video Preview ein-/ausklappen">
+      <span class="vt-chevron">›</span><span class="vt-label">Video Preview</span>
+    </button>
+    <video id="video-preview" controls controlsList="nodownload noplaybackrate noremoteplayback"
+           preload="metadata" oncontextmenu="return false"></video>
+  </div>
+
   <!-- Waveform (shown during analysis and when viewing results/history) -->
   <div id="waveform-container" style="display:none; margin-top:1.25rem;">
     <div id="wf-zoom-controls">
@@ -914,7 +951,9 @@
     </div>
     <div id="waveform-scroll">
       <canvas id="waveform-canvas" height="80"></canvas>
+      <img id="filmstrip" alt="">
       <div id="wf-marker"></div>
+      <div id="wf-playhead"></div>
     </div>
     <canvas id="minimap-canvas" height="22"></canvas>
     <div id="prog-bars">
@@ -991,6 +1030,19 @@ const waveformContainer = document.getElementById('waveform-container');
 const waveformCanvas  = document.getElementById('waveform-canvas');
 const waveformScroll  = document.getElementById('waveform-scroll');
 const minimapCanvas   = document.getElementById('minimap-canvas');
+const videoWrap       = document.getElementById('video-preview-wrap');
+const videoEl         = document.getElementById('video-preview');
+const filmstripImg    = document.getElementById('filmstrip');
+const wfPlayhead      = document.getElementById('wf-playhead');
+const videoToggle     = document.getElementById('video-toggle');
+let hasVideo          = false;
+
+// Collapse / expand the video preview (chevron rotation handled in CSS).
+function setVideoCollapsed(collapsed) {
+  videoWrap.classList.toggle('collapsed', collapsed);
+  videoToggle.setAttribute('aria-expanded', String(!collapsed));
+}
+videoToggle.addEventListener('click', () => setVideoCollapsed(!videoWrap.classList.contains('collapsed')));
 const wfMarker        = document.getElementById('wf-marker');
 const zoomControls    = document.getElementById('wf-zoom-controls');
 const zoomInBtn       = document.getElementById('wf-zoom-in');
@@ -1191,6 +1243,9 @@ function effectiveMaxZoom() {
 function redrawWaveform(canvas) {
   const scrollW = waveformScroll.clientWidth || canvas.parentElement.clientWidth || 1;
   canvas.style.width = (scrollW * wfZoom) + 'px';
+  // Keep the filmstrip and playhead aligned with the (zoomed) waveform width.
+  if (filmstripImg) filmstripImg.style.width = canvas.style.width;
+  updatePlayhead();
 
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -1316,6 +1371,7 @@ function applyZoomVisibility() {
 function startAnalysis(file) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
+  setupVideo(null, null);
   identFarthestEnd = 0; identReaped = 0; identTotal = 0;
   wfZoom = 1;
   if (waveformScroll) waveformScroll.scrollLeft = 0;
@@ -1537,6 +1593,8 @@ function handleEvent(ev) {
     classFill.style.width = '100%'; identFill.style.width = '100%';
     setTimeout(() => { progBars.style.display = 'none'; }, 400);
     markAllDone();
+    // Analysis finished — hide the step checklist; results + waveform remain.
+    progressView.style.display = 'none';
     showResults(results);
     return;
   }
@@ -1694,7 +1752,7 @@ function buildCueRowHTML(cue, videoName) {
     <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
     <td>${fmtTime(cue.start)}</td>
     <td>${fmtTime(cue.duration)}</td>
-    <td><audio controls src="${url}"></audio></td>
+    <td><audio controls controlsList="nodownload noplaybackrate" oncontextmenu="return false" src="${url}"></audio></td>
     <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
     <td>${fmt(cue.title)}${linkIcon}</td>
     <td>${fmt(cue.artist)}</td>
@@ -1716,6 +1774,7 @@ function showResults(results) {
   const cues = results.cues || [];
   const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
 
+  setupVideo(results, videoName);
   renderFilmHeader(results.film);
 
   resultsBody.innerHTML = '';
@@ -2111,9 +2170,10 @@ window.addEventListener('mouseup', () => { miniDragging = false; });
 waveformCanvas.addEventListener('click', e => {
   if (suppressNextClick) { suppressNextClick = false; return; }
   if (!wfSamples || wfDuration === 0) return;
-  if (wfCues.length === 0) return;
   const rect = waveformCanvas.getBoundingClientRect();
   const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
+  seekVideo(t);
+  if (wfCues.length === 0) return;
   const cue = wfCues.find(c => t >= c.start && t < c.end);
   if (!cue || !cue.segment_id) return;
   const row = resultsBody.querySelector(`tr[data-segment-id="${cue.segment_id}"]`);
@@ -2146,7 +2206,70 @@ function focusCueOnTimeline(cue) {
     if (markerTimer) clearTimeout(markerTimer);
     markerTimer = setTimeout(() => { wfMarker.classList.remove('active'); markerTimer = null; }, 2500);
   }
+  seekVideo(cue.start);
 }
+
+// ── Video preview (shared player synced to the timeline) ──────────────────────
+function setupVideo(results, videoName) {
+  const v = results && results.video;
+  if (v && videoName) {
+    hasVideo = true;
+    videoEl.src = `/output/${encodeURIComponent(videoName)}/video`;
+    videoWrap.style.display = 'block';
+    setVideoCollapsed(false);
+    if (v.filmstrip) {
+      filmstripImg.src = `/output/${encodeURIComponent(videoName)}/filmstrip`;
+      filmstripImg.style.display = 'block';
+      if (waveformCanvas) filmstripImg.style.width = waveformCanvas.style.width;
+    } else {
+      filmstripImg.removeAttribute('src');
+      filmstripImg.style.display = 'none';
+    }
+  } else {
+    hasVideo = false;
+    videoWrap.style.display = 'none';
+    videoEl.removeAttribute('src');
+    filmstripImg.removeAttribute('src');
+    filmstripImg.style.display = 'none';
+    wfPlayhead.style.display = 'none';
+  }
+}
+
+function seekVideo(t, play = true) {
+  if (!hasVideo || !isFinite(t)) return;
+  try { videoEl.currentTime = Math.max(0, t); } catch (_) {}
+  if (play) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
+  updatePlayhead();
+}
+
+function updatePlayhead() {
+  if (!hasVideo || !wfSamples || wfDuration === 0) { wfPlayhead.style.display = 'none'; return; }
+  const fullW = waveformCanvas.clientWidth;
+  const x = (Math.min(videoEl.currentTime, wfDuration) / wfDuration) * fullW;
+  wfPlayhead.style.left = x + 'px';
+  wfPlayhead.style.display = 'block';
+}
+
+videoEl.addEventListener('timeupdate', () => {
+  updatePlayhead();
+  // While playing and zoomed, keep the playhead within view.
+  if (!videoEl.paused && wfZoom > 1 && wfDuration > 0) {
+    const fullW = waveformCanvas.clientWidth;
+    const scrollW = waveformScroll.clientWidth;
+    const x = (videoEl.currentTime / wfDuration) * fullW;
+    if (x < waveformScroll.scrollLeft + 40 || x > waveformScroll.scrollLeft + scrollW - 40) {
+      waveformScroll.scrollLeft = Math.max(0, Math.min(Math.max(0, fullW - scrollW), x - scrollW / 2));
+    }
+  }
+});
+
+// Click the filmstrip → seek the video there.
+filmstripImg.addEventListener('click', e => {
+  if (!wfDuration) return;
+  const rect = filmstripImg.getBoundingClientRect();
+  const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
+  seekVideo(t);
+});
 
 // Resize observer for debounced redraw + zoom-cap re-clamp
 window.addEventListener('resize', () => {

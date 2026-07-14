@@ -383,8 +383,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--api",
         choices=("shazam", "acrcloud"),
-        default="shazam",
-        help="Detection provider (default: shazam)",
+        default="acrcloud",
+        help="Detection provider (default: acrcloud)",
     )
     parser.add_argument(
         "--classifier",

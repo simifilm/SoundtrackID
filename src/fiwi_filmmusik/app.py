@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import mimetypes
 import os
 import queue
 import shutil
@@ -92,7 +93,7 @@ def _get_classifier(threshold: float = 0.2):
     return _classifier
 
 
-def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, api: str = "shazam"):
+def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, api: str = "acrcloud"):
     from fiwi_filmmusik.aggregator import ChunkAggregator
     from fiwi_filmmusik.chunker import AudioChunker
     from fiwi_filmmusik.detection import build_detection_client
@@ -146,7 +147,7 @@ async def cancel_run(run_id: str) -> dict:
 @app.post("/analyze")
 async def analyze(
     file: UploadFile,
-    api: str = Form("shazam"),
+    api: str = Form("acrcloud"),
     chunk_duration: float = Form(10.0),
     threshold: float = Form(0.2),
     max_segment: float = Form(0.0),
@@ -184,7 +185,7 @@ async def _run_pipeline_sse(
     threshold: float = 0.2,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
-    api: str = "shazam",
+    api: str = "acrcloud",
 ) -> AsyncGenerator[str, None]:
     """Run the pipeline in a thread and yield SSE events."""
     cancel_event = threading.Event()
@@ -210,7 +211,22 @@ async def _run_pipeline_sse(
             container_tags = read_mp4_tags(tmp_path) or None
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
-            ev_queue.put({"step": "done", "results": results.to_dict()})
+            result_dict = results.to_dict()
+            # Persist the source video + a thumbnail filmstrip so the UI can show a
+            # video preview synced to the timeline (also for history/reopened runs).
+            try:
+                run_dir = _OUTPUT_DIR / Path(original_name).stem
+                ext = Path(original_name).suffix or ".mp4"
+                video_dest = run_dir / f"source{ext}"
+                shutil.move(str(tmp_path), str(video_dest))
+                from fiwi_filmmusik.thumbnails import extract_filmstrip
+                film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
+                result_dict["video"] = {"file": f"source{ext}", "filmstrip": film}
+                _atomic_write_json(run_dir / "results.json", result_dict)
+            except Exception:
+                import traceback as _tb
+                print("video/filmstrip persist failed:\n" + _tb.format_exc())
+            ev_queue.put({"step": "done", "results": result_dict})
         except _PipelineCancelled:
             ev_queue.put({"step": "cancelled"})
         except Exception as exc:
@@ -298,13 +314,42 @@ async def history() -> list[dict]:
     return items
 
 
+def _safe_run_dir(video_name: str) -> Path:
+    """Resolve a run directory, guarding against path traversal via video_name."""
+    run_dir = (_OUTPUT_DIR / video_name).resolve()
+    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return run_dir
+
+
 @app.get("/output/{video_name}/segments/{filename}")
 async def serve_segment(video_name: str, filename: str) -> FileResponse:
     """Serve a WAV segment file."""
-    seg_path = _OUTPUT_DIR / video_name / "segments" / filename
+    seg_path = _safe_run_dir(video_name) / "segments" / Path(filename).name
     if not seg_path.exists() or not seg_path.is_file():
         raise HTTPException(status_code=404, detail="Segment not found")
     return FileResponse(seg_path, media_type="audio/wav")
+
+
+@app.get("/output/{video_name}/video")
+async def serve_video(video_name: str) -> FileResponse:
+    """Serve the stored source video (supports HTTP Range for scrubbing)."""
+    run_dir = _safe_run_dir(video_name)
+    matches = sorted(run_dir.glob("source.*")) if run_dir.is_dir() else []
+    if not matches:
+        raise HTTPException(status_code=404, detail="Video not found")
+    video_path = matches[0]
+    media_type = mimetypes.guess_type(str(video_path))[0] or "video/mp4"
+    return FileResponse(video_path, media_type=media_type)
+
+
+@app.get("/output/{video_name}/filmstrip")
+async def serve_filmstrip(video_name: str) -> FileResponse:
+    """Serve the thumbnail filmstrip sprite for a run."""
+    strip_path = _safe_run_dir(video_name) / "filmstrip.jpg"
+    if not strip_path.exists() or not strip_path.is_file():
+        raise HTTPException(status_code=404, detail="Filmstrip not found")
+    return FileResponse(strip_path, media_type="image/jpeg")
 
 
 # ── Enrichment ────────────────────────────────────────────────────────────────
