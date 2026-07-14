@@ -3,7 +3,7 @@
 import json
 import os
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
@@ -324,9 +324,25 @@ class Pipeline:
             # switch to the "detecting" step and reap the remaining futures.
             classification_done = True
             progress("detecting", f"Identifying {total_chunks} chunk(s)...")
-            for fut in as_completed(list(pending)):
-                idx, chunk_seg = pending.pop(fut)
-                emit_reaped(idx, chunk_seg, fut.result(), label=True)
+            # Reap with a timeout so we can emit a "waiting" heartbeat while blocked
+            # on the identification provider (e.g. Shazam rate-limiting delays the
+            # response) — otherwise the UI would sit silent with no feedback.
+            waited = 0.0
+            remaining = set(pending)
+            while remaining:
+                done_set, remaining = wait(remaining, timeout=5.0, return_when=FIRST_COMPLETED)
+                if not done_set:
+                    waited += 5.0
+                    progress("ident_waiting", json.dumps({
+                        "reaped": reaped,
+                        "total": total_chunks,
+                        "seconds": int(waited),
+                    }))
+                    continue
+                waited = 0.0
+                for fut in done_set:
+                    idx, chunk_seg = pending.pop(fut)
+                    emit_reaped(idx, chunk_seg, fut.result(), label=True)
         except BaseException:
             executor.shutdown(wait=False, cancel_futures=True)
             raise

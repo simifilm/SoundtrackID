@@ -1511,6 +1511,17 @@ function handleEvent(ev) {
     return;
   }
 
+  if (step === 'ident_waiting') {
+    // Server is blocked waiting on the identification provider (e.g. Shazam
+    // rate-limiting). Explicit heartbeat — show it rather than sit silent.
+    const d = JSON.parse(detail);
+    identFill.classList.add('waiting');
+    const done = d.total ? ` (${d.reaped}/${d.total})` : '';
+    stallNotice.textContent = `Waiting for the identification service…${done} ${d.seconds}s`;
+    stallNotice.style.display = 'block';
+    return;
+  }
+
   if (step === 'done') {
     finishRun();
     wfCues = (results.cues || []).map(c => ({
