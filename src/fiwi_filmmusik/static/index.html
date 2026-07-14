@@ -254,16 +254,19 @@
   #video-preview-wrap:not(.collapsed) #video-toggle .vt-chevron { transform: rotate(90deg); }
   #video-preview { display: block; width: 100%; max-height: 380px; background: #000; }
   #video-preview-wrap.collapsed #video-preview { display: none; }
-  /* Filmstrip: fixed-size thumbnails in their own horizontal scroll strip —
-     independent of the waveform's zoom/width, so thumbnails never stretch. */
-  #filmstrip-scroll {
-    display: none; position: relative; overflow-x: auto; overflow-y: hidden;
-    margin-top: 6px; background: #000; border-radius: 6px; line-height: 0;
+  /* Filmstrip: a full-width overview strip like the minimap — fixed to the whole
+     movie length, no zoom. Frames are drawn on a canvas at a constant size
+     (cover-cropped), so movie length never stretches them. */
+  #overview-wrap { position: relative; }
+  #filmstrip-wrap { display: none; }
+  #filmstrip-canvas {
+    display: block; width: 100%; height: 54px;
+    border-radius: 6px; background: #000; cursor: pointer;
   }
-  #filmstrip { display: block; height: 54px; width: auto; cursor: pointer; }
-  #filmstrip-playhead {
+  /* Single playhead spanning the minimap + filmstrip (the "overview"). */
+  #overview-playhead {
     position: absolute; top: 0; bottom: 0; width: 2px;
-    background: #ef4444; pointer-events: none; z-index: 3; display: none;
+    background: #ef4444; pointer-events: none; z-index: 6; display: none;
   }
   #wf-playhead {
     position: absolute; top: 0; bottom: 0; width: 2px;
@@ -961,11 +964,13 @@
       <div id="wf-marker"></div>
       <div id="wf-playhead"></div>
     </div>
-    <div id="filmstrip-scroll">
-      <img id="filmstrip" alt="">
-      <div id="filmstrip-playhead"></div>
+    <div id="overview-wrap">
+      <canvas id="minimap-canvas" height="22"></canvas>
+      <div id="filmstrip-wrap">
+        <canvas id="filmstrip-canvas" height="54"></canvas>
+      </div>
+      <div id="overview-playhead"></div>
     </div>
-    <canvas id="minimap-canvas" height="22"></canvas>
     <div id="prog-bars">
       <div class="prog-row">
         <span class="prog-label">Detection</span>
@@ -1042,11 +1047,14 @@ const waveformScroll  = document.getElementById('waveform-scroll');
 const minimapCanvas   = document.getElementById('minimap-canvas');
 const videoWrap       = document.getElementById('video-preview-wrap');
 const videoEl         = document.getElementById('video-preview');
-const filmstripImg    = document.getElementById('filmstrip');
-const filmstripScroll = document.getElementById('filmstrip-scroll');
-const filmstripPlayhead = document.getElementById('filmstrip-playhead');
+const overviewWrap    = document.getElementById('overview-wrap');
+const filmstripWrap   = document.getElementById('filmstrip-wrap');
+const filmstripCanvas = document.getElementById('filmstrip-canvas');
+const overviewPlayhead = document.getElementById('overview-playhead');
 const wfPlayhead      = document.getElementById('wf-playhead');
 const videoToggle     = document.getElementById('video-toggle');
+let filmstripSprite   = null;   // loaded sprite Image
+let filmstripMeta     = null;   // {count, thumb_width, thumb_height}
 let hasVideo          = false;
 
 // Collapse / expand the video preview (chevron rotation handled in CSS).
@@ -2230,11 +2238,14 @@ function setupVideo(results, videoName) {
     videoWrap.style.display = 'block';
     setVideoCollapsed(false);
     if (v.filmstrip) {
-      filmstripImg.src = `/output/${encodeURIComponent(videoName)}/filmstrip`;
-      filmstripScroll.style.display = 'block';
+      filmstripMeta = v.filmstrip;
+      filmstripSprite = new Image();
+      filmstripSprite.onload = drawFilmstrip;
+      filmstripSprite.src = `/output/${encodeURIComponent(videoName)}/filmstrip`;
+      filmstripWrap.style.display = 'block';
     } else {
-      filmstripImg.removeAttribute('src');
-      filmstripScroll.style.display = 'none';
+      filmstripMeta = null; filmstripSprite = null;
+      filmstripWrap.style.display = 'none';
     }
   } else {
     hasVideo = false;
@@ -2244,10 +2255,10 @@ function setupVideo(results, videoName) {
     videoEl.pause();
     videoEl.removeAttribute('src');
     videoEl.load();
-    filmstripImg.removeAttribute('src');
-    filmstripScroll.style.display = 'none';
+    filmstripMeta = null; filmstripSprite = null;
+    filmstripWrap.style.display = 'none';
     wfPlayhead.style.display = 'none';
-    filmstripPlayhead.style.display = 'none';
+    overviewPlayhead.style.display = 'none';
   }
 }
 
@@ -2261,41 +2272,72 @@ function seekVideo(t, play = true) {
 function updatePlayhead() {
   if (!hasVideo || !wfSamples || wfDuration === 0) {
     wfPlayhead.style.display = 'none';
-    filmstripPlayhead.style.display = 'none';
+    overviewPlayhead.style.display = 'none';
     return;
   }
   const frac = Math.min(videoEl.currentTime, wfDuration) / wfDuration;
   wfPlayhead.style.left = (frac * waveformCanvas.clientWidth) + 'px';
   wfPlayhead.style.display = 'block';
-  if (filmstripScroll.style.display !== 'none' && filmstripImg.offsetWidth) {
-    filmstripPlayhead.style.left = (frac * filmstripImg.offsetWidth) + 'px';
-    filmstripPlayhead.style.display = 'block';
+  // Overview playhead spans the minimap + filmstrip (both full-width = duration).
+  if (filmstripWrap.style.display !== 'none') {
+    overviewPlayhead.style.left = (frac * overviewWrap.clientWidth) + 'px';
+    overviewPlayhead.style.display = 'block';
   } else {
-    filmstripPlayhead.style.display = 'none';
+    overviewPlayhead.style.display = 'none';
   }
 }
 
-function keepInView(scrollEl, contentW, x) {
-  const sw = scrollEl.clientWidth;
-  if (contentW <= sw) return;
-  if (x < scrollEl.scrollLeft + 40 || x > scrollEl.scrollLeft + sw - 40) {
-    scrollEl.scrollLeft = Math.max(0, Math.min(contentW - sw, x - sw / 2));
+// Full-width overview strip (like the minimap): a FIXED number of frames spanning
+// the whole movie, drawn cover-cropped so nothing stretches. A longer movie just
+// means coarser time-spacing, never smaller/squeezed thumbnails.
+const FILMSTRIP_H = 54;
+const FILMSTRIP_COUNT = 20;    // fixed number of thumbnails shown across the width
+function drawFilmstrip() {
+  if (!filmstripSprite || !filmstripMeta || filmstripWrap.style.display === 'none') return;
+  const W = filmstripCanvas.clientWidth;
+  if (W === 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  filmstripCanvas.width = W * dpr;
+  filmstripCanvas.height = FILMSTRIP_H * dpr;
+  const ctx = filmstripCanvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, FILMSTRIP_H);
+  const tw = filmstripMeta.thumb_width, th = filmstripMeta.thumb_height, count = filmstripMeta.count;
+  const nCells = Math.max(1, Math.min(count, FILMSTRIP_COUNT));
+  const cellW = W / nCells;
+  for (let i = 0; i < nCells; i++) {
+    const srcIdx = Math.min(count - 1, Math.floor((i + 0.5) / nCells * count));
+    const sx = srcIdx * tw;
+    const scale = Math.max(cellW / tw, FILMSTRIP_H / th);  // cover
+    const dw = tw * scale, dh = th * scale;
+    const dx = i * cellW + (cellW - dw) / 2, dy = (FILMSTRIP_H - dh) / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(i * cellW, 0, cellW, FILMSTRIP_H);
+    ctx.clip();
+    ctx.drawImage(filmstripSprite, sx, 0, tw, th, dx, dy, dw, dh);
+    ctx.restore();
   }
 }
 
 videoEl.addEventListener('timeupdate', () => {
   updatePlayhead();
-  if (videoEl.paused || wfDuration === 0) return;
-  const frac = videoEl.currentTime / wfDuration;
-  // Keep both playheads within view during playback.
-  if (wfZoom > 1) keepInView(waveformScroll, waveformCanvas.clientWidth, frac * waveformCanvas.clientWidth);
-  if (filmstripScroll.style.display !== 'none') keepInView(filmstripScroll, filmstripImg.offsetWidth, frac * filmstripImg.offsetWidth);
+  // While playing and zoomed, keep the waveform playhead within view.
+  if (!videoEl.paused && wfZoom > 1 && wfDuration > 0) {
+    const fullW = waveformCanvas.clientWidth;
+    const scrollW = waveformScroll.clientWidth;
+    const x = (videoEl.currentTime / wfDuration) * fullW;
+    if (x < waveformScroll.scrollLeft + 40 || x > waveformScroll.scrollLeft + scrollW - 40) {
+      waveformScroll.scrollLeft = Math.max(0, Math.min(Math.max(0, fullW - scrollW), x - scrollW / 2));
+    }
+  }
 });
 
 // Click the filmstrip → seek the video there.
-filmstripImg.addEventListener('click', e => {
+filmstripCanvas.addEventListener('click', e => {
   if (!wfDuration) return;
-  const rect = filmstripImg.getBoundingClientRect();
+  const rect = filmstripCanvas.getBoundingClientRect();
   const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
   seekVideo(t);
 });
@@ -2305,6 +2347,7 @@ window.addEventListener('resize', () => {
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     resizeTimer = null;
+    drawFilmstrip();
     if (!wfSamples) return;
     const max = effectiveMaxZoom();
     if (wfZoom > max) wfZoom = max;
