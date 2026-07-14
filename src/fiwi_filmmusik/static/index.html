@@ -254,9 +254,16 @@
   #video-preview-wrap:not(.collapsed) #video-toggle .vt-chevron { transform: rotate(90deg); }
   #video-preview { display: block; width: 100%; max-height: 380px; background: #000; }
   #video-preview-wrap.collapsed #video-preview { display: none; }
-  #filmstrip {
-    display: none; height: 44px; cursor: pointer;
-    border-top: 1px solid #ede9fe;
+  /* Filmstrip: fixed-size thumbnails in their own horizontal scroll strip —
+     independent of the waveform's zoom/width, so thumbnails never stretch. */
+  #filmstrip-scroll {
+    display: none; position: relative; overflow-x: auto; overflow-y: hidden;
+    margin-top: 6px; background: #000; border-radius: 6px; line-height: 0;
+  }
+  #filmstrip { display: block; height: 54px; width: auto; cursor: pointer; }
+  #filmstrip-playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px;
+    background: #ef4444; pointer-events: none; z-index: 3; display: none;
   }
   #wf-playhead {
     position: absolute; top: 0; bottom: 0; width: 2px;
@@ -951,9 +958,12 @@
     </div>
     <div id="waveform-scroll">
       <canvas id="waveform-canvas" height="80"></canvas>
-      <img id="filmstrip" alt="">
       <div id="wf-marker"></div>
       <div id="wf-playhead"></div>
+    </div>
+    <div id="filmstrip-scroll">
+      <img id="filmstrip" alt="">
+      <div id="filmstrip-playhead"></div>
     </div>
     <canvas id="minimap-canvas" height="22"></canvas>
     <div id="prog-bars">
@@ -1033,6 +1043,8 @@ const minimapCanvas   = document.getElementById('minimap-canvas');
 const videoWrap       = document.getElementById('video-preview-wrap');
 const videoEl         = document.getElementById('video-preview');
 const filmstripImg    = document.getElementById('filmstrip');
+const filmstripScroll = document.getElementById('filmstrip-scroll');
+const filmstripPlayhead = document.getElementById('filmstrip-playhead');
 const wfPlayhead      = document.getElementById('wf-playhead');
 const videoToggle     = document.getElementById('video-toggle');
 let hasVideo          = false;
@@ -1243,8 +1255,6 @@ function effectiveMaxZoom() {
 function redrawWaveform(canvas) {
   const scrollW = waveformScroll.clientWidth || canvas.parentElement.clientWidth || 1;
   canvas.style.width = (scrollW * wfZoom) + 'px';
-  // Keep the filmstrip and playhead aligned with the (zoomed) waveform width.
-  if (filmstripImg) filmstripImg.style.width = canvas.style.width;
   updatePlayhead();
 
   const ctx = canvas.getContext('2d');
@@ -1521,6 +1531,7 @@ function handleEvent(ev) {
     dropZone.style.display = 'block';
     progressView.style.display = 'none';
     waveformContainer.style.display = 'none';
+    setupVideo(null, null);
     fileInput.value = '';
     loadHistory();
     return;
@@ -1805,6 +1816,7 @@ resetBtn.addEventListener('click', () => {
   progressView.style.display = 'none';
   resultsView.style.display = 'none';
   waveformContainer.style.display = 'none';
+  setupVideo(null, null);
   fileInput.value = '';
   loadHistory();
 });
@@ -2219,19 +2231,23 @@ function setupVideo(results, videoName) {
     setVideoCollapsed(false);
     if (v.filmstrip) {
       filmstripImg.src = `/output/${encodeURIComponent(videoName)}/filmstrip`;
-      filmstripImg.style.display = 'block';
-      if (waveformCanvas) filmstripImg.style.width = waveformCanvas.style.width;
+      filmstripScroll.style.display = 'block';
     } else {
       filmstripImg.removeAttribute('src');
-      filmstripImg.style.display = 'none';
+      filmstripScroll.style.display = 'none';
     }
   } else {
     hasVideo = false;
     videoWrap.style.display = 'none';
+    // Stop playback (removing src alone doesn't halt in-progress audio) and
+    // reset the element with load().
+    videoEl.pause();
     videoEl.removeAttribute('src');
+    videoEl.load();
     filmstripImg.removeAttribute('src');
-    filmstripImg.style.display = 'none';
+    filmstripScroll.style.display = 'none';
     wfPlayhead.style.display = 'none';
+    filmstripPlayhead.style.display = 'none';
   }
 }
 
@@ -2243,24 +2259,37 @@ function seekVideo(t, play = true) {
 }
 
 function updatePlayhead() {
-  if (!hasVideo || !wfSamples || wfDuration === 0) { wfPlayhead.style.display = 'none'; return; }
-  const fullW = waveformCanvas.clientWidth;
-  const x = (Math.min(videoEl.currentTime, wfDuration) / wfDuration) * fullW;
-  wfPlayhead.style.left = x + 'px';
+  if (!hasVideo || !wfSamples || wfDuration === 0) {
+    wfPlayhead.style.display = 'none';
+    filmstripPlayhead.style.display = 'none';
+    return;
+  }
+  const frac = Math.min(videoEl.currentTime, wfDuration) / wfDuration;
+  wfPlayhead.style.left = (frac * waveformCanvas.clientWidth) + 'px';
   wfPlayhead.style.display = 'block';
+  if (filmstripScroll.style.display !== 'none' && filmstripImg.offsetWidth) {
+    filmstripPlayhead.style.left = (frac * filmstripImg.offsetWidth) + 'px';
+    filmstripPlayhead.style.display = 'block';
+  } else {
+    filmstripPlayhead.style.display = 'none';
+  }
+}
+
+function keepInView(scrollEl, contentW, x) {
+  const sw = scrollEl.clientWidth;
+  if (contentW <= sw) return;
+  if (x < scrollEl.scrollLeft + 40 || x > scrollEl.scrollLeft + sw - 40) {
+    scrollEl.scrollLeft = Math.max(0, Math.min(contentW - sw, x - sw / 2));
+  }
 }
 
 videoEl.addEventListener('timeupdate', () => {
   updatePlayhead();
-  // While playing and zoomed, keep the playhead within view.
-  if (!videoEl.paused && wfZoom > 1 && wfDuration > 0) {
-    const fullW = waveformCanvas.clientWidth;
-    const scrollW = waveformScroll.clientWidth;
-    const x = (videoEl.currentTime / wfDuration) * fullW;
-    if (x < waveformScroll.scrollLeft + 40 || x > waveformScroll.scrollLeft + scrollW - 40) {
-      waveformScroll.scrollLeft = Math.max(0, Math.min(Math.max(0, fullW - scrollW), x - scrollW / 2));
-    }
-  }
+  if (videoEl.paused || wfDuration === 0) return;
+  const frac = videoEl.currentTime / wfDuration;
+  // Keep both playheads within view during playback.
+  if (wfZoom > 1) keepInView(waveformScroll, waveformCanvas.clientWidth, frac * waveformCanvas.clientWidth);
+  if (filmstripScroll.style.display !== 'none') keepInView(filmstripScroll, filmstripImg.offsetWidth, frac * filmstripImg.offsetWidth);
 });
 
 // Click the filmstrip → seek the video there.
