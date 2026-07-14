@@ -1,6 +1,8 @@
 """Pipeline orchestrator."""
 
 import json
+import os
+import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -242,31 +244,45 @@ class Pipeline:
         pending: dict[Future, tuple[int, MusicSegment]] = {}
         total_chunks = 0
         reaped = 0
+        classification_done = False
+
         executor = ThreadPoolExecutor(max_workers=self.detection_concurrency)
 
+        # Debug-only: FIWI_DEBUG_DETECT_SLEEP=<seconds> makes each identification
+        # call sleep, to exercise the frontend's stall watchdog. No effect unset.
+        debug_sleep = float(os.environ.get("FIWI_DEBUG_DETECT_SLEEP") or 0)
+
+        def detect_one(seg: MusicSegment) -> DetectionResult:
+            if debug_sleep:
+                time.sleep(debug_sleep)
+            return self.detection_client.detect(seg)
+
         def emit_reaped(idx: int, chunk_seg: MusicSegment, detection: DetectionResult, *, label: bool) -> None:
-            # label=False while classification is still running: emit only the
-            # "identified" event (which the frontend handles without touching the
-            # step indicator), so identified bands appear live without thrashing
-            # the classifying→detecting step transition.
+            # Always emit an "identified" progress event (title=null means the
+            # window was processed but not matched). The frontend handles it
+            # without touching the step indicator, so it advances the
+            # identification progress bar per window and can detect a stalled
+            # provider — including while classification is still running.
+            # "detecting" step labels are emitted only once classification has
+            # finished (label=True), to avoid thrashing the step transition.
             nonlocal reaped
             reaped += 1
             detection_results_by_idx[idx] = (chunk_seg, detection)
-            if detection.title:
-                if label:
+            progress("identified", json.dumps({
+                "start": round(chunk_seg.start_time, 3),
+                "end": round(chunk_seg.end_time, 3),
+                "title": detection.title,
+                "artist": detection.artist,
+                "reaped": reaped,
+                "total": total_chunks if classification_done else None,
+            }))
+            if label:
+                if detection.title:
                     det_detail = f"[{reaped}/{total_chunks}] {detection.title} – {detection.artist}"
-                    print(f"  {det_detail}")
-                    progress("detecting", det_detail)
-                progress("identified", json.dumps({
-                    "start": round(chunk_seg.start_time, 3),
-                    "end": round(chunk_seg.end_time, 3),
-                    "title": detection.title,
-                    "artist": detection.artist,
-                }))
-            elif label:
-                no_match = f"[{reaped}/{total_chunks}] {chunk_seg.start_time:.0f}s–{chunk_seg.end_time:.0f}s: no match"
-                print(f"  {no_match}")
-                progress("detecting", no_match)
+                else:
+                    det_detail = f"[{reaped}/{total_chunks}] {chunk_seg.start_time:.0f}s–{chunk_seg.end_time:.0f}s: no match"
+                print(f"  {det_detail}")
+                progress("detecting", det_detail)
 
         def drain_finished() -> None:
             # Reap already-completed futures without blocking, so identification
@@ -301,11 +317,12 @@ class Pipeline:
                 )
                 idx = total_chunks
                 total_chunks += 1
-                pending[executor.submit(self.detection_client.detect, chunk_seg)] = (idx, chunk_seg)
+                pending[executor.submit(detect_one, chunk_seg)] = (idx, chunk_seg)
                 drain_finished()
 
             # Classification is complete: the total chunk count is now known, so
             # switch to the "detecting" step and reap the remaining futures.
+            classification_done = True
             progress("detecting", f"Identifying {total_chunks} chunk(s)...")
             for fut in as_completed(list(pending)):
                 idx, chunk_seg = pending.pop(fut)

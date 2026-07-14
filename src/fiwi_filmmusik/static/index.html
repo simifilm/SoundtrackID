@@ -235,9 +235,24 @@
     cursor: pointer;
   }
 
-  .prog-bar { height: 4px; background: #ddd6fe; overflow: hidden; }
-  .prog-fill { height: 100%; width: 0%; background: #7c3aed; transition: width 0.4s ease; }
+  #prog-bars { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+  .prog-row { display: flex; align-items: center; gap: 8px; }
+  .prog-label { font-size: 0.68rem; color: #a09cb8; width: 96px; flex: 0 0 auto; text-align: right; }
+  .prog-bar { flex: 1; height: 5px; background: #ede9fe; overflow: hidden; border-radius: 3px; }
+  .prog-fill { height: 100%; width: 0%; transition: width 0.4s ease; }
+  .prog-fill.cls { background: #7c3aed; }
+  .prog-fill.ident { background: #16a34a; }
+  .prog-fill.waiting {
+    background-image: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.65) 50%, rgba(255,255,255,0) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.15s linear infinite;
+  }
+  @keyframes shimmer { 0% { background-position: 150% 0; } 100% { background-position: -150% 0; } }
   #error-area { color: #dc2626; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
+  #stall-notice {
+    display: none; color: #b45309; background: #fffbeb; border: 1px solid #fde68a;
+    font-size: 0.8rem; margin-top: 0.6rem; padding: 0.45rem 0.65rem; border-radius: 6px;
+  }
 
   @keyframes rowPulse {
     0%   { background: #fef08a; }
@@ -902,7 +917,17 @@
       <div id="wf-marker"></div>
     </div>
     <canvas id="minimap-canvas" height="22"></canvas>
-    <div class="prog-bar"><div class="prog-fill" id="detect-fill"></div></div>
+    <div id="prog-bars">
+      <div class="prog-row">
+        <span class="prog-label">Detection</span>
+        <div class="prog-bar"><div class="prog-fill cls" id="class-fill"></div></div>
+      </div>
+      <div class="prog-row">
+        <span class="prog-label">Identification</span>
+        <div class="prog-bar"><div class="prog-fill ident" id="ident-fill"></div></div>
+      </div>
+    </div>
+    <div id="stall-notice"></div>
     <div id="wf-tooltip"></div>
   </div>
 
@@ -972,8 +997,15 @@ const zoomInBtn       = document.getElementById('wf-zoom-in');
 const zoomOutBtn      = document.getElementById('wf-zoom-out');
 const zoomResetBtn    = document.getElementById('wf-zoom-reset');
 const zoomLabel       = document.getElementById('wf-zoom-label');
-const detectFill      = document.getElementById('detect-fill');
-let identFarthestEnd  = 0;
+const classFill       = document.getElementById('class-fill');
+const identFill       = document.getElementById('ident-fill');
+const progBars        = document.getElementById('prog-bars');
+const stallNotice     = document.getElementById('stall-notice');
+let identFarthestEnd  = 0;   // farthest processed window end (identification frontier)
+let identReaped       = 0;   // identification windows processed so far
+let identTotal        = 0;   // total identification windows (known once classification finishes)
+let lastEventAt       = 0;   // timestamp of the last SSE event (stall detection)
+let stallTimer        = null;
 const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
 const resultsTable    = document.getElementById('results-table');
@@ -1284,13 +1316,16 @@ function applyZoomVisibility() {
 function startAnalysis(file) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
-  identFarthestEnd = 0;
+  identFarthestEnd = 0; identReaped = 0; identTotal = 0;
   wfZoom = 1;
   if (waveformScroll) waveformScroll.scrollLeft = 0;
   if (wfMarker) wfMarker.classList.remove('active');
   if (markerTimer) { clearTimeout(markerTimer); markerTimer = null; }
-  detectFill.style.width = '0%';
-  document.querySelector('.prog-bar').style.display = '';
+  classFill.style.width = '0%'; identFill.style.width = '0%';
+  classFill.classList.remove('waiting'); identFill.classList.remove('waiting');
+  progBars.style.display = '';
+  clearStall();
+  startStallWatch();
   waveformContainer.style.display = 'none';
   errorArea.style.display = 'none';
   errorArea.textContent = '';
@@ -1336,7 +1371,16 @@ function startAnalysis(file) {
 
       function pump() {
         reader.read().then(({ done, value }) => {
-          if (done) return;
+          if (done) {
+            // Stream ended. If no terminal event (done/error/cancelled) cleared
+            // the run, the server dropped the connection mid-analysis.
+            if (activeReader) {
+              finishRun();
+              errorArea.textContent = 'The server closed the connection before finishing. It may have crashed — please try again.';
+              errorArea.style.display = 'block';
+            }
+            return;
+          }
           buf += decoder.decode(value, { stream: true });
           const parts = buf.split('\n\n');
           buf = parts.pop();
@@ -1349,6 +1393,14 @@ function startAnalysis(file) {
             }
           });
           pump();
+        }).catch(err => {
+          // Abrupt drop mid-stream (server killed, network offline): read()
+          // rejects rather than resolving done. Surface it instead of hanging.
+          if (activeReader) {
+            finishRun();
+            errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
+            errorArea.style.display = 'block';
+          }
         });
       }
       pump();
@@ -1358,14 +1410,50 @@ function startAnalysis(file) {
 
 const CHUNK_RE = /(\d+\.?\d*)s\s*-\s*(\d+\.?\d*)s:\s*(MUSIC|-+)/;
 
+const STALL_WARN_MS = 12000;   // no SSE event for this long during a run → warn
+const STALL_HARD_MS = 40000;   // still nothing → stronger warning
+
+function startStallWatch() {
+  lastEventAt = performance.now();
+  clearInterval(stallTimer);
+  stallTimer = setInterval(checkStall, 2000);
+}
+function clearStall() {
+  clearInterval(stallTimer); stallTimer = null;
+  stallNotice.style.display = 'none';
+  classFill.classList.remove('waiting');
+  identFill.classList.remove('waiting');
+}
+function checkStall() {
+  const gap = performance.now() - lastEventAt;
+  if (gap < STALL_WARN_MS) return;
+  const secs = Math.round(gap / 1000);
+  // Which phase is stalled? Identification once it has started, else classification.
+  const waitingIdent = currentStep === 'detecting' || identReaped > 0 || wfIdentified.length > 0;
+  (waitingIdent ? identFill : classFill).classList.add('waiting');
+  stallNotice.textContent = gap >= STALL_HARD_MS
+    ? `Still waiting (${secs}s) — the ${waitingIdent ? 'identification service (Shazam/ACRCloud)' : 'analysis'} isn’t responding. It may be rate-limited or down. Keep waiting or cancel.`
+    : `Working… no response for ${secs}s. The ${waitingIdent ? 'identification service' : 'server'} is taking longer than usual.`;
+  stallNotice.style.display = 'block';
+}
+
 function finishRun() {
   cancelBtn.style.display = 'none';
   currentRunId = null;
   activeReader = null;
+  clearStall();
 }
 
 function handleEvent(ev) {
   const { step, detail, results } = ev;
+
+  // Any event means the pipeline is alive — reset the stall watchdog.
+  lastEventAt = performance.now();
+  if (stallNotice.style.display !== 'none') {
+    stallNotice.style.display = 'none';
+    classFill.classList.remove('waiting');
+    identFill.classList.remove('waiting');
+  }
 
   if (step === 'run_id') {
     currentRunId = ev.run_id;
@@ -1392,22 +1480,32 @@ function handleEvent(ev) {
   }
 
   if (step === 'identified') {
+    // Emitted once per processed identification window (title === null means the
+    // window was checked but not matched). Drives the identification bar per
+    // window and the live green bands / tooltips for matches.
     const d = JSON.parse(detail);
-    // Identification runs concurrently, so events can arrive out of order:
-    // push then coalesce the whole array (sort + merge same-title neighbours),
-    // rather than only merging with the previous entry.
-    wfIdentified.push({ start: d.start, end: d.end, title: d.title, artist: d.artist || null });
-    wfIdentified = coalesceIdentified(wfIdentified);
+    identReaped = d.reaped || identReaped + 1;
+    if (d.total) identTotal = d.total;
     identFarthestEnd = Math.max(identFarthestEnd, d.end);
-    if (wfDuration > 0) detectFill.style.width = (identFarthestEnd / wfDuration * 100) + '%';
+    if (d.title) {
+      // Concurrent identification can arrive out of order: push then coalesce
+      // the whole array (sort + merge same-title neighbours).
+      wfIdentified.push({ start: d.start, end: d.end, title: d.title, artist: d.artist || null });
+      wfIdentified = coalesceIdentified(wfIdentified);
+    }
+    // Identification bar: exact reaped/total once the total is known (after
+    // classification), otherwise the processed-window frontier over the audio.
+    const frac = identTotal
+      ? identReaped / identTotal
+      : (wfDuration > 0 ? identFarthestEnd / wfDuration : 0);
+    identFill.style.width = Math.min(100, frac * 100) + '%';
     // Identification overlaps classification: surface the detecting step as
     // active (alongside classifying) with a live count, so progress is visible
     // during the run instead of appearing all at once at the end.
     const detStep = document.querySelector('.step[data-step="detecting"]');
     if (detStep && !detStep.classList.contains('done')) {
       detStep.classList.add('active');
-      const n = wfIdentified.length;
-      updateStepDetail('detecting', `${n} identified…`);
+      updateStepDetail('detecting', `${wfIdentified.length} identified…`);
     }
     if (wfSamples) redrawAll();
     return;
@@ -1425,8 +1523,8 @@ function handleEvent(ev) {
     }));
     wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
     if (wfSamples) redrawAll();
-    detectFill.style.width = '100%';
-    setTimeout(() => { document.querySelector('.prog-bar').style.display = 'none'; }, 400);
+    classFill.style.width = '100%'; identFill.style.width = '100%';
+    setTimeout(() => { progBars.style.display = 'none'; }, 400);
     markAllDone();
     showResults(results);
     return;
@@ -1441,14 +1539,14 @@ function handleEvent(ev) {
 
   activateStep(step);
   if (step === 'detecting') {
-    // Identification overlaps classification, so it may already be underway
-    // (identFarthestEnd / detectFill driven by "identified" events) by the time
-    // the "detecting" step arrives — don't reset that progress here.
+    // Identification overlaps classification and its bar is driven by the
+    // "identified" events, so here we only update the step label (and capture
+    // the now-known window total for an exact identification-bar fraction).
     detectingInitialized = true;
     if (detail) {
       const m = detail.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);
       if (m) {
-        detectFill.style.width = (parseInt(m[1]) / parseInt(m[2]) * 100) + '%';
+        identTotal = parseInt(m[2]);
         const label = m[3].includes('no match') ? 'No match' : m[3].replace(/\s*–\s*/, ' – ');
         updateStepDetail(step, label);
       } else {
@@ -1468,9 +1566,8 @@ function handleEvent(ev) {
       wfChunks.push({ start, end, isMusic });
       updateStepDetail(step, isMusic ? 'Music' : 'No music');
       if (wfSamples) redrawAll();
-      // Once identification has produced its first result, let the bar track the
-      // identification frontier (identFarthestEnd) instead of classification.
-      if (wfDuration > 0 && wfIdentified.length === 0) detectFill.style.width = (end / wfDuration * 100) + '%';
+      // Classification bar tracks how far through the audio classification has run.
+      if (wfDuration > 0) classFill.style.width = (end / wfDuration * 100) + '%';
     }
   }
 }
@@ -1911,7 +2008,7 @@ async function loadHistory() {
           wfZoom = 1;
           if (waveformScroll) waveformScroll.scrollLeft = 0;
           if (wfMarker) wfMarker.classList.remove('active');
-          document.querySelector('.prog-bar').style.display = 'none';
+          progBars.style.display = 'none';
           waveformContainer.style.display = 'block';
           applyZoomVisibility();
           redrawAll();
