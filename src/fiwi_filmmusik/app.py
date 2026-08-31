@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -58,6 +58,31 @@ _cancel_lock = threading.Lock()
 # ── Per-enrich cancellation registry ──────────────────────────────────────────
 _enrich_cancel_events: dict[str, threading.Event] = {}
 _enrich_cancel_lock = threading.Lock()
+
+# ── Pre-analysis upload staging ───────────────────────────────────────────────
+# /identify stores the uploaded file here and returns a staging_id; /analyze then
+# consumes it by id, so a large film is uploaded only once even though the user
+# confirms film metadata in between.
+_STAGING_DIR = _OUTPUT_DIR.parent / "staging"
+_staging: dict[str, Path] = {}
+_staging_lock = threading.Lock()
+_STAGING_TTL_S = 6 * 3600
+
+
+def _prune_staging() -> None:
+    """Best-effort removal of staged uploads left behind by abandoned confirmations."""
+    import time
+    try:
+        for d in _STAGING_DIR.iterdir():
+            try:
+                if time.time() - d.stat().st_mtime > _STAGING_TTL_S:
+                    shutil.rmtree(d, ignore_errors=True)
+                    with _staging_lock:
+                        _staging.pop(d.name, None)
+            except OSError:
+                pass
+    except (OSError, FileNotFoundError):
+        pass
 
 
 class _PipelineCancelled(Exception):
@@ -144,18 +169,134 @@ async def cancel_run(run_id: str) -> dict:
     raise HTTPException(status_code=404, detail="Run not found")
 
 
+@app.post("/identify")
+async def identify(file: UploadFile, online: str = Form("0")) -> dict:
+    """Stage an uploaded video and return prefilled film metadata for confirmation.
+
+    Reads MP4 container tags immediately; if `online=1`, additionally resolves the
+    film via TMDb/Wikidata/imdbapi. The returned `staging_id` is passed to /analyze
+    so the file is not re-uploaded.
+    """
+    _prune_staging()
+    contents = await file.read()
+    original_name = file.filename or "video.mp4"
+    staging_id = str(uuid.uuid4())
+    staging_dir = _STAGING_DIR / staging_id
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = staging_dir / original_name
+    staged_path.write_bytes(contents)
+    with _staging_lock:
+        _staging[staging_id] = staged_path
+
+    film: dict = {}
+    try:
+        from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
+        film = read_mp4_tags(staged_path) or {}
+    except Exception:
+        film = {}
+
+    if online == "1":
+        try:
+            import httpx
+            from fiwi_filmmusik.metadata.film import FilmLookup
+            client = httpx.Client(timeout=15.0)
+            try:
+                lookup = FilmLookup(
+                    client,
+                    tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
+                    tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
+                )
+                info = lookup.lookup(
+                    imdb_id=film.get("imdb_id"),
+                    tmdb_id=film.get("tmdb_id"),
+                    title=film.get("title"),
+                    year=film.get("year"),
+                )
+                # First non-null wins: keep tag values, fill gaps from the lookup.
+                resolved = info.to_dict()
+                film = {k: (film.get(k) if film.get(k) is not None else resolved.get(k)) for k in {*film, *resolved}}
+            finally:
+                client.close()
+        except Exception:
+            pass
+
+    return {"staging_id": staging_id, "original_name": original_name, "film": film}
+
+
+@app.post("/film/lookup")
+async def film_lookup(hint: dict = Body(default={})) -> dict:
+    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year). No file needed."""
+    import httpx
+    from fiwi_filmmusik.metadata.film import FilmLookup
+    year = hint.get("year")
+    try:
+        year = int(year) if year not in (None, "") else None
+    except (ValueError, TypeError):
+        year = None
+    tmdb_id = hint.get("tmdb_id")
+    try:
+        tmdb_id = int(tmdb_id) if tmdb_id not in (None, "") else None
+    except (ValueError, TypeError):
+        tmdb_id = None
+    client = httpx.Client(timeout=15.0)
+    try:
+        lookup = FilmLookup(
+            client,
+            tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
+            tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
+        )
+        info = lookup.lookup(
+            imdb_id=(hint.get("imdb_id") or None),
+            tmdb_id=tmdb_id,
+            title=(hint.get("title") or None),
+            year=year,
+        )
+        return {"film": info.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Film lookup failed: {exc}")
+    finally:
+        client.close()
+
+
 @app.post("/analyze")
 async def analyze(
-    file: UploadFile,
+    file: UploadFile | None = File(None),
+    staging_id: str = Form(""),
+    film: str = Form(""),
     api: str = Form("acrcloud"),
     chunk_duration: float = Form(10.0),
     threshold: float = Form(0.2),
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
 ) -> StreamingResponse:
-    """Accept a video file and stream SSE progress events while running the pipeline."""
-    contents = await file.read()
-    original_name = file.filename or "video.mp4"
+    """Accept a video file (or a staged upload) and stream SSE progress events.
+
+    Either `file` is uploaded directly, or `staging_id` references a file already
+    staged by /identify (in which case `film` carries the user-confirmed metadata).
+    """
+    if staging_id:
+        with _staging_lock:
+            staged_path = _staging.pop(staging_id, None)
+        if not staged_path or not staged_path.exists():
+            raise HTTPException(status_code=400, detail="Staged upload not found or expired")
+        contents = staged_path.read_bytes()
+        original_name = staged_path.name
+        shutil.rmtree(staged_path.parent, ignore_errors=True)
+    elif file is not None:
+        contents = await file.read()
+        original_name = file.filename or "video.mp4"
+    else:
+        raise HTTPException(status_code=400, detail="No file or staging_id provided")
+
+    film_override = None
+    if film:
+        try:
+            parsed = json.loads(film)
+            if isinstance(parsed, dict) and any(v not in (None, "") for v in parsed.values()):
+                film_override = {k: v for k, v in parsed.items() if v not in (None, "")}
+        except (ValueError, TypeError):
+            film_override = None
+
     run_id = str(uuid.uuid4())
 
     return StreamingResponse(
@@ -168,6 +309,7 @@ async def analyze(
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
             api=api,
+            film_override=film_override,
         ),
         media_type="text/event-stream",
         headers={
@@ -186,6 +328,7 @@ async def _run_pipeline_sse(
     max_segment_duration: float | None = None,
     export_csv: bool = False,
     api: str = "acrcloud",
+    film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the pipeline in a thread and yield SSE events."""
     cancel_event = threading.Event()
@@ -207,11 +350,49 @@ async def _run_pipeline_sse(
         tmp_path = tmp_dir / original_name
         try:
             tmp_path.write_bytes(video_bytes)
-            from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
-            container_tags = read_mp4_tags(tmp_path) or None
+            if film_override:
+                # User-confirmed metadata from the pre-analysis step wins.
+                container_tags = film_override
+            else:
+                from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
+                container_tags = read_mp4_tags(tmp_path) or None
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             result_dict = results.to_dict()
+
+            # Automatic composer lookup: join composer / death-year / work directly
+            # from external APIs (MusicBrainz → Wikidata) for every cue that carries
+            # an ISRC. Best-effort — a network failure must not fail the analysis.
+            try:
+                import httpx
+                from fiwi_filmmusik.metadata.enricher import enrich as _enrich_results
+
+                def _music_cb(step: str, **kw) -> None:
+                    if cancel_event.is_set():
+                        raise _PipelineCancelled()
+                    if step == "music_start":
+                        ev_queue.put({"step": "enriching", "detail": f"0/{kw.get('total', 0)}"})
+                    elif step == "music_cue":
+                        ev_queue.put({"step": "enriching", "detail": f"{kw.get('index')}/{kw.get('total')}"})
+
+                _client = httpx.Client(timeout=15.0)
+                try:
+                    _enrich_results(
+                        results=result_dict,
+                        film_hint=None,
+                        http_client=_client,
+                        scope="music",
+                        music_isrc_only=True,
+                        progress_cb=_music_cb,
+                    )
+                finally:
+                    _client.close()
+            except _PipelineCancelled:
+                raise
+            except Exception:
+                import traceback as _tb
+                print("automatic composer enrichment failed:\n" + _tb.format_exc())
+
             # Persist the source video + a thumbnail filmstrip so the UI can show a
             # video preview synced to the timeline (also for history/reopened runs).
             try:
