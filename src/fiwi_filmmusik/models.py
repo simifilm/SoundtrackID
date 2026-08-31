@@ -117,6 +117,7 @@ class ResultsOutput:
                 "title": ident.title if ident else None,
                 "artist": ident.artist if ident else None,
                 "album": ident.album if ident else None,
+                "release_year": ident.metadata.get("release_year") if ident else None,
                 "isrc": ident.metadata.get("isrc") if ident else None,
                 "genre": ident.metadata.get("genre") if ident else None,
                 "photo_url": ident.metadata.get("photo_url") if ident else None,

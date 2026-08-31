@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import tempfile
 import threading
 from abc import ABC, abstractmethod
@@ -11,6 +12,14 @@ import numpy as np
 from scipy.io import wavfile
 
 from fiwi_filmmusik.models import DetectionResult, MusicSegment
+
+
+def _extract_year(value) -> int | None:
+    """Pull a 4-digit year out of a date string / year field (e.g. '2022-05-01')."""
+    if value is None:
+        return None
+    m = re.search(r"\d{4}", str(value))
+    return int(m.group()) if m else None
 
 
 class BaseMusicDetectionClient(ABC):
@@ -60,13 +69,18 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
         track = result["track"]
 
-        # Extract album from metadata if available
+        # Extract album + release year from metadata if available
         album = None
+        release_year = None
         sections = track.get("sections", [])
         if sections:
             metadata = sections[0].get("metadata", [])
             if metadata:
                 album = metadata[0].get("text")
+            for item in metadata:
+                if str(item.get("title", "")).strip().lower() == "released":
+                    release_year = _extract_year(item.get("text"))
+                    break
 
         # Extract track link: YouTube > Spotify > Apple Music
         youtube_link = None
@@ -90,6 +104,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             metadata={
                 "shazam_key": track.get("key"),
                 "album": album,
+                "release_year": release_year,
                 "genre": track.get("genres", {}).get("primary"),
                 "isrc": track.get("isrc"),
                 "photo_url": track.get("images", {}).get("coverart"),
@@ -204,6 +219,9 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
         mb = ext.get("musicbrainz")
         mb_id = mb[0].get("track", {}).get("id") if isinstance(mb, list) and mb else None
         genres = m.get("genres") or []
+        release_year = _extract_year(m.get("release_date")) or _extract_year(
+            m.get("album", {}).get("release_date")
+        )
 
         return DetectionResult(
             segment=segment,
@@ -213,6 +231,7 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
             provider="acrcloud",
             metadata={
                 "album": album,
+                "release_year": release_year,
                 "isrc": m.get("external_ids", {}).get("isrc"),
                 "genre": genres[0].get("name") if genres else None,
                 "acrcloud_id": m.get("acrid"),

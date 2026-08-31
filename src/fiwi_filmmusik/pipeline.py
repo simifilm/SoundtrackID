@@ -25,7 +25,10 @@ from fiwi_filmmusik.models import (
 
 
 def _det_key(det: DetectionResult) -> tuple | None:
-    return (det.title, det.artist, det.metadata.get("album")) if det.title else None
+    # Album is deliberately excluded: the same piece often comes back tagged to
+    # different albums across windows, and we still want to merge those adjacent
+    # windows into one cue (a different *title* is what breaks a run).
+    return (det.title, det.artist) if det.title else None
 
 
 def _group_detections(
@@ -124,12 +127,22 @@ class OutputWriter:
 
             first_detection = next((d for _, d in group if d.title), None)
             if first_detection:
+                # Canonical album for the merged cue: the most frequent album name
+                # among the group's identified windows (ties → first seen), so a
+                # single piece doesn't inherit whichever album the first window
+                # happened to carry.
+                album_counts: dict[str, int] = {}
+                for d in identified:
+                    alb = d.metadata.get("album")
+                    if alb:
+                        album_counts[alb] = album_counts.get(alb, 0) + 1
+                album = max(album_counts, key=album_counts.get) if album_counts else None
                 identification_outputs.append(IdentificationOutput(
                     segment_id=segment_id,
                     provider=first_detection.provider,
                     title=first_detection.title,
                     artist=first_detection.artist,
-                    album=first_detection.metadata.get("album"),
+                    album=album,
                     confidence=first_detection.confidence,
                     metadata={k: v for k, v in first_detection.metadata.items() if k != "album" and v is not None},
                 ))
