@@ -27,6 +27,7 @@ def enrich(
     tmdb_api_key: str | None = None,
     progress_cb: ProgressCb | None = None,
     scope: Scope = "all",
+    music_isrc_only: bool = False,
 ) -> dict[str, Any]:
     """Enrich a results.json dict in place and return it.
 
@@ -68,14 +69,15 @@ def enrich(
 
     if scope in ("music", "all"):
         cues = results.get("cues") or []
-        identified = [c for c in cues if _has_identification(c)]
+        predicate = _has_isrc if music_isrc_only else _has_identification
+        identified = [c for c in cues if predicate(c)]
         total = len(identified)
         cb("music_start", total=total)
 
         music_lookup = MusicLookup(http_client)
         processed = 0
         for cue in cues:
-            if not _has_identification(cue):
+            if not predicate(cue):
                 continue
             processed += 1
             enrichment = _enrich_cue(cue, music_lookup)
@@ -95,6 +97,10 @@ def enrich(
 
 def _has_identification(cue: dict[str, Any]) -> bool:
     return bool(cue.get("title") or cue.get("isrc"))
+
+
+def _has_isrc(cue: dict[str, Any]) -> bool:
+    return bool(cue.get("isrc"))
 
 
 def _enrich_cue(cue: dict[str, Any], music_lookup: MusicLookup):

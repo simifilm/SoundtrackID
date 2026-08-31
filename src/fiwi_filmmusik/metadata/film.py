@@ -17,6 +17,7 @@ class FilmInfo:
     director_death_year: int | None = None
     imdb_id: str | None = None
     tmdb_id: int | None = None
+    music_composer: str | None = None   # credited "Original Music Composer" (TMDb)
     sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,6 +28,7 @@ class FilmInfo:
             "director_death_year": self.director_death_year,
             "imdb_id": self.imdb_id,
             "tmdb_id": self.tmdb_id,
+            "music_composer": self.music_composer,
             "sources": self.sources,
         }
 
@@ -36,7 +38,7 @@ class FilmInfo:
     def merge(self, other: FilmInfo, source_tag: str) -> None:
         """Fill in missing fields from `other`. First non-null wins."""
         changed = False
-        for fname in ("title", "year", "director", "director_death_year", "imdb_id", "tmdb_id"):
+        for fname in ("title", "year", "director", "director_death_year", "imdb_id", "tmdb_id", "music_composer"):
             if getattr(self, fname) is None and getattr(other, fname) is not None:
                 setattr(self, fname, getattr(other, fname))
                 changed = True
@@ -216,6 +218,9 @@ def _parse_tmdb_movie(movie: dict, credits: dict) -> FilmInfo:
     director = next((c for c in crew if c.get("job") == "Director"), None)
     if director:
         info.director = director.get("name")
+    composers = [c.get("name") for c in crew if c.get("job") == "Original Music Composer" and c.get("name")]
+    if composers:
+        info.music_composer = ", ".join(dict.fromkeys(composers))
     return info
 
 

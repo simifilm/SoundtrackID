@@ -20,6 +20,7 @@ class ComposerInfo:
     composer: str | None = None
     composer_death_year: int | None = None
     work_title: str | None = None
+    original_year: int | None = None   # first publication/composition year of the work (Wikidata)
     composer_match: Literal["isrc", "search"] | None = None
     sources: list[str] = field(default_factory=list)
 
@@ -28,6 +29,7 @@ class ComposerInfo:
             "composer": self.composer,
             "composer_death_year": self.composer_death_year,
             "work_title": self.work_title,
+            "original_year": self.original_year,
             "composer_match": self.composer_match,
             "sources": self.sources,
         }
@@ -42,6 +44,7 @@ class MusicLookup:
         self._cache_work: dict[str, dict] = {}
         self._cache_artist: dict[str, dict] = {}
         self._cache_wikidata_death: dict[str, int | None] = {}
+        self._cache_work_year: dict[tuple, int | None] = {}
 
     def lookup_composer(
         self,
@@ -49,21 +52,39 @@ class MusicLookup:
         title: str | None = None,
         artist: str | None = None,
     ) -> ComposerInfo | None:
+        info: ComposerInfo | None = None
+
         if isrc:
-            info, composer_mbid = self._lookup_via_isrc(isrc)
-            if info and info.composer:
-                if not info.composer_death_year and composer_mbid:
+            candidate, composer_mbid = self._lookup_via_isrc(isrc)
+            if candidate and candidate.composer:
+                if not candidate.composer_death_year and composer_mbid:
                     death = self._wikidata_death_year_by_mbid(composer_mbid)
                     if death:
-                        info.composer_death_year = death
-                        if "wikidata" not in info.sources:
-                            info.sources.append("wikidata")
-                return info
+                        candidate.composer_death_year = death
+                        if "wikidata" not in candidate.sources:
+                            candidate.sources.append("wikidata")
+                info = candidate
 
-        if title and artist:
-            return self._lookup_via_wikidata_search(title, artist)
+        if info is None and title and artist:
+            info = self._lookup_via_wikidata_search(title, artist)
 
-        return None
+        # Original work date (Wikidata publication/inception) — independent of the
+        # composer resolution, and the primary signal for anachronism detection.
+        original_year = None
+        if title:
+            names = [n for n in [(info.composer if info else None), artist] if n]
+            if names:
+                original_year = self._wikidata_work_year(title, names)
+
+        if info is None:
+            if original_year is None:
+                return None
+            info = ComposerInfo()
+
+        info.original_year = original_year
+        if original_year and "wikidata" not in info.sources:
+            info.sources.append("wikidata")
+        return info
 
     # ── MusicBrainz chain ────────────────────────────────────────────────
 
@@ -166,6 +187,27 @@ class MusicLookup:
         data = self._wd_query(sparql)
         return _parse_wikidata_composer(data) if data else None
 
+    def _wikidata_work_year(self, title: str, names: list[str]) -> int | None:
+        """Earliest publication/inception year of a musical work with this title,
+        constrained to a composer/performer we already know (avoids matching the
+        wrong same-titled work). Returns None when Wikidata has no such work."""
+        names = [n for n in dict.fromkeys(n.strip() for n in names if n and n.strip())][:4]
+        if not title or not names:
+            return None
+        key = (title.lower(), tuple(sorted(n.lower() for n in names)))
+        if key in self._cache_work_year:
+            return self._cache_work_year[key]
+        data = self._wd_query(_sparql_work_year_by_title_people(title, names))
+        year = None
+        if data:
+            for b in (data.get("results") or {}).get("bindings") or []:
+                y = _parse_year((b.get("date") or {}).get("value"))
+                if y:
+                    year = y  # ORDER BY ASC → first bound date is the earliest
+                    break
+        self._cache_work_year[key] = year
+        return year
+
     def _wd_query(self, sparql: str) -> dict | None:
         time.sleep(0.05)
         try:
@@ -261,6 +303,29 @@ SELECT ?death WHERE {{
           wdt:P570 ?death.
 }}
 LIMIT 1
+""".strip()
+
+
+def _sparql_work_year_by_title_people(title: str, names: list[str]) -> str:
+    """Earliest date of a musical work with `title`, whose composer (P86) or
+    performer (P175) is one of `names`. Constraining by the people keeps the match
+    fast and unambiguous."""
+    safe_title = _escape_sparql_string(title)
+    values = " ".join(f'"{_escape_sparql_string(n)}"@en' for n in names)
+    return f"""
+SELECT ?date WHERE {{
+  VALUES ?pname {{ {values} }}
+  ?person rdfs:label ?pname.
+  ?work wdt:P31/wdt:P279* wd:Q2188189;
+        rdfs:label "{safe_title}"@en.
+  {{ ?work wdt:P86 ?person. }} UNION {{ ?work wdt:P175 ?person. }}
+  OPTIONAL {{ ?work wdt:P577 ?pub. }}
+  OPTIONAL {{ ?work wdt:P571 ?inc. }}
+  BIND(COALESCE(?pub, ?inc) AS ?date)
+  FILTER(BOUND(?date))
+}}
+ORDER BY ASC(?date)
+LIMIT 3
 """.strip()
 
 
