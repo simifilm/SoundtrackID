@@ -253,6 +253,47 @@
   }
   #video-preview-wrap:not(.collapsed) #video-toggle .vt-chevron { transform: rotate(90deg); }
   #video-preview { display: block; width: 100%; max-height: 380px; background: #000; }
+  /* Play-in-video button shown per result row when a stored video exists. */
+  .seg-play {
+    border: 1px solid #ddd6fe; background: #f5f3ff; color: #6d28d9;
+    border-radius: 7px; padding: 0.3rem 0.6rem; font-size: 0.72rem; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+  }
+  .seg-play:hover { background: #ede9fe; border-color: #c4b5fd; }
+
+  /* Pre-analysis film-confirmation panel. */
+  #film-confirm { margin-top: 1.25rem; }
+  .fc-card {
+    background: #ffffff; border: 1px solid #ddd6fe; border-radius: 12px; padding: 1.25rem 1.5rem;
+    box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
+  }
+  .fc-card h3 { margin: 0 0 0.35rem; color: #4c1d95; font-size: 1.05rem; }
+  .fc-hint { margin: 0 0 1rem; color: #6b7280; font-size: 0.85rem; line-height: 1.4; }
+  .fc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
+  .fc-grid label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: #7c3aed; font-weight: 600; }
+  .fc-grid input {
+    border: 1px solid #ddd6fe; border-radius: 7px; padding: 0.45rem 0.6rem; font-size: 0.9rem;
+    color: #1f2937; font-weight: 400;
+  }
+  .fc-grid input:focus { outline: none; border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+  #fc-status { display: block; min-height: 1.1em; margin: 0.75rem 0 0; font-size: 0.8rem; color: #6b7280; }
+  .fc-actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.75rem; flex-wrap: wrap; }
+
+  /* Anachronism marking + hide-toggle. */
+  #results-toolbar { display: flex; align-items: center; gap: 1rem; margin: 0.75rem 0; flex-wrap: wrap; }
+  .anachronism-toggle {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem; color: #6b7280; cursor: pointer; user-select: none;
+  }
+  .anachronism-toggle input { margin: 0; cursor: pointer; }
+  .anachronism-badge {
+    display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem; border-radius: 6px;
+    background: #fef3c7; color: #92400e; font-size: 0.68rem; font-weight: 600; white-space: nowrap;
+    cursor: help;
+  }
+  tr.anachronistic td { background: #fffbeb; color: #9a7b4f; }
+  #results-body.hide-anachronism tr.anachronistic { display: none; }
   #video-preview-wrap.collapsed #video-preview { display: none; }
   /* Filmstrip: a full-width overview strip like the minimap — fixed to the whole
      movie length, no zoom. Frames are drawn on a canvas at a constant size
@@ -585,6 +626,8 @@
   }
   #film-metadata-header .film-title { font-weight: 600; font-size: 1.0rem; color: #3b0764; }
   #film-metadata-header .film-meta { color: #6b7280; font-size: 0.82rem; }
+  #film-metadata-header .film-id-link { color: #7c3aed; text-decoration: none; }
+  #film-metadata-header .film-id-link:hover { text-decoration: underline; }
   #film-metadata-header small {
     display: block;
     margin-top: 0.4rem;
@@ -912,6 +955,28 @@
     <input type="file" id="file-input" accept="video/*">
   </div>
 
+  <!-- Film confirmation (shown after a file is picked, before analysis) -->
+  <div id="film-confirm" style="display:none">
+    <div class="fc-card">
+      <h3>Confirm film</h3>
+      <p class="fc-hint">Before analysis: review or complete the film details. The <strong>release year</strong>
+        is used to flag temporally implausible music matches (e.g. later songs that sample the film).</p>
+      <div class="fc-grid">
+        <label>Title <input type="text" id="fc-title" placeholder="Film title"></label>
+        <label>Year <input type="text" id="fc-year" inputmode="numeric" placeholder="YYYY"></label>
+        <label>Director <input type="text" id="fc-director" placeholder="Director"></label>
+        <label>IMDb ID <input type="text" id="fc-imdb" placeholder="tt…"></label>
+        <label>TMDb ID <input type="text" id="fc-tmdb" placeholder="Number"></label>
+      </div>
+      <small id="fc-status"></small>
+      <div class="fc-actions">
+        <button type="button" id="fc-cancel" class="reset-btn">Cancel</button>
+        <button type="button" id="fc-lookup" class="enrich-btn">Look up online</button>
+        <button type="button" id="fc-start" class="download-btn">Start analysis</button>
+      </div>
+    </div>
+  </div>
+
   <!-- History Panel -->
   <details id="history-panel" style="display:none">
     <summary>Recent runs</summary>
@@ -934,6 +999,10 @@
       </div>
       <div class="step" data-step="writing">
         <div class="step-icon">4</div><span>Writing results</span>
+        <span class="step-detail" style="margin-left:auto;color:#7c3aed;font-size:0.78rem;"></span>
+      </div>
+      <div class="step" data-step="enriching">
+        <div class="step-icon">5</div><span>Identifying composers</span>
         <span class="step-detail" style="margin-left:auto;color:#7c3aed;font-size:0.78rem;"></span>
       </div>
     </div>
@@ -989,6 +1058,12 @@
   <div id="results-view">
     <div class="results-card">
       <div id="film-metadata-header" style="display:none"></div>
+      <div id="results-toolbar" style="display:none">
+        <label class="anachronism-toggle">
+          <input type="checkbox" id="opt-hide-anachronism">
+          <span id="anachronism-toggle-label">Hide temporally implausible matches</span>
+        </label>
+      </div>
       <div id="empty-state" style="display:none">
         <p>No music segments detected</p>
         <small>Try lowering the Sensitivity threshold and analyzing again.</small>
@@ -997,8 +1072,8 @@
         <thead>
           <tr>
             <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
-            <th></th><th>Title</th><th>Artist</th><th>Album</th>
-            <th>Komponist</th><th>†</th><th>Werk</th>
+            <th></th><th>Title</th><th>Artist</th><th>Album</th><th>Date</th>
+            <th>Composer</th><th>†</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -1008,30 +1083,9 @@
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="download-btn" id="download-btn">Download results</button>
-      <button class="enrich-btn" id="enrich-btn">Metadaten anreichern</button>
     </div>
   </div>
 
-  <!-- Enrich Modal -->
-  <div id="enrich-modal" style="display:none">
-    <div class="enrich-modal-card">
-      <h3>Metadaten anreichern</h3>
-      <p class="enrich-modal-hint">Optional vorausgefüllt aus MP4-Tags. Mindestens eine ID oder Titel benötigt.</p>
-      <label>IMDb ID <input type="text" id="enrich-imdb" placeholder="tt0043014"></label>
-      <label>TMDb ID <input type="text" id="enrich-tmdb" placeholder="123"></label>
-      <label>Titel <input type="text" id="enrich-title" placeholder="Sunset Boulevard"></label>
-      <label>Jahr <input type="text" id="enrich-year" placeholder="1950"></label>
-      <div id="enrich-progress" style="display:none">
-        <div class="enrich-progress-bar"><div class="enrich-progress-fill" id="enrich-progress-fill"></div></div>
-        <small id="enrich-progress-text">Filmdaten werden geladen…</small>
-      </div>
-      <div id="enrich-error" style="display:none"></div>
-      <div class="enrich-modal-actions">
-        <button type="button" class="reset-btn" id="enrich-cancel-btn">Abbrechen</button>
-        <button type="button" class="download-btn" id="enrich-submit-btn">Anreichern</button>
-      </div>
-    </div>
-  </div>
 
 </div>
 
@@ -1056,6 +1110,7 @@ const videoToggle     = document.getElementById('video-toggle');
 let filmstripSprite   = null;   // loaded sprite Image
 let filmstripMeta     = null;   // {count, thumb_width, thumb_height}
 let hasVideo          = false;
+let activeSegmentEnd  = null;   // when playing a cue, pause the video at this time
 
 // Collapse / expand the video preview (chevron rotation handled in CSS).
 function setVideoCollapsed(collapsed) {
@@ -1089,6 +1144,121 @@ const downloadBtn     = document.getElementById('download-btn');
 let currentRunId  = null;
 let activeReader  = null;
 let currentResults = null;
+let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
+let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
+
+// ── Pre-analysis film confirmation ────────────────────────────────────────────
+const filmConfirm = document.getElementById('film-confirm');
+const fcStatus     = document.getElementById('fc-status');
+const fcFields = {
+  title: document.getElementById('fc-title'),
+  year: document.getElementById('fc-year'),
+  director: document.getElementById('fc-director'),
+  imdb_id: document.getElementById('fc-imdb'),
+  tmdb_id: document.getElementById('fc-tmdb'),
+};
+
+function fillFilmFields(film) {
+  film = film || {};
+  fcFields.title.value    = film.title ?? '';
+  fcFields.year.value     = film.year ?? '';
+  fcFields.director.value = film.director ?? '';
+  fcFields.imdb_id.value  = film.imdb_id ?? '';
+  fcFields.tmdb_id.value  = film.tmdb_id ?? '';
+}
+
+function collectFilmFields() {
+  const yearNum = parseInt(fcFields.year.value, 10);
+  return {
+    title: fcFields.title.value.trim() || null,
+    year: Number.isFinite(yearNum) ? yearNum : null,
+    director: fcFields.director.value.trim() || null,
+    imdb_id: fcFields.imdb_id.value.trim() || null,
+    tmdb_id: fcFields.tmdb_id.value.trim() || null,
+  };
+}
+
+// Step 1: stage the file and prefill the film form for confirmation.
+function beginIdentify(file) {
+  errorArea.style.display = 'none';
+  document.getElementById('history-panel').style.display = 'none';
+  dropZone.style.display = 'none';
+  progressView.style.display = 'none';
+  resultsView.style.display = 'none';
+  pendingStagingId = null;
+  pendingFilm = {};
+  fillFilmFields(null);
+  fcStatus.textContent = 'Uploading file and reading metadata…';
+  filmConfirm.style.display = 'block';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/identify', { method: 'POST', body: fd })
+    .then(res => {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(data => {
+      pendingStagingId = data.staging_id;
+      pendingFilm = data.film || {};
+      fillFilmFields(pendingFilm);
+      fcStatus.textContent = pendingFilm.year
+        ? 'Prefilled from file tags. Please review — especially the year.'
+        : 'No year found in the file tags. Please add it or look it up online.';
+    })
+    .catch(err => {
+      const stale = String(err).includes('404');
+      fcStatus.textContent = stale
+        ? 'Server endpoint /identify is missing — running an older server version? Please restart the server.'
+        : 'Could not prepare the file. Please try again.';
+    });
+}
+
+// Optional: resolve missing fields online (TMDb/Wikidata) without re-uploading.
+document.getElementById('fc-lookup').addEventListener('click', () => {
+  fcStatus.textContent = 'Looking up online…';
+  fetch('/film/lookup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(collectFilmFields()),
+  })
+    .then(res => res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)))
+    .then(data => {
+      const f = data.film || {};
+      // Keep the full looked-up record (incl. director_death_year, sources) …
+      pendingFilm = { ...pendingFilm, ...f };
+      // … but only fill *empty* form fields, keeping anything the user typed.
+      for (const [k, el] of Object.entries(fcFields)) {
+        if (!el.value && f[k] != null) el.value = f[k];
+      }
+      fcStatus.textContent = (f.title || f.year)
+        ? 'Online data applied (empty fields filled).'
+        : 'Nothing found online. Please fill in manually.';
+    })
+    .catch(err => {
+      fcStatus.textContent = String(err).includes('404')
+        ? 'Endpoint /film/lookup is missing — server is running an older version. Please restart.'
+        : 'Online lookup failed.';
+    });
+});
+
+document.getElementById('fc-cancel').addEventListener('click', () => {
+  pendingStagingId = null;
+  pendingFilm = {};
+  filmConfirm.style.display = 'none';
+  dropZone.style.display = 'block';
+  fileInput.value = '';
+});
+
+document.getElementById('fc-start').addEventListener('click', () => {
+  if (!pendingStagingId) { fcStatus.textContent = 'File not ready yet — please wait a moment.'; return; }
+  filmConfirm.style.display = 'none';
+  // Merge the edited fields over the full retrieved record so nothing extra
+  // (e.g. director_death_year) is lost.
+  const film = { ...pendingFilm };
+  for (const [k, v] of Object.entries(collectFilmFields())) film[k] = v;
+  startAnalysis(pendingStagingId, film);
+});
 
 // Settings wiring
 document.getElementById('opt-threshold').addEventListener('input', function() {
@@ -1120,17 +1290,17 @@ dropZone.addEventListener('drop', e => {
   const file = e.dataTransfer.files[0];
   if (!file) return;
   if (!isVideoFile(file)) { rejectFile(); return; }
-  startAnalysis(file);
+  beginIdentify(file);
 });
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
   if (!file) return;
   if (!isVideoFile(file)) { rejectFile(); fileInput.value = ''; return; }
-  startAnalysis(file);
+  beginIdentify(file);
 });
 
 // Steps helper
-const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing'];
+const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing', 'enriching'];
 let currentStep = null;
 
 function activateStep(stepName) {
@@ -1386,7 +1556,7 @@ function applyZoomVisibility() {
 }
 
 // Analysis
-function startAnalysis(file) {
+function startAnalysis(stagingId, film) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   setupVideo(null, null);
@@ -1429,7 +1599,8 @@ function startAnalysis(file) {
   resultsView.style.display  = 'none';
 
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('staging_id', stagingId);
+  formData.append('film', JSON.stringify(film || {}));
   formData.append('api', document.getElementById('opt-api').value);
   formData.append('chunk_duration', document.getElementById('opt-chunk').value);
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
@@ -1536,6 +1707,7 @@ function handleEvent(ev) {
 
   if (step === 'cancelled') {
     finishRun();
+    filmConfirm.style.display = 'none';
     dropZone.style.display = 'block';
     progressView.style.display = 'none';
     waveformContainer.style.display = 'none';
@@ -1608,6 +1780,10 @@ function handleEvent(ev) {
       artist: c.artist || null,
     }));
     wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
+    // Re-derive the purple music bands from the server-merged cues (mirrors the
+    // history-reload path) so a single long cue renders as one contiguous band
+    // instead of the raw per-window classification splitting it into pieces.
+    wfChunks = (results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
     if (wfSamples) redrawAll();
     classFill.style.width = '100%'; identFill.style.width = '100%';
     setTimeout(() => { progBars.style.display = 'none'; }, 400);
@@ -1671,7 +1847,7 @@ function triggerDownload(content, filename, type) {
 }
 
 function buildCSV(results) {
-  const header = ['segment_id','start','duration','conditioning','confidence','provider','title','artist','album'];
+  const header = ['segment_id','start','duration','conditioning','confidence','provider','title','artist','album','original_year','release_year','anachronistic'];
   const rows = (results.cues || []).map(cue => [
     cue.segment_id,
     cue.start,
@@ -1682,6 +1858,9 @@ function buildCSV(results) {
     cue.title ?? '',
     cue.artist ?? '',
     cue.album ?? '',
+    (cue.enrichment && cue.enrichment.original_year) ?? '',
+    cue.release_year ?? '',
+    isAnachronistic(cue) ? '1' : '0',
   ]);
   return [header, ...rows]
     .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
@@ -1745,14 +1924,44 @@ function renderFilmHeader(film) {
     return;
   }
   const yearPart = film.year ? ` (${film.year})` : '';
-  const directorPart = film.director
-    ? `Regie: ${film.director}${film.director_death_year ? ` † ${film.director_death_year}` : ''}`
-    : '';
+  // The director's death year is not shown — PD status depends on the composer, not the director.
+  const parts = [];
+  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" onclick="event.preventDefault();location.href=this.href;">${fmt(film.director)}</a>`);
+  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" onclick="event.preventDefault();location.href=this.href;">${film.imdb_id}</a>`);
+  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" onclick="event.preventDefault();location.href=this.href;">${film.tmdb_id}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
     <div class="film-title">${fmt(film.title || '—')}${yearPart}</div>
-    <div class="film-meta">${directorPart}</div>
-    <small>Hinweis: PD-Status der Musik richtet sich nach Todesjahr des Komponisten, nicht des Regisseurs.</small>`;
+    <div class="film-meta">${parts.join(' · ')}</div>`;
+}
+
+// ── Anachronism gate: a track released well after the film can't be original ──
+const ANACHRONISM_TOLERANCE = 3;   // years of slack (re-releases, tagging noise)
+function currentFilmYear() {
+  const y = currentResults && currentResults.film && currentResults.film.year;
+  const n = Number(y);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function isAnachronistic(cue) {
+  const fy = currentFilmYear();
+  if (!fy) return false;
+  const enr = cue.enrichment || {};
+  // Primary signal: the work's real original (publication/composition) year from
+  // Wikidata. When we have it, it's authoritative.
+  if (enr.original_year) return enr.original_year > fy + ANACHRONISM_TOLERANCE;
+  // No original date → fall back to ACRCloud's release year (a reissue date, so
+  // only a hint) plus two cheap safeguards against false positives.
+  if (!(cue.release_year && cue.release_year > fy + ANACHRONISM_TOLERANCE)) return false;
+  // The composer died on/before the film year → the work provably predates it.
+  if (enr.composer_death_year && enr.composer_death_year <= fy) return false;
+  // It's by the film's own credited composer → it IS the original score.
+  const filmComposer = ((currentResults && currentResults.film && currentResults.film.music_composer) || '').toLowerCase();
+  if (filmComposer) {
+    const names = filmComposer.split(/,|&|\band\b/).map(s => s.trim()).filter(Boolean);
+    const hay = ((cue.artist || '') + ' ' + (enr.composer || '')).toLowerCase();
+    if (names.some(n => n && hay.includes(n))) return false;
+  }
+  return true;
 }
 
 function buildCueRowHTML(cue, videoName) {
@@ -1765,20 +1974,51 @@ function buildCueRowHTML(cue, videoName) {
   const uncertain = enr.composer_match === 'search';
   const cls = uncertain ? ' class="composer-uncertain"' : '';
   const badge = uncertain
-    ? '<span class="composer-uncertain-badge" title="Per Titel-Suche zugeordnet, nicht via ISRC — manuell prüfen.">?</span>'
+    ? '<span class="composer-uncertain-badge" title="Matched by title search, not via ISRC — please verify manually.">?</span>'
+    : '';
+  // With a stored video, playing a cue drives the shared player (image track +
+  // stop at segment end). Without one (e.g. older history runs), fall back to the
+  // extracted-segment audio element.
+  const playCell = hasVideo
+    ? '<td><button type="button" class="seg-play" title="Im Video abspielen">▶ Video</button></td>'
+    : `<td><audio controls controlsList="nodownload noplaybackrate" oncontextmenu="return false" src="${url}"></audio></td>`;
+  // Date column: the work's original year when known (Wikidata), else ACRCloud's
+  // recording/release year as a weaker hint.
+  const hasOrig = enr.original_year != null;
+  const dateYear = hasOrig ? enr.original_year : (cue.release_year != null ? cue.release_year : '');
+  const dateTitle = hasOrig
+    ? 'Original publication / composition year (Wikidata)'
+    : (cue.release_year != null ? 'Recording / release year (ACRCloud) — original year unknown' : '');
+  const dateCls = hasOrig ? '' : ' style="color:#9ca3af"';
+  const anaBadge = isAnachronistic(cue)
+    ? `<span class="anachronism-badge" title="Dates to ${dateYear}, later than the film — likely a later work (sample/cover), not the original score.">⚠ ${dateYear}</span>`
     : '';
   return `
     <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
     <td>${fmtTime(cue.start)}</td>
     <td>${fmtTime(cue.duration)}</td>
-    <td><audio controls controlsList="nodownload noplaybackrate" oncontextmenu="return false" src="${url}"></audio></td>
+    ${playCell}
     <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
-    <td>${fmt(cue.title)}${linkIcon}</td>
+    <td>${fmt(cue.title)}${linkIcon}${anaBadge}</td>
     <td>${fmt(cue.artist)}</td>
     <td>${fmt(cue.album)}</td>
+    <td${dateCls} title="${dateTitle}">${fmt(dateYear)}</td>
     <td${cls}>${fmt(enr.composer)}${badge}</td>
-    <td${cls}>${fmt(enr.composer_death_year)}</td>
-    <td${cls}>${fmt(enr.work_title)}</td>`;
+    <td${cls}>${fmt(enr.composer_death_year)}</td>`;
+}
+
+// Wire a result row: clicking the row body focuses the cue on the timeline; the
+// Play button (when present) drives the shared video player.
+function attachRowHandlers(tr, cue) {
+  tr.addEventListener('click', e => {
+    if (e.target.closest('audio, a, button')) return;
+    const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
+    focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
+  });
+  const playBtn = tr.querySelector('.seg-play');
+  if (playBtn) {
+    playBtn.addEventListener('click', e => { e.stopPropagation(); playSegment(cue); });
+  }
 }
 
 function showResults(results) {
@@ -1808,18 +2048,31 @@ function showResults(results) {
       tr.dataset.segmentId = cue.segment_id;
       tr.style.cursor = 'pointer';
       tr.innerHTML = buildCueRowHTML(cue, videoName);
-      tr.addEventListener('click', e => {
-        if (e.target.closest('audio, a, button')) return;
-        const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
-        focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
-      });
+      tr.classList.toggle('anachronistic', isAnachronistic(cue));
+      attachRowHandlers(tr, cue);
       resultsBody.appendChild(tr);
     });
   }
 
+  updateAnachronismToolbar(cues);
 }
 
+function updateAnachronismToolbar(cues) {
+  const toolbar = document.getElementById('results-toolbar');
+  const label = document.getElementById('anachronism-toggle-label');
+  if (!toolbar) return;
+  const n = cues.filter(isAnachronistic).length;
+  if (n === 0) { toolbar.style.display = 'none'; return; }
+  toolbar.style.display = 'flex';
+  label.textContent = `Hide ${n} temporally implausible match${n === 1 ? '' : 'es'}`;
+}
+
+document.getElementById('opt-hide-anachronism').addEventListener('change', function() {
+  resultsBody.classList.toggle('hide-anachronism', this.checked);
+});
+
 resetBtn.addEventListener('click', () => {
+  filmConfirm.style.display = 'none';
   dropZone.style.display = 'block';
   progressView.style.display = 'none';
   resultsView.style.display = 'none';
@@ -1844,212 +2097,6 @@ cancelBtn.addEventListener('click', async () => {
   cancelBtn.textContent = 'Cancelling…';
   try { await fetch('/cancel/' + currentRunId, { method: 'POST' }); } catch (_) {}
 });
-
-// ── Enrich modal ────────────────────────────────────────────────────────────
-const enrichBtn         = document.getElementById('enrich-btn');
-const enrichModal       = document.getElementById('enrich-modal');
-const enrichSubmitBtn   = document.getElementById('enrich-submit-btn');
-const enrichCancelBtn   = document.getElementById('enrich-cancel-btn');
-const enrichImdb        = document.getElementById('enrich-imdb');
-const enrichTmdb        = document.getElementById('enrich-tmdb');
-const enrichTitle       = document.getElementById('enrich-title');
-const enrichYear        = document.getElementById('enrich-year');
-const enrichProgress    = document.getElementById('enrich-progress');
-const enrichProgressFill= document.getElementById('enrich-progress-fill');
-const enrichProgressText= document.getElementById('enrich-progress-text');
-const enrichError       = document.getElementById('enrich-error');
-let currentEnrichId   = null;
-let activeEnrichReader = null;
-
-function openEnrichModal() {
-  if (!currentResults) return;
-  const film = currentResults.film || {};
-  enrichImdb.value = film.imdb_id || '';
-  enrichTmdb.value = film.tmdb_id || '';
-  enrichTitle.value = film.title || '';
-  enrichYear.value = film.year || '';
-  enrichProgress.style.display = 'none';
-  enrichError.style.display = 'none';
-  enrichError.textContent = '';
-  enrichSubmitBtn.disabled = false;
-  enrichSubmitBtn.textContent = 'Anreichern';
-  enrichCancelBtn.textContent = 'Abbrechen';
-  enrichModal.style.display = 'flex';
-}
-
-function closeEnrichModal() {
-  enrichModal.style.display = 'none';
-  if (activeEnrichReader) {
-    try { activeEnrichReader.cancel(); } catch (_) {}
-    activeEnrichReader = null;
-  }
-  currentEnrichId = null;
-}
-
-enrichBtn.addEventListener('click', openEnrichModal);
-
-enrichCancelBtn.addEventListener('click', async () => {
-  if (currentEnrichId) {
-    enrichCancelBtn.disabled = true;
-    enrichCancelBtn.textContent = 'Abbrechen…';
-    try { await fetch('/enrich/cancel/' + currentEnrichId, { method: 'POST' }); } catch (_) {}
-    return;
-  }
-  closeEnrichModal();
-});
-
-enrichSubmitBtn.addEventListener('click', () => {
-  if (!currentResults) return;
-  const videoName = (currentResults.source || '').split('/').pop().replace(/\.[^.]+$/, '');
-  if (!videoName) {
-    enrichError.textContent = 'Kein Videoname verfügbar.';
-    enrichError.style.display = 'block';
-    return;
-  }
-  const payload = {
-    imdb_id: enrichImdb.value.trim() || null,
-    tmdb_id: enrichTmdb.value.trim() ? parseInt(enrichTmdb.value.trim(), 10) : null,
-    title: enrichTitle.value.trim() || null,
-    year: enrichYear.value.trim() ? parseInt(enrichYear.value.trim(), 10) : null,
-  };
-  if (!payload.imdb_id && !payload.tmdb_id && !payload.title) {
-    enrichError.textContent = 'Bitte mindestens eine ID oder einen Titel angeben.';
-    enrichError.style.display = 'block';
-    return;
-  }
-  enrichError.style.display = 'none';
-  enrichSubmitBtn.disabled = true;
-  enrichSubmitBtn.textContent = 'Läuft…';
-  enrichProgress.style.display = 'block';
-  enrichProgressFill.style.width = '0%';
-  enrichProgressText.textContent = 'Filmdaten werden geladen…';
-
-  fetch('/enrich/' + encodeURIComponent(videoName), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-    .then(res => {
-      const reader = res.body.getReader();
-      activeEnrichReader = reader;
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) return;
-          buf += decoder.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop();
-          parts.forEach(part => {
-            if (part.startsWith('data: ')) {
-              try {
-                const ev = JSON.parse(part.slice(6));
-                handleEnrichEvent(ev);
-              } catch (_) {}
-            }
-          });
-          pump();
-        });
-      }
-      pump();
-    })
-    .catch(err => {
-      enrichError.textContent = 'Verbindungsfehler: ' + err.message;
-      enrichError.style.display = 'block';
-      enrichSubmitBtn.disabled = false;
-      enrichSubmitBtn.textContent = 'Anreichern';
-    });
-});
-
-function handleEnrichEvent(ev) {
-  const { step } = ev;
-
-  if (step === 'enrich_id') {
-    currentEnrichId = ev.enrich_id;
-    return;
-  }
-
-  if (step === 'film_start') {
-    enrichProgressText.textContent = 'Filmdaten werden geladen…';
-    return;
-  }
-
-  if (step === 'film_done') {
-    currentResults.film = ev.film;
-    renderFilmHeader(ev.film);
-    enrichProgressText.textContent = 'Komponisten werden ermittelt…';
-    return;
-  }
-
-  if (step === 'music_start') {
-    enrichProgressFill.style.width = '0%';
-    enrichProgressText.textContent = `Komponisten: 0 / ${ev.total}`;
-    return;
-  }
-
-  if (step === 'music_cue') {
-    if (currentResults && currentResults.cues) {
-      const cue = currentResults.cues.find(c => c.segment_id === ev.segment_id);
-      if (cue) {
-        cue.enrichment = ev.enrichment;
-        const tr = resultsBody.querySelector(`tr[data-segment-id="${cue.segment_id}"]`);
-        if (tr) {
-          const videoName = (currentResults.source || '').split('/').pop().replace(/\.[^.]+$/, '');
-          tr.innerHTML = buildCueRowHTML(cue, videoName);
-          tr.addEventListener('click', e => {
-            if (e.target.closest('audio, a, button')) return;
-            const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
-            focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
-          });
-        }
-      }
-    }
-    if (ev.total > 0) {
-      const pct = (ev.index / ev.total) * 100;
-      enrichProgressFill.style.width = pct + '%';
-      enrichProgressText.textContent = `Komponisten: ${ev.index} / ${ev.total}`;
-    }
-    return;
-  }
-
-  if (step === 'music_done') {
-    enrichProgressFill.style.width = '100%';
-    enrichProgressText.textContent = 'Fertig.';
-    return;
-  }
-
-  if (step === 'done') {
-    currentResults = ev.results;
-    enrichSubmitBtn.disabled = false;
-    enrichSubmitBtn.textContent = 'Anreichern';
-    setTimeout(closeEnrichModal, 600);
-    loadHistory();
-    return;
-  }
-
-  if (step === 'cancelled') {
-    enrichError.textContent = 'Anreicherung abgebrochen. Teilweise Daten wurden gespeichert.';
-    enrichError.style.display = 'block';
-    enrichSubmitBtn.disabled = false;
-    enrichSubmitBtn.textContent = 'Anreichern';
-    enrichCancelBtn.disabled = false;
-    enrichCancelBtn.textContent = 'Schließen';
-    currentEnrichId = null;
-    return;
-  }
-
-  if (step === 'error') {
-    enrichError.textContent = 'Fehler: ' + (ev.detail || 'Unbekannt');
-    enrichError.style.display = 'block';
-    enrichSubmitBtn.disabled = false;
-    enrichSubmitBtn.textContent = 'Anreichern';
-    enrichCancelBtn.disabled = false;
-    enrichCancelBtn.textContent = 'Schließen';
-    currentEnrichId = null;
-    return;
-  }
-}
 
 async function loadHistory() {
   const panel = document.getElementById('history-panel');
@@ -2264,9 +2311,19 @@ function setupVideo(results, videoName) {
 
 function seekVideo(t, play = true) {
   if (!hasVideo || !isFinite(t)) return;
+  activeSegmentEnd = null;   // a plain seek carries no stop bound
   try { videoEl.currentTime = Math.max(0, t); } catch (_) {}
   if (play) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
   updatePlayhead();
+}
+
+// Play one detected cue in the shared video player: seek to its start, show the
+// image track, and stop automatically at the segment end.
+function playSegment(cue) {
+  if (!hasVideo) return;
+  setVideoCollapsed(false);
+  seekVideo(cue.start, true);
+  activeSegmentEnd = cue.start + cue.duration;
 }
 
 function updatePlayhead() {
@@ -2323,6 +2380,11 @@ function drawFilmstrip() {
 
 videoEl.addEventListener('timeupdate', () => {
   updatePlayhead();
+  // Stop at the end of a cue that was launched via its Play button.
+  if (activeSegmentEnd != null && videoEl.currentTime >= activeSegmentEnd) {
+    videoEl.pause();
+    activeSegmentEnd = null;
+  }
   // While playing and zoomed, keep the waveform playhead within view.
   if (!videoEl.paused && wfZoom > 1 && wfDuration > 0) {
     const fullW = waveformCanvas.clientWidth;
