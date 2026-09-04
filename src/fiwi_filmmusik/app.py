@@ -47,6 +47,57 @@ if getattr(_sys, "frozen", False):
 else:
     _OUTPUT_DIR = Path("./output/cache")
 
+# ── API-key settings (managed via the UI, persisted to settings.json) ─────────
+# Maps a UI field name → the environment variable the clients read. Values entered
+# in the settings page are stored in settings.json and pushed into os.environ, so
+# subsequent analysis runs (which build clients fresh) pick them up. This layers
+# on top of .env: a saved value overrides the .env default.
+_SETTINGS_PATH = _OUTPUT_DIR.parent / "settings.json"
+_KEY_FIELDS: dict[str, str] = {
+    "acrcloud_host": "ACRCLOUD_HOST",
+    "acrcloud_access_key": "ACRCLOUD_ACCESS_KEY",
+    "acrcloud_access_secret": "ACRCLOUD_ACCESS_SECRET",
+    "audd_api_token": "AUDD_API_TOKEN",
+    "tmdb_bearer": "FIWI_TMDB_API_TOKEN",
+    "tmdb_key": "FIWI_TMDB_KEY",
+}
+# Fields shown in cleartext (not secrets); everything else is masked in responses.
+_PLAIN_FIELDS = {"acrcloud_host"}
+
+
+def _load_settings_into_env() -> None:
+    """On startup, apply any saved API keys over the environment."""
+    try:
+        data = json.loads(_SETTINGS_PATH.read_text())
+    except (OSError, ValueError):
+        return
+    for field, env_var in _KEY_FIELDS.items():
+        val = data.get(field)
+        if val:
+            os.environ[env_var] = str(val)
+
+
+def _mask(value: str) -> str:
+    if not value:
+        return ""
+    return ("•" * 4 + value[-4:]) if len(value) > 4 else "•" * len(value)
+
+
+def _settings_state() -> dict:
+    """Report which keys are configured, without exposing secret values."""
+    try:
+        saved = json.loads(_SETTINGS_PATH.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    state = {}
+    for field, env_var in _KEY_FIELDS.items():
+        value = saved.get(field) or os.environ.get(env_var) or ""
+        state[field] = {
+            "configured": bool(value),
+            "preview": value if field in _PLAIN_FIELDS else _mask(value),
+        }
+    return state
+
 # ── Singleton classifier (loaded once at startup) ─────────────────────────────
 _classifier = None
 _classifier_lock = threading.Lock()
@@ -140,12 +191,14 @@ def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: f
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-warm the classifier so the first request doesn't block
+    # Apply saved API keys, then pre-warm the classifier so the first request
+    # doesn't block.
+    _load_settings_into_env()
     await asyncio.to_thread(_get_classifier)
     yield
 
 
-app = FastAPI(title="FIWI Filmmusik Analyzer", lifespan=lifespan)
+app = FastAPI(title="SoundtrackID", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
@@ -154,9 +207,44 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/settings")
+async def get_settings() -> dict:
+    """Which API keys are configured (masked, never the raw secret)."""
+    return _settings_state()
+
+
+@app.post("/settings")
+async def save_settings(payload: dict = Body(...)) -> dict:
+    """Persist API keys entered in the settings page and apply them to the
+    environment so subsequent analysis runs use them. An empty string clears a
+    field. Only known fields are accepted."""
+    try:
+        saved = json.loads(_SETTINGS_PATH.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    for field, value in payload.items():
+        if field not in _KEY_FIELDS:
+            continue
+        env_var = _KEY_FIELDS[field]
+        if value:
+            saved[field] = str(value)
+            os.environ[env_var] = str(value)
+        else:  # empty string clears the key
+            saved.pop(field, None)
+            os.environ.pop(env_var, None)
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_json(_SETTINGS_PATH, saved)
+    return _settings_state()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> FileResponse:
-    return FileResponse(_STATIC_DIR / "index.html")
+    # No-store so CSS/JS edits are picked up on a normal reload (the page is a
+    # single self-contained file, so stale caching otherwise hides UI changes).
+    return FileResponse(
+        _STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 @app.post("/cancel/{run_id}")
@@ -360,6 +448,16 @@ async def _run_pipeline_sse(
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             result_dict = results.to_dict()
 
+            # Temporal re-rank: prefer a period-plausible candidate over an
+            # anachronistic top hit, now that the film year is known.
+            try:
+                from fiwi_filmmusik.temporal import temporal_rerank
+                film_year = (result_dict.get("film") or {}).get("year")
+                temporal_rerank(result_dict, film_year)
+            except Exception:
+                import traceback as _tb
+                print("temporal rerank failed:\n" + _tb.format_exc())
+
             # Automatic composer lookup: join composer / death-year / work directly
             # from external APIs (MusicBrainz → Wikidata) for every cue that carries
             # an ISRC. Best-effort — a network failure must not fail the analysis.
@@ -407,7 +505,11 @@ async def _run_pipeline_sse(
             except Exception:
                 import traceback as _tb
                 print("video/filmstrip persist failed:\n" + _tb.format_exc())
-            ev_queue.put({"step": "done", "results": result_dict})
+            # The waveform (up to ~60k points) is already streamed separately via
+            # the "waveform" step and persisted in results.json; omit it from the
+            # done event so the streamed payload stays small on long films.
+            done_results = {k: v for k, v in result_dict.items() if k != "waveform"}
+            ev_queue.put({"step": "done", "results": done_results})
         except _PipelineCancelled:
             ev_queue.put({"step": "cancelled"})
         except Exception as exc:
@@ -501,6 +603,27 @@ def _safe_run_dir(video_name: str) -> Path:
     if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
         raise HTTPException(status_code=400, detail="Invalid path")
     return run_dir
+
+
+@app.post("/results/{video_name}")
+async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
+    """Persist manual edits to a run's cues (fill-ins, corrections, removals).
+
+    Only the `cues` array is replaced; film/waveform/etc. on disk are preserved.
+    """
+    cues = payload.get("cues")
+    if not isinstance(cues, list):
+        raise HTTPException(status_code=422, detail="Body must be {\"cues\": [...]}")
+    results_path = _safe_run_dir(video_name) / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        data = json.loads(results_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read results.json: {exc}")
+    data["cues"] = cues
+    _atomic_write_json(results_path, data)
+    return {"status": "saved", "cues": len(cues)}
 
 
 @app.get("/output/{video_name}/segments/{filename}")
@@ -676,6 +799,156 @@ async def _run_enrich_sse(
                 yield encode({"step": "error", "detail": str(exc)})
             return
 
+        await asyncio.sleep(0.05)
+
+
+# ── Resume detection after a rate limit ───────────────────────────────────────
+
+
+def _apply_detection_to_cue(cue: dict, det) -> None:
+    """Copy a DetectionResult onto an existing cue (same keys as models._build_cues)."""
+    md = det.metadata or {}
+    cue["provider"] = det.provider
+    cue["title"] = det.title
+    cue["artist"] = det.artist
+    cue["album"] = md.get("album")
+    cue["confidence"] = det.confidence
+    for key in ("release_year", "isrc", "genre", "photo_url", "youtube_link",
+                "spotify_url", "apple_music_url", "musicbrainz_recording_id",
+                "musicbrainz_url", "agreement", "votes"):
+        cue[key] = md.get(key)
+
+
+@app.post("/resume/{video_name}")
+async def resume_run(video_name: str, payload: dict = Body(default_factory=dict)) -> StreamingResponse:
+    """Re-run identification on the still-unidentified cues of a rate-limited run,
+    reading their saved segment WAVs. Fills gaps without re-analyzing the video."""
+    run_dir = _safe_run_dir(video_name)
+    results_path = run_dir / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    api = (payload or {}).get("api") or "acrcloud"
+    return StreamingResponse(
+        _run_resume_sse(run_dir, results_path, api),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncGenerator[str, None]:
+    ev_queue: queue.Queue[dict] = queue.Queue()
+
+    def run_sync() -> None:
+        import numpy as np
+        from scipy.io import wavfile
+
+        from fiwi_filmmusik.detection import RateLimitError, build_detection_client
+        from fiwi_filmmusik.models import MusicSegment
+
+        try:
+            results = json.loads(results_path.read_text())
+        except Exception as exc:
+            ev_queue.put({"step": "error", "detail": f"Failed to load results.json: {exc}"})
+            return
+
+        cues = results.get("cues") or []
+        todo = [c for c in cues if not c.get("title") and c.get("audio_file")]
+        total = len(todo)
+        if total == 0:
+            results["rate_limited"] = False
+            results_lean = {k: v for k, v in results.items() if k != "waveform"}
+            _atomic_write_json(results_path, results)
+            ev_queue.put({"step": "done", "results": results_lean})
+            return
+
+        try:
+            client = build_detection_client(api)
+        except Exception as exc:
+            ev_queue.put({"step": "error", "detail": str(exc)})
+            return
+
+        ev_queue.put({"step": "resuming", "detail": f"0/{total}"})
+        still_limited = False
+        done_n = 0
+        for cue in todo:
+            wav_path = run_dir / cue["audio_file"]
+            if not wav_path.exists():
+                continue
+            try:
+                sr, audio = wavfile.read(wav_path)
+                if audio.dtype == np.int16:
+                    audio = audio.astype(np.float32) / 32767.0
+                elif audio.dtype == np.int32:
+                    audio = audio.astype(np.float32) / 2147483647.0
+                if audio.ndim > 1:
+                    audio = audio.mean(axis=1)
+                seg = MusicSegment(audio=audio, start_time=0.0, end_time=len(audio) / sr, sample_rate=sr)
+                det = client.detect(seg)
+            except RateLimitError:
+                still_limited = True
+                break
+            except Exception:
+                continue
+            if det.title:
+                _apply_detection_to_cue(cue, det)
+            done_n += 1
+            ev_queue.put({"step": "resuming", "detail": f"{done_n}/{total}"})
+
+        # Temporal re-rank the freshly-identified cues before enriching.
+        try:
+            from fiwi_filmmusik.temporal import temporal_rerank
+            temporal_rerank(results, (results.get("film") or {}).get("year"))
+        except Exception:
+            pass
+
+        # Enrich the (now) identified cues, best-effort.
+        try:
+            import httpx
+
+            from fiwi_filmmusik.metadata.enricher import enrich as _enrich
+
+            def _cb(step: str, **kw) -> None:
+                if step == "music_start":
+                    ev_queue.put({"step": "enriching", "detail": f"0/{kw.get('total', 0)}"})
+                elif step == "music_cue":
+                    ev_queue.put({"step": "enriching", "detail": f"{kw.get('index')}/{kw.get('total')}"})
+
+            with httpx.Client(timeout=15.0) as _c:
+                _enrich(results=results, film_hint=None, http_client=_c,
+                        scope="music", music_isrc_only=True, progress_cb=_cb)
+        except Exception:
+            import traceback
+            print("resume enrichment failed:\n" + traceback.format_exc())
+
+        results["rate_limited"] = still_limited
+        try:
+            _atomic_write_json(results_path, results)
+        except Exception as exc:
+            ev_queue.put({"step": "error", "detail": f"Failed to write results.json: {exc}"})
+            return
+        results_lean = {k: v for k, v in results.items() if k != "waveform"}
+        ev_queue.put({"step": "done", "results": results_lean})
+
+    task = asyncio.create_task(asyncio.to_thread(run_sync))
+
+    def encode(ev: dict) -> str:
+        return f"data: {json.dumps(ev)}\n\n"
+
+    while True:
+        drained = False
+        try:
+            while True:
+                ev = ev_queue.get_nowait()
+                yield encode(ev)
+                if ev.get("step") in ("done", "error"):
+                    return
+        except queue.Empty:
+            drained = True
+        if task.done() and drained and ev_queue.empty():
+            exc = task.exception()
+            if exc:
+                yield encode({"step": "error", "detail": str(exc)})
+            return
         await asyncio.sleep(0.05)
 
 
