@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FIWI Filmmusik",
+  "productName": "SoundtrackID",
   "version": "0.1.0",
   "identifier": "ch.uzh.soundtrackid",
   "build": {

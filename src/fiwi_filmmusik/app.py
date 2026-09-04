@@ -1,4 +1,4 @@
-"""FastAPI web application for the FIWI Filmmusik pipeline."""
+"""FastAPI web application for the SoundtrackID pipeline."""
 
 import asyncio
 import json
@@ -43,7 +43,7 @@ else:
 
 if getattr(_sys, "frozen", False):
     # Writable user directory inside the macOS app sandbox
-    _OUTPUT_DIR = Path.home() / "Library" / "Application Support" / "FIWI Filmmusik" / "cache"
+    _OUTPUT_DIR = Path.home() / "Library" / "Application Support" / "SoundtrackID" / "cache"
 else:
     _OUTPUT_DIR = Path("./output/cache")
 
