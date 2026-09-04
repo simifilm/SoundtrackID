@@ -87,33 +87,42 @@ class BaseMusicDetectionClient(ABC):
 
 
 class ShazamDetectionClient(BaseMusicDetectionClient):
-    """Music detection via Apple's official ShazamKit.
+    """Music detection via Shazam.
 
-    Delegates to a small native Swift helper (``shazamkit-match``) that generates
-    a Shazam signature and matches it against Apple's catalog. ShazamKit is
-    macOS-only and requires the ``com.apple.developer.shazamkit`` entitlement,
-    honored only when the helper runs inside an app whose provisioning profile
-    grants it. Without that (a bare dev build) matching returns error 202; this
-    client treats any failure as a graceful no-match so the pipeline keeps
-    running (the ensemble simply relies on the other providers).
+    Prefers Apple's official **ShazamKit** through a small native Swift helper
+    (``shazamkit-match``). ShazamKit requires the ``com.apple.developer.shazamkit``
+    entitlement, honored only when the helper runs inside an app whose provisioning
+    profile grants it — so a bare dev build returns error 202. Until that is in
+    place (or off macOS / no helper), this client **falls back to shazamio**, so
+    the ``shazam`` provider keeps working today and silently upgrades to native
+    ShazamKit once the profile is present. A genuine ShazamKit "no match" is
+    trusted and does not fall back.
     """
 
     _warned = False
 
-    def __init__(self, helper_path: str | None = None):
+    def __init__(self, helper_path: str | None = None, language: str = "en-US"):
         self._helper = helper_path or _find_shazamkit_helper()
+        self._language = language
 
     def detect(self, segment: MusicSegment) -> DetectionResult:
         empty = DetectionResult(
             segment=segment, title=None, artist=None, confidence=0.0, provider="shazam"
         )
-        if not self._helper:
-            if not ShazamDetectionClient._warned:
-                ShazamDetectionClient._warned = True
-                print("[shazam] ShazamKit helper not found — build it with "
-                      "shazamkit/build.sh (macOS). Skipping Shazam.")
-            return empty
+        # Try ShazamKit first (best source when available).
+        if self._helper:
+            result, available = self._detect_shazamkit(segment)
+            if result is not None:
+                return result           # a real match
+            if available:
+                return empty            # ShazamKit worked and said "no match" — trust it
+            # else: ShazamKit unavailable (202 / broke) -> fall through to shazamio
+        # Fallback: shazamio.
+        return self._detect_shazamio(segment) or empty
 
+    def _detect_shazamkit(self, segment: MusicSegment):
+        """Return (DetectionResult|None, available). available=False means ShazamKit
+        couldn't run (missing entitlement/helper error) so the caller should fall back."""
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
             audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
@@ -121,39 +130,99 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
         import subprocess
         try:
-            proc = subprocess.run(
-                [self._helper, temp_path],
-                capture_output=True, text=True, timeout=30,
-            )
+            proc = subprocess.run([self._helper, temp_path], capture_output=True, text=True, timeout=30)
         except (subprocess.TimeoutExpired, OSError):
-            return empty
+            return None, False
         finally:
             os.unlink(temp_path)
 
         try:
             data = json.loads((proc.stdout or "").strip().splitlines()[-1])
         except (ValueError, IndexError):
-            return empty
+            return None, False
 
-        if data.get("error") or not data.get("title"):
-            # 202 = missing ShazamKit entitlement (dev build); warn once, no-match.
+        if data.get("title"):
+            return DetectionResult(
+                segment=segment,
+                title=data.get("title"),
+                artist=data.get("artist"),
+                confidence=1.0,  # ShazamKit gives no score
+                provider="shazam",
+                metadata={
+                    "isrc": data.get("isrc"),
+                    "apple_music_url": data.get("appleMusicURL"),
+                    "shazam_id": data.get("shazamID"),
+                },
+            ), True
+        # 202 = missing entitlement -> unavailable (fall back). result:null -> a real
+        # ShazamKit no-match (available, trust it). Other errors -> unavailable.
+        if data.get("code") == 202 or data.get("error"):
             if data.get("code") == 202 and not ShazamDetectionClient._warned:
                 ShazamDetectionClient._warned = True
-                print("[shazam] ShazamKit returned 202 (missing entitlement / "
-                      "provisioning profile) — Shazam only works in the signed app.")
-            return empty
+                print("[shazam] ShazamKit unavailable (202: no entitlement/profile yet) "
+                      "— falling back to shazamio until it is activated.")
+            return None, False
+        return None, True  # {"result": null}: ShazamKit ran, no match
 
-        apple_url = data.get("appleMusicURL")
+    def _detect_shazamio(self, segment: MusicSegment) -> DetectionResult | None:
+        try:
+            import asyncio
+
+            from shazamio import Shazam
+        except ImportError:
+            return None
+
+        async def _run() -> dict:
+            shazam = Shazam(language=self._language)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                path = f.name
+                audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
+                wavfile.write(path, segment.sample_rate, audio_int16)
+            try:
+                return await shazam.recognize(path)
+            finally:
+                os.unlink(path)
+
+        try:
+            result = asyncio.run(_run())
+        except Exception:
+            return None
+
+        track = result.get("track")
+        if not track:
+            return DetectionResult(segment=segment, title=None, artist=None, confidence=0.0, provider="shazam")
+
+        album = release_year = None
+        sections = track.get("sections", [])
+        if sections:
+            meta = sections[0].get("metadata", [])
+            if meta:
+                album = meta[0].get("text")
+            for item in meta:
+                if str(item.get("title", "")).strip().lower() == "released":
+                    release_year = _extract_year(item.get("text"))
+                    break
+        youtube_link = next((s.get("youtubeurl") for s in sections if s.get("type") == "VIDEO"), None)
+        hub = track.get("hub", {})
+        providers = hub.get("providers", [])
+        spotify_url = providers[0]["actions"][0]["uri"] if providers and providers[0].get("actions") else None
+        options = hub.get("options", [])
+        apple_music_url = options[0]["actions"][0]["uri"] if options and options[0].get("actions") else None
         return DetectionResult(
             segment=segment,
-            title=data.get("title"),
-            artist=data.get("artist"),
-            confidence=1.0,  # ShazamKit gives no score
+            title=track.get("title"),
+            artist=track.get("subtitle"),
+            confidence=1.0,
             provider="shazam",
             metadata={
-                "isrc": data.get("isrc"),
-                "apple_music_url": apple_url,
-                "shazam_id": data.get("shazamID"),
+                "album": album,
+                "release_year": release_year,
+                "genre": track.get("genres", {}).get("primary"),
+                "isrc": track.get("isrc"),
+                "photo_url": track.get("images", {}).get("coverart"),
+                "youtube_link": youtube_link,
+                "spotify_url": spotify_url,
+                "apple_music_url": apple_music_url,
             },
         )
 

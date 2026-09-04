@@ -60,7 +60,7 @@ cd FIWI-Filmmusik
 git lfs pull                          # downloads the ONNX model (~331 MB)
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[onnx,web,metadata,acrcloud]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud]"
 ```
 
 Start the server:
@@ -76,7 +76,7 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-pip install -e ".[hf,web]"
+pip install -e ".[hf,shazam,web]"
 FIWI_HF=1 python3 -m fiwi_filmmusik
 ```
 
@@ -124,10 +124,11 @@ helper runs inside an app whose **provisioning profile** grants it:
 2. Create a **Developer ID** provisioning profile including ShazamKit and embed
    it in the built `.app`.
 
-Without that (a bare dev build), ShazamKit returns error `202` and the
-`ShazamDetectionClient` treats it as a no-match, so the pipeline still runs on the
-other providers. Set `SHAZAMKIT_HELPER=/path/to/shazamkit-match` to override the
-helper location.
+Without that (a bare dev build, or before the profile is activated), ShazamKit
+returns error `202`; the client then **falls back to `shazamio`** (install the
+`shazam` extra), so the **Shazam** provider keeps working and silently upgrades to
+native ShazamKit once the profile is in place. Set
+`SHAZAMKIT_HELPER=/path/to/shazamkit-match` to override the helper location.
 
 ### Optional: vocal isolation with Demucs
 
@@ -189,7 +190,7 @@ npm install
 
 ```bash
 source .venv/bin/activate
-pip install -e ".[onnx,web,metadata,acrcloud,build]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
 pyinstaller --noconfirm fiwi-server.spec
 ```
 
@@ -268,7 +269,7 @@ winget install OpenJS.NodeJS
 # Python 3.10+ with dependencies
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[onnx,web,metadata,acrcloud,build]"
+pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
 
 # Install npm packages
 npm install

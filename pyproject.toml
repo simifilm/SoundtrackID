@@ -31,8 +31,12 @@ hf = [
 onnx = [
     "onnxruntime>=1.16",
 ]
-# Shazam now uses Apple's native ShazamKit via the shazamkit/ Swift helper
-# (macOS-only, built with shazamkit/build.sh) — no Python dependency.
+# Shazam prefers Apple's native ShazamKit (shazamkit/ Swift helper); shazamio is
+# the fallback used until the ShazamKit entitlement/profile is in place.
+shazam = [
+    "shazamio>=0.7",
+    "truststore>=0.9",
+]
 acrcloud = [
     "pyacrcloud>=1.0",
 ]
