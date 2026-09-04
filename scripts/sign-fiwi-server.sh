@@ -71,6 +71,20 @@ while IFS= read -r -d '' link; do
 done < <(find "$TARGET" -type l -print0)
 echo "[sign-fiwi-server] Materialised $link_count Mach-O symlink(s) as flat-signed copies."
 
+# The ShazamKit helper needs the com.apple.developer.shazamkit entitlement, which
+# the generic loop above would have stripped. Re-sign it with its own entitlements
+# (honored at runtime via the app's embedded provisioning profile). Skipped when
+# the helper wasn't bundled.
+SHAZAMKIT_ENTITLEMENTS="$REPO_ROOT/shazamkit/shazamkit-match.entitlements"
+if [[ -f "$SHAZAMKIT_ENTITLEMENTS" ]]; then
+  while IFS= read -r -d '' helper; do
+    codesign --force --timestamp --options runtime \
+      --entitlements "$SHAZAMKIT_ENTITLEMENTS" \
+      --sign "$APPLE_SIGNING_IDENTITY" "$helper" >/dev/null
+    echo "[sign-fiwi-server] Re-signed $helper with the ShazamKit entitlement."
+  done < <(find "$TARGET" -type f -name "shazamkit-match" -print0)
+fi
+
 # Seal the main executable last so its signature covers the finished directory.
 codesign --force --timestamp --options runtime \
   --entitlements "$ENTITLEMENTS" \

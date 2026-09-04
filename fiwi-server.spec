@@ -24,7 +24,6 @@ except ImportError:
     _acr_extr_bins = []
 
 # Collect data/binaries for packages that scatter files at runtime
-shazamio_datas, shazamio_bins, shazamio_hidden = collect_all("shazamio")
 aiohttp_datas, aiohttp_bins, aiohttp_hidden = collect_all("aiohttp")
 mutagen_datas, mutagen_bins, mutagen_hidden = collect_all("mutagen")
 # acrcloud ships a native fingerprint extractor (acrcloud_extr_tool.so) that
@@ -34,14 +33,23 @@ acrcloud_datas, acrcloud_bins, acrcloud_hidden = collect_all("acrcloud")
 # Bundle .env if present so the .app has TMDb credentials
 _env_extra = [(".env", ".")] if os.path.exists(".env") else []
 
+# The native ShazamKit helper (built by shazamkit/build.sh). Placed next to the
+# server binary so detection._find_shazamkit_helper() finds it. sign-fiwi-server.sh
+# re-signs it with the ShazamKit entitlement before bundling.
+_shazamkit_extra = (
+    [("shazamkit/shazamkit-match", ".")]
+    if os.path.exists("shazamkit/shazamkit-match")
+    else []
+)
+
 a = Analysis(
     ["src/fiwi_filmmusik/__main__.py"],
     pathex=["."],
-    binaries=shazamio_bins + aiohttp_bins + mutagen_bins + acrcloud_bins + _acr_extr_bins,
+    binaries=aiohttp_bins + mutagen_bins + acrcloud_bins + _acr_extr_bins + _shazamkit_extra,
     datas=[
         ("src/fiwi_filmmusik/static", "static"),
         ("assets/ast_model", "ast_model"),
-    ] + shazamio_datas + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
+    ] + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
     hiddenimports=[
         # fiwi_filmmusik modules
         "fiwi_filmmusik",

@@ -230,3 +230,5 @@ node_modules/
 /YTDown_*.mp4
 CLAUDE.md
 test_videos/
+# Compiled ShazamKit helper (build artifact from shazamkit/build.sh)
+shazamkit/shazamkit-match

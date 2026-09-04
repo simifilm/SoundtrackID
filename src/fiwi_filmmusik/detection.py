@@ -1,6 +1,5 @@
 """Music detection API."""
 
-import asyncio
 import json
 import os
 import re
@@ -12,6 +11,29 @@ import numpy as np
 from scipy.io import wavfile
 
 from fiwi_filmmusik.models import DetectionResult, MusicSegment
+
+
+def _find_shazamkit_helper() -> str | None:
+    """Locate the compiled ShazamKit helper binary (macOS only).
+
+    Order: SHAZAMKIT_HELPER env override → next to the bundled binary (frozen
+    app) → the repo's shazamkit/ dir (dev build)."""
+    import sys
+    from pathlib import Path
+
+    override = os.environ.get("SHAZAMKIT_HELPER")
+    candidates = [Path(override)] if override else []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "shazamkit-match")
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "shazamkit-match")
+    else:
+        candidates.append(Path(__file__).resolve().parents[2] / "shazamkit" / "shazamkit-match")
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    return None
 
 
 class RateLimitError(RuntimeError):
@@ -65,87 +87,73 @@ class BaseMusicDetectionClient(ABC):
 
 
 class ShazamDetectionClient(BaseMusicDetectionClient):
-    """Music detection using Shazam via shazamio library."""
+    """Music detection via Apple's official ShazamKit.
 
-    def __init__(self, language: str = "en-US"):
-        self._language = language
+    Delegates to a small native Swift helper (``shazamkit-match``) that generates
+    a Shazam signature and matches it against Apple's catalog. ShazamKit is
+    macOS-only and requires the ``com.apple.developer.shazamkit`` entitlement,
+    honored only when the helper runs inside an app whose provisioning profile
+    grants it. Without that (a bare dev build) matching returns error 202; this
+    client treats any failure as a graceful no-match so the pipeline keeps
+    running (the ensemble simply relies on the other providers).
+    """
+
+    _warned = False
+
+    def __init__(self, helper_path: str | None = None):
+        self._helper = helper_path or _find_shazamkit_helper()
 
     def detect(self, segment: MusicSegment) -> DetectionResult:
-        """Identify music in segment using Shazam."""
-        return asyncio.run(self._detect_async(segment))
+        empty = DetectionResult(
+            segment=segment, title=None, artist=None, confidence=0.0, provider="shazam"
+        )
+        if not self._helper:
+            if not ShazamDetectionClient._warned:
+                ShazamDetectionClient._warned = True
+                print("[shazam] ShazamKit helper not found — build it with "
+                      "shazamkit/build.sh (macOS). Skipping Shazam.")
+            return empty
 
-    async def _detect_async(self, segment: MusicSegment) -> DetectionResult:
-        """Async implementation of music detection."""
-        from shazamio import Shazam
-
-        # Fresh instance per call; shazamio's aiohttp session is bound to the
-        # current event loop; reusing an instance across asyncio.run() calls
-        # causes silent failures on the second and subsequent detections.
-        shazam = Shazam(language=self._language)
-
-        # Write segment to temp WAV file
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
             audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
             wavfile.write(temp_path, segment.sample_rate, audio_int16)
 
+        import subprocess
         try:
-            # Query Shazam
-            result = await shazam.recognize(temp_path)
+            proc = subprocess.run(
+                [self._helper, temp_path],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return empty
         finally:
-            # Clean up temp file
             os.unlink(temp_path)
 
-        # Parse response
-        if not result.get("track"):
-            return DetectionResult(
-                segment=segment, title=None, artist=None, confidence=0.0
-            )
+        try:
+            data = json.loads((proc.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return empty
 
-        track = result["track"]
+        if data.get("error") or not data.get("title"):
+            # 202 = missing ShazamKit entitlement (dev build); warn once, no-match.
+            if data.get("code") == 202 and not ShazamDetectionClient._warned:
+                ShazamDetectionClient._warned = True
+                print("[shazam] ShazamKit returned 202 (missing entitlement / "
+                      "provisioning profile) — Shazam only works in the signed app.")
+            return empty
 
-        # Extract album + release year from metadata if available
-        album = None
-        release_year = None
-        sections = track.get("sections", [])
-        if sections:
-            metadata = sections[0].get("metadata", [])
-            if metadata:
-                album = metadata[0].get("text")
-            for item in metadata:
-                if str(item.get("title", "")).strip().lower() == "released":
-                    release_year = _extract_year(item.get("text"))
-                    break
-
-        # Extract track link: YouTube > Spotify > Apple Music
-        youtube_link = None
-        for section in sections:
-            if section.get("type") == "VIDEO":
-                youtube_link = section.get("youtubeurl")
-                break
-
-        hub = track.get("hub", {})
-        providers = hub.get("providers", [])
-        spotify_url = providers[0]["actions"][0]["uri"] if providers and providers[0].get("actions") else None
-
-        options = hub.get("options", [])
-        apple_music_url = options[0]["actions"][0]["uri"] if options and options[0].get("actions") else None
-
+        apple_url = data.get("appleMusicURL")
         return DetectionResult(
             segment=segment,
-            title=track.get("title"),
-            artist=track.get("subtitle"),  # Artist is in "subtitle" field
-            confidence=1.0,  # Shazam doesn't provide confidence scores
+            title=data.get("title"),
+            artist=data.get("artist"),
+            confidence=1.0,  # ShazamKit gives no score
+            provider="shazam",
             metadata={
-                "shazam_key": track.get("key"),
-                "album": album,
-                "release_year": release_year,
-                "genre": track.get("genres", {}).get("primary"),
-                "isrc": track.get("isrc"),
-                "photo_url": track.get("images", {}).get("coverart"),
-                "youtube_link": youtube_link,
-                "spotify_url": spotify_url,
-                "apple_music_url": apple_music_url,
+                "isrc": data.get("isrc"),
+                "apple_music_url": apple_url,
+                "shazam_id": data.get("shazamID"),
             },
         )
 

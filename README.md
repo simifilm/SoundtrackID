@@ -60,7 +60,7 @@ cd FIWI-Filmmusik
 git lfs pull                          # downloads the ONNX model (~331 MB)
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud]"
+pip install -e ".[onnx,web,metadata,acrcloud]"
 ```
 
 Start the server:
@@ -76,7 +76,7 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-pip install -e ".[hf,shazam,web]"
+pip install -e ".[hf,web]"
 FIWI_HF=1 python3 -m fiwi_filmmusik
 ```
 
@@ -104,6 +104,30 @@ ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
 ACRCLOUD_ACCESS_KEY=xxxxxxxx
 ACRCLOUD_ACCESS_SECRET=xxxxxxxx
 ```
+
+### Shazam via ShazamKit (macOS)
+
+The **Shazam** provider uses Apple's official **ShazamKit** through a small native
+Swift helper in [`shazamkit/`](shazamkit/), not a Python library. Build it once:
+
+```bash
+bash shazamkit/build.sh
+```
+
+This produces `shazamkit/shazamkit-match`, which the server invokes as a
+subprocess. ShazamKit matching against Apple's catalog requires the
+`com.apple.developer.shazamkit` **entitlement**, which is only honored when the
+helper runs inside an app whose **provisioning profile** grants it:
+
+1. In the Apple Developer portal, register the App ID `ch.uzh.soundtrackid` and
+   enable the **ShazamKit** capability on it.
+2. Create a **Developer ID** provisioning profile including ShazamKit and embed
+   it in the built `.app`.
+
+Without that (a bare dev build), ShazamKit returns error `202` and the
+`ShazamDetectionClient` treats it as a no-match, so the pipeline still runs on the
+other providers. Set `SHAZAMKIT_HELPER=/path/to/shazamkit-match` to override the
+helper location.
 
 ### Optional: vocal isolation with Demucs
 
@@ -165,7 +189,7 @@ npm install
 
 ```bash
 source .venv/bin/activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
+pip install -e ".[onnx,web,metadata,acrcloud,build]"
 pyinstaller --noconfirm fiwi-server.spec
 ```
 
@@ -244,7 +268,7 @@ winget install OpenJS.NodeJS
 # Python 3.10+ with dependencies
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
+pip install -e ".[onnx,web,metadata,acrcloud,build]"
 
 # Install npm packages
 npm install
