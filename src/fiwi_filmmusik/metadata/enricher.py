@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Literal
 
 import httpx
@@ -71,28 +72,47 @@ def enrich(
         cues = results.get("cues") or []
         predicate = _has_isrc if music_isrc_only else _has_identification
         identified = [c for c in cues if predicate(c)]
-        total = len(identified)
+
+        # Group by track identity so each unique piece is enriched once. A cue that
+        # recurs later in the film (same title+artist) reuses the first lookup
+        # instead of re-querying MusicBrainz/Wikidata.
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        order: list[tuple[str, str]] = []
+        for cue in identified:
+            key = _identity_key(cue)
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(cue)
+
+        total = len(order)
         cb("music_start", total=total)
 
         music_lookup = MusicLookup(http_client)
-        processed = 0
-        for cue in cues:
-            if not predicate(cue):
-                continue
-            processed += 1
-            enrichment = _enrich_cue(cue, music_lookup)
-            cue["enrichment"] = enrichment.to_dict() if enrichment else None
+        for index, key in enumerate(order, start=1):
+            group = groups[key]
+            enrichment = _enrich_cue(group[0], music_lookup)
+            enrichment_dict = enrichment.to_dict() if enrichment else None
+            for cue in group:
+                cue["enrichment"] = enrichment_dict
             cb(
                 "music_cue",
-                index=processed,
+                index=index,
                 total=total,
-                segment_id=cue.get("segment_id"),
-                enrichment=cue["enrichment"],
+                segment_id=group[0].get("segment_id"),
+                enrichment=enrichment_dict,
             )
 
         cb("music_done")
 
     return results
+
+
+def _identity_key(cue: dict[str, Any]) -> tuple[str, str]:
+    """Normalized (title, artist) — cues that share it are the same piece."""
+    def norm(s: Any) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (s or "").lower())).strip()
+    return (norm(cue.get("title")), norm(cue.get("artist")))
 
 
 def _has_identification(cue: dict[str, Any]) -> bool:

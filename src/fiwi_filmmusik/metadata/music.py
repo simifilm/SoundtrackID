@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -21,7 +22,15 @@ class ComposerInfo:
     composer_death_year: int | None = None
     work_title: str | None = None
     original_year: int | None = None   # first publication/composition year of the work (Wikidata)
-    composer_match: Literal["isrc", "search"] | None = None
+    composer_match: Literal["isrc", "work", "search"] | None = None
+    # All copyright-relevant authors of the work (Composer/Lyricist/Writer) with
+    # their death years — the basis for public-domain assessment. Performers are
+    # deliberately excluded (their 50-year related right is shorter than the
+    # 70-year post-mortem term on the authors).
+    authors: list[dict[str, Any]] = field(default_factory=list)
+    latest_author_death_year: int | None = None  # PD clock runs from the last surviving author
+    authors_complete: bool = False               # every author has a known death year
+    public_domain: bool | None = None            # None = cannot determine (unknown/living author)
     sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +40,10 @@ class ComposerInfo:
             "work_title": self.work_title,
             "original_year": self.original_year,
             "composer_match": self.composer_match,
+            "authors": self.authors,
+            "latest_author_death_year": self.latest_author_death_year,
+            "authors_complete": self.authors_complete,
+            "public_domain": self.public_domain,
             "sources": self.sources,
         }
 
@@ -55,15 +68,15 @@ class MusicLookup:
         info: ComposerInfo | None = None
 
         if isrc:
-            candidate, composer_mbid = self._lookup_via_isrc(isrc)
+            candidate = self._lookup_via_isrc(isrc)
             if candidate and candidate.composer:
-                if not candidate.composer_death_year and composer_mbid:
-                    death = self._wikidata_death_year_by_mbid(composer_mbid)
-                    if death:
-                        candidate.composer_death_year = death
-                        if "wikidata" not in candidate.sources:
-                            candidate.sources.append("wikidata")
                 info = candidate
+
+        # ISRC missed (common for reissues absent from MusicBrainz, e.g. Sunset
+        # Boulevard). Fall back to finding the *work* by title and matching its
+        # authors against the identified artist — this reaches the original piece.
+        if info is None and title:
+            info = self._lookup_via_work_title(title, artist)
 
         if info is None and title and artist:
             info = self._lookup_via_wikidata_search(title, artist)
@@ -84,32 +97,116 @@ class MusicLookup:
         info.original_year = original_year
         if original_year and "wikidata" not in info.sources:
             info.sources.append("wikidata")
+
+        info.latest_author_death_year, info.authors_complete, info.public_domain = _pd_status(
+            info.authors, _current_year()
+        )
         return info
 
     # ── MusicBrainz chain ────────────────────────────────────────────────
 
-    def _lookup_via_isrc(self, isrc: str) -> tuple[ComposerInfo | None, str | None]:
-        """Return (info, composer_mbid). composer_mbid is None when MB had no composer."""
+    def _lookup_via_isrc(self, isrc: str) -> ComposerInfo | None:
+        """Resolve every copyright-relevant author (Composer/Lyricist/Writer) of
+        the work behind an ISRC, with each one's death year — the basis for PD."""
         recording = self._mb_recording_by_isrc(isrc)
         if not recording:
-            return None, None
+            return None
         work = self._mb_work_for_recording(recording.get("id"))
         if not work:
-            return None, None
-        artist_id, composer_name = _extract_composer(work)
-        if not composer_name:
-            return None, None
-        info = ComposerInfo(
-            composer=composer_name,
+            return None
+        authors, used_wikidata = self._authors_from_work(work)
+        if not authors:
+            return None
+        return self._build_from_authors(work, authors, used_wikidata, match="isrc")
+
+    def _lookup_via_work_title(self, title: str, artist: str | None) -> ComposerInfo | None:
+        """Find the work by title in MusicBrainz and pick the candidate whose
+        authors best match the identified artist. Recovers the original piece
+        when the ISRC of a reissue isn't in MusicBrainz."""
+        if not artist:  # without an artist we can't disambiguate same-titled works
+            return None
+        candidates = self._mb_work_search(title)
+        best: dict | None = None
+        best_authors: list[dict[str, Any]] | None = None
+        best_wd = False
+        best_score = 0
+        for cand in candidates[:4]:  # bound the per-cue MB calls
+            work = self._mb_work(cand.get("id"))
+            if not work:
+                continue
+            authors, used_wd = self._authors_from_work(work)
+            if not authors:
+                continue
+            score = _score_work_authors(authors, artist)
+            if score > best_score:
+                best, best_authors, best_wd, best_score = work, authors, used_wd, score
+        if not best or best_score <= 0:  # require at least one author-name match
+            return None
+        return self._build_from_authors(best, best_authors, best_wd, match="work")
+
+    def _authors_from_work(self, work: dict) -> tuple[list[dict[str, Any]], bool]:
+        """Collapse a work's author relations to one entry per person (merging
+        roles) and resolve each one's death year (MB life-span → Wikidata MBID).
+        Returns (authors, used_wikidata)."""
+        merged: dict[str, dict[str, Any]] = {}
+        for role, artist_id, name in _extract_authors(work):
+            key = artist_id or name.lower()
+            entry = merged.setdefault(
+                key, {"name": name, "artist_id": artist_id, "roles": []}
+            )
+            if role not in entry["roles"]:
+                entry["roles"].append(role)
+
+        used_wikidata = False
+        authors: list[dict[str, Any]] = []
+        for entry in merged.values():
+            death = None
+            aid = entry["artist_id"]
+            if aid:
+                artist = self._mb_artist(aid)
+                if artist:
+                    death = _parse_year(_artist_death(artist))
+                if death is None:  # MB lacked a death date — try Wikidata via MBID
+                    wd = self._wikidata_death_year_by_mbid(aid)
+                    if wd:
+                        death, used_wikidata = wd, True
+            authors.append({
+                "name": entry["name"],
+                "roles": entry["roles"],
+                "death_year": death,
+            })
+        return authors, used_wikidata
+
+    def _build_from_authors(
+        self, work: dict, authors: list[dict[str, Any]], used_wikidata: bool, match: str
+    ) -> ComposerInfo:
+        # Primary composer (first author credited as composer) for display/back-compat.
+        primary = next((a for a in authors if "composer" in a["roles"]), authors[0])
+        sources = ["musicbrainz"] + (["wikidata"] if used_wikidata else [])
+        return ComposerInfo(
+            composer=primary["name"],
+            composer_death_year=primary["death_year"],
             work_title=work.get("title"),
-            composer_match="isrc",
-            sources=["musicbrainz"],
+            composer_match=match,  # type: ignore[arg-type]
+            authors=authors,
+            sources=sources,
         )
-        if artist_id:
-            artist = self._mb_artist(artist_id)
-            if artist:
-                info.composer_death_year = _parse_year(_artist_death(artist))
-        return info, artist_id
+
+    def _mb_work_search(self, title: str) -> list[dict]:
+        query = 'work:"%s"' % title.replace('"', "")
+        data = self._mb_get("/work", params={"query": query, "limit": 8})
+        return (data or {}).get("works") or []
+
+    def _mb_work(self, work_id: str | None) -> dict | None:
+        if not work_id:
+            return None
+        cache_key = f"w:{work_id}"
+        cached = self._cache_work.get(cache_key)
+        if cached is not None:
+            return cached or None
+        data = self._mb_get(f"/work/{work_id}", params={"inc": "artist-rels"})
+        self._cache_work[cache_key] = data or {}
+        return data
 
     def _mb_recording_by_isrc(self, isrc: str) -> dict | None:
         cached = self._cache_recording.get(isrc)
@@ -148,26 +245,32 @@ class MusicLookup:
         return data
 
     def _mb_get(self, path: str, params: dict | None = None) -> dict | None:
-        # Rate-limit politely
-        elapsed = time.monotonic() - self._last_mb_call
-        if elapsed < MB_RATE_LIMIT_SEC:
-            time.sleep(MB_RATE_LIMIT_SEC - elapsed)
-        self._last_mb_call = time.monotonic()
         full = {"fmt": "json", **(params or {})}
-        try:
-            r = self._client.get(
-                f"{MB_BASE}{path}",
-                params=full,
-                headers={"user-agent": MB_USER_AGENT, "accept": "application/json"},
-            )
-        except httpx.HTTPError:
-            return None
-        if r.status_code != 200:
-            return None
-        try:
-            return r.json()
-        except ValueError:
-            return None
+        url = f"{MB_BASE}{path}"
+        headers = {"user-agent": MB_USER_AGENT, "accept": "application/json"}
+        # The /work search endpoint is much slower than direct lookups and, under
+        # load, MusicBrainz throttles with 503s — so use a generous timeout and
+        # retry once on timeout/503 rather than silently yielding no result.
+        for attempt in range(2):
+            # Rate-limit politely (MB asks for ~1 req/s sustained).
+            elapsed = time.monotonic() - self._last_mb_call
+            if elapsed < MB_RATE_LIMIT_SEC:
+                time.sleep(MB_RATE_LIMIT_SEC - elapsed)
+            self._last_mb_call = time.monotonic()
+            try:
+                r = self._client.get(url, params=full, headers=headers, timeout=20.0)
+            except httpx.HTTPError:
+                continue  # timeout / network hiccup — retry once
+            if r.status_code == 503:
+                time.sleep(1.5)  # throttled — back off, then retry
+                continue
+            if r.status_code != 200:
+                return None
+            try:
+                return r.json()
+            except ValueError:
+                return None
+        return None
 
     # ── Wikidata fallbacks ───────────────────────────────────────────────
 
@@ -233,15 +336,79 @@ class MusicLookup:
 # ── Pure parsers (testable without network) ──────────────────────────────
 
 
-def _extract_composer(work: dict) -> tuple[str | None, str | None]:
-    """Return (composer_artist_mbid, composer_name) from a work's relations."""
-    relations = work.get("relations") or []
-    for rel in relations:
-        if rel.get("type") != "composer":
+# Copyright-relevant authorship roles on a MusicBrainz *work*. "writer" covers a
+# person who wrote both music and lyrics. Performer/arranger etc. are excluded:
+# performers hold a shorter (50-year) related right, not the 70-year author term.
+_AUTHOR_ROLES = ("composer", "lyricist", "writer")
+
+
+def _extract_authors(work: dict) -> list[tuple[str, str | None, str]]:
+    """Return (role, artist_mbid, name) for each author relation of a work."""
+    authors: list[tuple[str, str | None, str]] = []
+    for rel in work.get("relations") or []:
+        role = rel.get("type")
+        if role not in _AUTHOR_ROLES:
             continue
         artist = rel.get("artist") or {}
-        return artist.get("id"), artist.get("name")
-    return None, None
+        name = artist.get("name")
+        if name:
+            authors.append((role, artist.get("id"), name))
+    return authors
+
+
+def _normalize_name(s: str | None) -> str:
+    """Lowercase, strip accents and punctuation — for matching person names
+    across sources (e.g. 'Ernö Rapée' ↔ 'Erno Rapee')."""
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9 ]", " ", s.lower()).strip()
+
+
+def _score_work_authors(authors: list[dict[str, Any]], artist_str: str | None) -> int:
+    """How many of a work's authors appear in the identified artist string — used
+    to pick the right same-titled MusicBrainz work. Matches on the surname (last
+    name token) or any distinctive name token (len ≥ 5), which tolerates provider
+    misspellings and compound surnames (e.g. 'Matos Rodríguez' ↔ 'Matos Rodriquez')."""
+    tokens = set(_normalize_name(artist_str).split())
+    if not tokens:
+        return 0
+    score = 0
+    for a in authors:
+        parts = _normalize_name(a.get("name")).split()
+        if not parts:
+            continue
+        if parts[-1] in tokens or any(p in tokens for p in parts if len(p) >= 5):
+            score += 1
+    return score
+
+
+def _current_year() -> int:
+    from datetime import date
+
+    return date.today().year
+
+
+def _pd_status(
+    authors: list[dict[str, Any]], current_year: int, term: int = 70
+) -> tuple[int | None, bool, bool | None]:
+    """Public-domain assessment from a work's authors (PMLE, `term` years post
+    mortem auctoris — 70 in the EU/CH/US). Returns
+    (latest_author_death_year, authors_complete, public_domain).
+
+    public_domain is True only when every author's death year is known and the
+    last of them died more than `term` years ago; False when known-but-too-recent;
+    None when any author's death year is unknown (living or missing data), i.e.
+    the status cannot be asserted."""
+    if not authors:
+        return None, False, None
+    deaths = [a.get("death_year") for a in authors]
+    known = [d for d in deaths if d]
+    complete = len(known) == len(authors)
+    latest = max(known) if known else None
+    if not complete or latest is None:
+        return latest, complete, None
+    return latest, complete, (current_year - latest) > term
 
 
 def _artist_death(artist: dict) -> str | None:
