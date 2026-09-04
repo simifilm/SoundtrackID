@@ -55,20 +55,20 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 - SUISA confirms the tool's relevance but can't supply the data (≈1.5 of 10 titles documented;
   a ~2000 database migration lost much data). API access to SUISA data is worth pursuing.
 
-## Suggested priority (remaining)
+## Done this session (committed + pushed to origin/main)
+- **AudD** provider; multi-provider **ensemble + majority voting** (provider checkboxes, confidence
+  badge + per-provider breakdown).
+- **Multi-role public-domain logic** (Composer/Lyricist/Writer, all death years, MusicBrainz
+  work-title fallback); Rights pill + authorship/copyright panel; wrong reissue years dropped.
+- **Tracks/Timeline split** with enrich-once-per-track; **manual edit + remove** (persisted via
+  `POST /results/{name}`).
+- **API-key settings** page (`GET/POST /settings`, masked secrets); album column compress + hide.
+- **4.1** waveform out of the streamed `done` event; **4.2** rate-limit partial-save +
+  `POST /resume/{name}` with a Resume banner; **2.3** temporal rerank of ACRCloud candidates.
+- Rename to **SoundtrackID**; purple checkboxes; em-dash cleanup.
 
-Sections 1, 3, and the 4.x robustness items are done. Remaining open items, roughly by value:
-
-1. **2.6** Benchmark harness against the vTransfer dataset — needed to measure whether the ensemble
-   + copyright logic is actually accurate; underpins every further tuning decision.
-2. **2.5** Apple ShazamKit — Shazam via `shazamio` returns blank on most film scores; a stronger
-   Shazam backend would materially help the ensemble.
-3. **5.1** Film-annotation cooperation export format — high external value once the doc link arrives.
-4. **5.2** SUISA data API access — external/strategic.
-(UI polish 3.4 album compress/hide and 3.6 API-keys settings page are done; 3.3 pop-out player dropped.)
-
-## Done this session
-AudD provider; multi-provider ensemble + majority voting; multi-role public-domain logic
-(Composer/Lyricist/Writer, all death years, MusicBrainz work-title fallback); Tracks/Timeline split
-with enrich-once-per-track; Rights pill + authorship/copyright panel; manual edit + remove (persisted);
-rename to **SoundtrackID**; em-dash cleanup.
+## Open (next up)
+1. **2.6** Benchmark harness against the vTransfer dataset (measures real accuracy; gates further tuning).
+2. **2.5** Apple ShazamKit (shazamio returns blank on most film scores).
+3. **5.1** Film-annotation cooperation export format (awaiting doc link).
+4. **5.2** SUISA data API access (external/strategic).
