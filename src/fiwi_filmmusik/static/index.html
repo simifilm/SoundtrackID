@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FIWI Filmmusik Analyzer</title>
+<title>SoundtrackID</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -253,13 +253,6 @@
   }
   #video-preview-wrap:not(.collapsed) #video-toggle .vt-chevron { transform: rotate(90deg); }
   #video-preview { display: block; width: 100%; max-height: 380px; background: #000; }
-  /* Play-in-video button shown per result row when a stored video exists. */
-  .seg-play {
-    border: 1px solid #ddd6fe; background: #f5f3ff; color: #6d28d9;
-    border-radius: 7px; padding: 0.3rem 0.6rem; font-size: 0.72rem; font-weight: 600;
-    cursor: pointer; white-space: nowrap;
-  }
-  .seg-play:hover { background: #ede9fe; border-color: #c4b5fd; }
 
   /* Pre-analysis film-confirmation panel. */
   #film-confirm { margin-top: 1.25rem; }
@@ -281,6 +274,19 @@
 
   /* Anachronism marking + hide-toggle. */
   #results-toolbar { display: flex; align-items: center; gap: 1rem; margin: 0.75rem 0; flex-wrap: wrap; }
+
+  /* Rate-limit / partial-run banner with a Resume action */
+  #ratelimit-banner {
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    margin: 0.75rem 0; padding: 0.6rem 0.9rem; border-radius: 8px;
+    background: #fef3c7; border: 1px solid #fde68a; color: #92400e; font-size: 0.85rem;
+  }
+  #resume-btn {
+    border: 1px solid #d97706; background: #fff; color: #b45309; cursor: pointer;
+    border-radius: 7px; padding: 0.35rem 0.9rem; font-size: 0.8rem; font-weight: 600;
+  }
+  #resume-btn:hover { background: #fffbeb; }
+  #resume-btn:disabled { opacity: 0.6; cursor: default; }
   .anachronism-toggle {
     display: inline-flex; align-items: center; gap: 0.5rem;
     padding: 0.4rem 0.75rem;
@@ -294,8 +300,121 @@
   }
   tr.anachronistic td { background: #fffbeb; color: #9a7b4f; }
   #results-body.hide-anachronism tr.anachronistic { display: none; }
+  #tracks-body.hide-anachronism tr.anachronistic,
+  #tracks-body.hide-anachronism tr.anachronistic + tr.cue-detail { display: none; }
+
+  /* Results view tabs */
+  .results-tabs { display: flex; gap: 0.25rem; margin-bottom: 0.9rem; border-bottom: 1px solid #e9e5ff; }
+  .results-tab {
+    appearance: none; border: none; background: none; cursor: pointer;
+    padding: 0.5rem 0.9rem; font-size: 0.85rem; font-weight: 600; color: #a09cb8;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .results-tab:hover { color: #6d28d9; }
+  .results-tab.active { color: #7c3aed; border-bottom-color: #7c3aed; }
+  .tracks-empty { color: #a09cb8; text-align: center; padding: 1.5rem; font-size: 0.85rem; }
+
+
+  /* Detection-provider selection (ensemble) */
+  .provider-checks { display: flex; flex-direction: column; gap: 0.25rem; }
+  .provider-checks label { display: flex; align-items: center; gap: 0.4rem; font-weight: 400; cursor: pointer; }
+  .provider-checks input { margin: 0; cursor: pointer; accent-color: #7c3aed; }
+  input[type="checkbox"] { accent-color: #7c3aed; }
+  .provider-hint { color: #9ca3af; font-size: 0.72rem; margin-top: 0.3rem; }
+
+  /* API keys settings */
+  .api-keys { border-top: 1px solid #ede9fe; padding: 0.75rem 1.25rem 1rem; }
+  .api-keys > summary {
+    cursor: pointer; font-weight: 600; color: #a09cb8; font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    list-style: none; outline: none; user-select: none; display: inline-flex;
+    align-items: center; gap: 0.5rem;
+  }
+  .api-keys > summary:hover { color: #7c3aed; }
+  .api-keys > summary::-webkit-details-marker { display: none; }
+  .api-keys > summary::before {
+    content: '›'; font-size: 1rem; line-height: 1; display: inline-block; transition: transform 0.15s;
+  }
+  .api-keys[open] > summary::before { transform: rotate(90deg); }
+  .api-keys-hint { color: #9ca3af; font-size: 0.72rem; margin: 0.5rem 0 0.75rem; max-width: 40rem; }
+  .api-keys-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.6rem 1.25rem; }
+  .api-keys-grid label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: #6b7280; }
+  .api-keys-grid input {
+    font: inherit; font-size: 0.85rem; padding: 0.35rem 0.6rem;
+    border: 1px solid #ddd6fe; border-radius: 8px; background: #f8f6ff; color: #1e1b4b; outline: none;
+  }
+  .api-keys-grid input:focus { border-color: #7c3aed; outline: 2px solid #c4b5fd; outline-offset: 1px; }
+  .api-keys-actions { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.9rem; }
+  .api-keys-status { font-size: 0.75rem; color: #6d28d9; }
+
+  /* Confidence badge - positive agreement signal (more providers = higher). */
+  .conf-cell { white-space: nowrap; }
+  .conf-badge {
+    display: inline-block; padding: 0.05rem 0.4rem; border-radius: 6px;
+    font-size: 0.72rem; font-weight: 600; white-space: nowrap; cursor: help;
+  }
+  .conf-badge .conf-dots { letter-spacing: 1px; font-size: 0.6rem; vertical-align: 1px; }
+  .conf-high { background: #dcfce7; color: #166534; }   /* 3+ agree - strong */
+  .conf-med  { background: #ecfdf5; color: #15803d; }   /* 2 agree - medium */
+  .conf-low  { background: #f3f4f6; color: #6b7280; }   /* 1 - valid, uncorroborated */
+  .vote-toggle {
+    margin-right: 0.35rem; padding: 0 0.25rem; border: none; background: none;
+    color: #6b7280; font-size: 0.8rem; line-height: 1; cursor: pointer;
+  }
+  .vote-toggle:hover, .vote-toggle.open { color: #111827; }
+
+  /* Rights status pill (Rights column) */
+  .rights-cell { white-space: nowrap; }
+  .rights-pill {
+    display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px;
+    font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+  }
+  .rights-pd        { background: #dcfce7; color: #166534; }   /* public domain */
+  .rights-protected { background: #ede9fe; color: #6d28d9; }   /* in copyright */
+  .rights-unknown   { background: #f3f4f6; color: #6b7280; }   /* undetermined */
+  .rights-clickable { cursor: pointer; }
+  .rights-clickable::after { content: " ›"; opacity: 0.5; font-weight: 700; }
+  tr.detail-open .rights-clickable::after { content: " ⌄"; opacity: 0.7; }
+  .authors-more { margin-left: 0.3rem; color: #a09cb8; font-size: 0.75rem; font-weight: 500; }
+  .temporal-badge {
+    margin-left: 0.35rem; color: #6d28d9; font-size: 0.8rem; cursor: help;
+    display: inline-block;
+  }
+
+  /* Unified per-cue detail row: authorship · copyright · providers */
+  tr.cue-detail td { background: #faf8ff; border-bottom: 1px solid #e9e5ff; padding: 0.7rem 1rem 0.85rem; }
+  /* Sections stack vertically (Authorship, Copyright, Identified by), left-aligned. */
+  .cue-detail-inner {
+    display: flex; flex-direction: column; gap: 1rem; max-width: 46rem;
+  }
+  .detail-section { min-width: 0; }
+  .detail-label {
+    color: #a09cb8; font-size: 0.66rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 0.4rem;
+  }
+  .author-line {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.15rem 0.6rem; padding: 0.2rem 0;
+  }
+  .author-name { font-size: 0.85rem; font-weight: 500; color: #4c1d95; }
+  .author-role { font-size: 0.72rem; color: #a09cb8; }
+  .author-death {
+    font-size: 0.8rem; color: #6b7280; font-variant-numeric: tabular-nums;
+  }
+  .author-clock .author-death { color: #6d28d9; font-weight: 600; }
+  .detail-copyright { font-size: 0.82rem; color: #4b5563; max-width: 30rem; line-height: 1.45; }
+
+  /* Provider votes (inside the detail panel) */
+  .vote-line { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.82rem; color: #4b5563; padding: 0.1rem 0; }
+  .vote-line.vote-agree { color: #166534; font-weight: 600; }
+  .vote-provider {
+    display: inline-block; min-width: 4.5rem; color: #a09cb8; font-weight: 600;
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .vote-line.vote-agree .vote-provider { color: #16a34a; }
+  .vote-none { color: #c4b5fd; }
+  .vote-error { color: #ef4444; font-style: italic; }
   #video-preview-wrap.collapsed #video-preview { display: none; }
-  /* Filmstrip: a full-width overview strip like the minimap — fixed to the whole
+  /* Filmstrip: a full-width overview strip like the minimap - fixed to the whole
      movie length, no zoom. Frames are drawn on a canvas at a constant size
      (cover-cropped), so movie length never stretches them. */
   #overview-wrap { position: relative; }
@@ -430,8 +549,35 @@
     height: 40px;
     border-radius: 4px;
     object-fit: cover;
-    display: block;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 0.5rem;
   }
+  .expand-cell { width: 1.5rem; text-align: center; padding-right: 0 !important; padding-left: 0.25rem !important; }
+
+  /* Album column: compressed by default (ellipsis + full text on hover), and
+     hideable by clicking its header. */
+  .col-album { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #album-header { cursor: pointer; user-select: none; }
+  #album-header:hover { color: #7c3aed; }
+  #tracks-table.hide-album .col-album { display: none; }
+
+  /* Inline editing of track fields (double-click to edit) */
+  td.editable { cursor: text; }
+  #tracks-body tr:hover td.editable:hover { background: #f0ebff; box-shadow: inset 0 0 0 1px #ddd6fe; border-radius: 4px; }
+  input.cell-edit {
+    width: 100%; box-sizing: border-box; font: inherit; color: #1e1b4b;
+    padding: 0.2rem 0.35rem; border: 1px solid #7c3aed; border-radius: 4px;
+    background: #fff; outline: none;
+  }
+  /* Remove-track control (revealed on row hover) */
+  .row-actions { width: 1.5rem; text-align: center; }
+  .track-remove {
+    border: none; background: none; color: #c4b5fd; cursor: pointer;
+    font-size: 1.1rem; line-height: 1; padding: 0 0.2rem; opacity: 0; transition: opacity 0.1s;
+  }
+  #tracks-body tr:hover .track-remove { opacity: 1; }
+  .track-remove:hover { color: #ef4444; }
 
   .track-link {
     display: inline-flex;
@@ -640,20 +786,6 @@
     font-style: italic;
     color: #9ca3af;
   }
-  td.composer-uncertain::after {
-    content: "";
-  }
-  .composer-uncertain-badge {
-    display: inline-block;
-    margin-left: 0.3rem;
-    padding: 0 0.3rem;
-    background: #fef3c7;
-    color: #92400e;
-    border-radius: 3px;
-    font-size: 0.7rem;
-    font-style: normal;
-    cursor: help;
-  }
 
   #enrich-modal {
     position: fixed;
@@ -752,7 +884,7 @@
     box-shadow: 0 1px 4px rgba(109,40,217,0.07), 0 4px 16px rgba(109,40,217,0.05);
   }
 
-  #settings-panel summary {
+  #settings-panel > summary {
     padding: 0.65rem 1.25rem;
     cursor: pointer;
     font-size: 0.75rem;
@@ -767,9 +899,9 @@
     user-select: none;
   }
 
-  #settings-panel summary::-webkit-details-marker { display: none; }
+  #settings-panel > summary::-webkit-details-marker { display: none; }
 
-  #settings-panel summary::before {
+  #settings-panel > summary::before {
     content: '›';
     font-size: 1rem;
     line-height: 1;
@@ -777,8 +909,8 @@
     display: inline-block;
   }
 
-  #settings-panel[open] summary::before { transform: rotate(90deg); }
-  #settings-panel summary:hover { color: #7c3aed; }
+  #settings-panel[open] > summary::before { transform: rotate(90deg); }
+  #settings-panel > summary:hover { color: #7c3aed; }
 
   .settings-grid {
     padding: 0.75rem 1.25rem 1rem;
@@ -889,7 +1021,7 @@
   <div class="header-card">
     <div class="header-brand">
       <div>
-        <h1>FIWI Filmmusik Analyzer</h1>
+        <h1>SoundtrackID</h1>
         <p>Film music identification and analysis</p>
       </div>
     </div>
@@ -907,11 +1039,13 @@
     <summary>Settings</summary>
     <div class="settings-grid">
       <div class="setting-group">
-        <label for="opt-api">Detection API</label>
-        <select id="opt-api">
-          <option value="acrcloud" selected>ACRCloud</option>
-          <option value="shazam">Shazam</option>
-        </select>
+        <label>Detection providers</label>
+        <div id="opt-api" class="provider-checks">
+          <label><input type="checkbox" class="opt-provider" value="acrcloud" checked> ACRCloud</label>
+          <label><input type="checkbox" class="opt-provider" value="shazam" checked> Shazam</label>
+          <label><input type="checkbox" class="opt-provider" value="audd" checked> AudD</label>
+        </div>
+        <small class="provider-hint">2+ selected → ensemble (majority vote)</small>
       </div>
 
       <div class="setting-group">
@@ -942,6 +1076,25 @@
         </label>
       </div>
     </div>
+
+    <details id="api-keys" class="api-keys">
+      <summary>API keys</summary>
+      <p class="api-keys-hint">Stored locally on this machine and used for new analyses. A saved key
+        shows as its last few digits; type a new value to replace it, or leave a field blank to keep
+        the current one.</p>
+      <div class="api-keys-grid">
+        <label>ACRCloud host <input type="text" data-key="acrcloud_host" autocomplete="off" spellcheck="false"></label>
+        <label>ACRCloud access key <input type="password" data-key="acrcloud_access_key" autocomplete="off"></label>
+        <label>ACRCloud access secret <input type="password" data-key="acrcloud_access_secret" autocomplete="off"></label>
+        <label>AudD API token <input type="password" data-key="audd_api_token" autocomplete="off"></label>
+        <label>TMDb bearer token <input type="password" data-key="tmdb_bearer" autocomplete="off"></label>
+        <label>TMDb API key <input type="password" data-key="tmdb_key" autocomplete="off"></label>
+      </div>
+      <div class="api-keys-actions">
+        <button type="button" id="save-keys" class="download-btn">Save keys</button>
+        <span id="keys-status" class="api-keys-status"></span>
+      </div>
+    </details>
   </details>
 
   <!-- Drop Zone -->
@@ -1058,6 +1211,10 @@
   <div id="results-view">
     <div class="results-card">
       <div id="film-metadata-header" style="display:none"></div>
+      <div id="ratelimit-banner" style="display:none">
+        <span id="ratelimit-text"></span>
+        <button type="button" id="resume-btn">Resume</button>
+      </div>
       <div id="results-toolbar" style="display:none">
         <label class="anachronism-toggle">
           <input type="checkbox" id="opt-hide-anachronism">
@@ -1068,16 +1225,36 @@
         <p>No music segments detected</p>
         <small>Try lowering the Sensitivity threshold and analyzing again.</small>
       </div>
-      <table id="results-table">
-        <thead>
-          <tr>
-            <th>Segment</th><th>Start</th><th>Duration</th><th>Audio</th>
-            <th></th><th>Title</th><th>Artist</th><th>Album</th><th>Date</th>
-            <th>Composer</th><th>†</th>
-          </tr>
-        </thead>
-        <tbody id="results-body"></tbody>
-      </table>
+
+      <div id="results-tabs" class="results-tabs" style="display:none">
+        <button type="button" class="results-tab active" data-view="tracks">Tracks</button>
+        <button type="button" class="results-tab" data-view="timeline">Timeline</button>
+      </div>
+
+      <!-- Tracks report: one entry per unique piece, with full metadata + rights -->
+      <div id="tracks-view">
+        <table id="tracks-table">
+          <thead>
+            <tr>
+              <th></th><th>Title</th><th>Artist</th><th>Composer</th><th>Date</th>
+              <th class="col-album" id="album-header" title="Click to hide or show the Album column">Album</th><th>Conf</th><th>Rights</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tracks-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Timeline: the raw detection sequence, in order, minimal -->
+      <div id="timeline-view" style="display:none">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th>Segment</th><th>Start</th><th>Duration</th><th>Title</th><th>Artist</th>
+            </tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="results-actions">
@@ -1144,6 +1321,7 @@ const downloadBtn     = document.getElementById('download-btn');
 let currentRunId  = null;
 let activeReader  = null;
 let currentResults = null;
+let currentVideoName = null;
 let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
 let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
 
@@ -1203,13 +1381,13 @@ function beginIdentify(file) {
       pendingFilm = data.film || {};
       fillFilmFields(pendingFilm);
       fcStatus.textContent = pendingFilm.year
-        ? 'Prefilled from file tags. Please review — especially the year.'
+        ? 'Prefilled from file tags. Please review, especially the year.'
         : 'No year found in the file tags. Please add it or look it up online.';
     })
     .catch(err => {
       const stale = String(err).includes('404');
       fcStatus.textContent = stale
-        ? 'Server endpoint /identify is missing — running an older server version? Please restart the server.'
+        ? 'Server endpoint /identify is missing. Running an older server version? Please restart the server.'
         : 'Could not prepare the file. Please try again.';
     });
 }
@@ -1237,7 +1415,7 @@ document.getElementById('fc-lookup').addEventListener('click', () => {
     })
     .catch(err => {
       fcStatus.textContent = String(err).includes('404')
-        ? 'Endpoint /film/lookup is missing — server is running an older version. Please restart.'
+        ? 'Endpoint /film/lookup is missing. The server is running an older version; please restart.'
         : 'Online lookup failed.';
     });
 });
@@ -1251,7 +1429,7 @@ document.getElementById('fc-cancel').addEventListener('click', () => {
 });
 
 document.getElementById('fc-start').addEventListener('click', () => {
-  if (!pendingStagingId) { fcStatus.textContent = 'File not ready yet — please wait a moment.'; return; }
+  if (!pendingStagingId) { fcStatus.textContent = 'File not ready yet. Please wait a moment.'; return; }
   filmConfirm.style.display = 'none';
   // Merge the edited fields over the full retrieved record so nothing extra
   // (e.g. director_death_year) is lost.
@@ -1556,7 +1734,15 @@ function applyZoomVisibility() {
 }
 
 // Analysis
+function selectedProviders() {
+  return Array.from(document.querySelectorAll('.opt-provider:checked')).map(c => c.value);
+}
+
 function startAnalysis(stagingId, film) {
+  if (selectedProviders().length === 0) {
+    alert('Select at least one detection provider in Settings.');
+    return;
+  }
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   setupVideo(null, null);
@@ -1601,7 +1787,7 @@ function startAnalysis(stagingId, film) {
   const formData = new FormData();
   formData.append('staging_id', stagingId);
   formData.append('film', JSON.stringify(film || {}));
-  formData.append('api', document.getElementById('opt-api').value);
+  formData.append('api', selectedProviders().join(','));
   formData.append('chunk_duration', document.getElementById('opt-chunk').value);
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
@@ -1621,7 +1807,7 @@ function startAnalysis(stagingId, film) {
             // the run, the server dropped the connection mid-analysis.
             if (activeReader) {
               finishRun();
-              errorArea.textContent = 'The server closed the connection before finishing. It may have crashed — please try again.';
+              errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
               errorArea.style.display = 'block';
             }
             return;
@@ -1677,7 +1863,7 @@ function checkStall() {
   const waitingIdent = currentStep === 'detecting' || identReaped > 0 || wfIdentified.length > 0;
   (waitingIdent ? identFill : classFill).classList.add('waiting');
   stallNotice.textContent = gap >= STALL_HARD_MS
-    ? `Still waiting (${secs}s) — the ${waitingIdent ? 'identification service (Shazam/ACRCloud)' : 'analysis'} isn’t responding. It may be rate-limited or down. Keep waiting or cancel.`
+    ? `Still waiting (${secs}s). The ${waitingIdent ? 'identification service (Shazam/ACRCloud)' : 'analysis'} isn’t responding. It may be rate-limited or down. Keep waiting or cancel.`
     : `Working… no response for ${secs}s. The ${waitingIdent ? 'identification service' : 'server'} is taking longer than usual.`;
   stallNotice.style.display = 'block';
 }
@@ -1692,7 +1878,7 @@ function finishRun() {
 function handleEvent(ev) {
   const { step, detail, results } = ev;
 
-  // Any event means the pipeline is alive — reset the stall watchdog.
+  // Any event means the pipeline is alive - reset the stall watchdog.
   lastEventAt = performance.now();
   if (stallNotice.style.display !== 'none') {
     stallNotice.style.display = 'none';
@@ -1760,7 +1946,7 @@ function handleEvent(ev) {
 
   if (step === 'ident_waiting') {
     // Server is blocked waiting on the identification provider (e.g. Shazam
-    // rate-limiting). Explicit heartbeat — show it rather than sit silent.
+    // rate-limiting). Explicit heartbeat - show it rather than sit silent.
     const d = JSON.parse(detail);
     identFill.classList.add('waiting');
     const done = d.total ? ` (${d.reaped}/${d.total})` : '';
@@ -1788,7 +1974,7 @@ function handleEvent(ev) {
     classFill.style.width = '100%'; identFill.style.width = '100%';
     setTimeout(() => { progBars.style.display = 'none'; }, 400);
     markAllDone();
-    // Analysis finished — hide the step checklist; results + waveform remain.
+    // Analysis finished - hide the step checklist; results + waveform remain.
     progressView.style.display = 'none';
     showResults(results);
     return;
@@ -1847,21 +2033,31 @@ function triggerDownload(content, filename, type) {
 }
 
 function buildCSV(results) {
-  const header = ['segment_id','start','duration','conditioning','confidence','provider','title','artist','album','original_year','release_year','anachronistic'];
-  const rows = (results.cues || []).map(cue => [
-    cue.segment_id,
-    cue.start,
-    cue.duration,
-    cue.conditioning ?? '',
-    cue.confidence ?? '',
-    cue.provider ?? '',
-    cue.title ?? '',
-    cue.artist ?? '',
-    cue.album ?? '',
-    (cue.enrichment && cue.enrichment.original_year) ?? '',
-    cue.release_year ?? '',
-    isAnachronistic(cue) ? '1' : '0',
-  ]);
+  const header = ['segment_id','start','duration','conditioning','confidence','provider','agreement','title','artist','album','original_year','release_year','anachronistic','composer','authors','latest_author_death_year','public_domain'];
+  const pdStr = pd => pd === true ? 'yes' : pd === false ? 'no' : 'unknown';
+  const authorsStr = enr => (enr.authors || []).map(a => `${a.name} [${(a.roles || []).join('/')}] d.${a.death_year ?? '?'}`).join('; ');
+  const rows = (results.cues || []).map(cue => {
+    const enr = cue.enrichment || {};
+    return [
+      cue.segment_id,
+      cue.start,
+      cue.duration,
+      cue.conditioning ?? '',
+      cue.confidence ?? '',
+      cue.provider ?? '',
+      cue.agreement ? `${cue.agreement.count}/${cue.agreement.total}` : '',
+      cue.title ?? '',
+      cue.artist ?? '',
+      cue.album ?? '',
+      enr.original_year ?? '',
+      cue.release_year ?? '',
+      isAnachronistic(cue) ? '1' : '0',
+      enr.composer ?? '',
+      authorsStr(enr),
+      enr.latest_author_death_year ?? '',
+      pdStr(enr.public_domain),
+    ];
+  });
   return [header, ...rows]
     .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
     .join('\r\n');
@@ -1924,14 +2120,14 @@ function renderFilmHeader(film) {
     return;
   }
   const yearPart = film.year ? ` (${film.year})` : '';
-  // The director's death year is not shown — PD status depends on the composer, not the director.
+  // The director's death year is not shown - PD status depends on the composer, not the director.
   const parts = [];
   if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" onclick="event.preventDefault();location.href=this.href;">${fmt(film.director)}</a>`);
   if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" onclick="event.preventDefault();location.href=this.href;">${film.imdb_id}</a>`);
   if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" onclick="event.preventDefault();location.href=this.href;">${film.tmdb_id}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
-    <div class="film-title">${fmt(film.title || '—')}${yearPart}</div>
+    <div class="film-title">${fmt(film.title || '')}${yearPart}</div>
     <div class="film-meta">${parts.join(' · ')}</div>`;
 }
 
@@ -1964,62 +2160,380 @@ function isAnachronistic(cue) {
   return true;
 }
 
-function buildCueRowHTML(cue, videoName) {
-  const url = `/output/${encodeURIComponent(videoName)}/segments/${encodeURIComponent(cue.audio_file.split('/').pop())}`;
-  const cover = cue.photo_url
-    ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">`
-    : '';
-  const linkIcon = platformLinkIcons(cue);
+const PROVIDER_LABELS = { acrcloud: 'ACRCloud', shazam: 'Shazam', audd: 'AudD', ensemble: 'Ensemble' };
+
+// Positive confidence signal from the ensemble: more providers agreeing = higher
+// probability of correctness. A single-provider hit is valid, just uncorroborated
+// (never styled as a warning). Empty for single-provider runs (no agreement data).
+function confBadgeHTML(cue) {
+  const ag = cue.agreement;
+  if (!ag || !cue.title) return '';
+  const { count, total } = ag;
+  const cls = count >= 3 ? 'conf-high' : count === 2 ? 'conf-med' : 'conf-low';
+  const dots = '●'.repeat(count) + '○'.repeat(Math.max(0, total - count));
+  const names = (ag.providers || []).map(p => PROVIDER_LABELS[p] || p).join(', ');
+  return `<span class="conf-badge ${cls}" title="${count} of ${total} providers agree${names ? ': ' + names : ''}">`
+       + `<span class="conf-dots">${dots}</span> ${count}/${total}</span>`;
+}
+
+const ROLE_LABELS = { composer: 'Composer', lyricist: 'Lyricist', writer: 'Writer' };
+
+// Rights status pill for the Rights column. Positive framing: "Public domain" is
+// the confirmed-clear state; "Protected" is neutral (still in copyright);
+// "Unverified" means we couldn't establish it. Clickable when there's detail.
+function rightsPillHTML(enr) {
+  let cls, label;
+  if (enr.public_domain === true)      { cls = 'rights-pd';        label = 'Public domain'; }
+  else if (enr.public_domain === false){ cls = 'rights-protected'; label = 'Protected'; }
+  else if ((enr.authors || []).length || enr.composer) { cls = 'rights-unknown'; label = 'Unverified'; }
+  else return '';
+  const clickable = (enr.authors || []).length ? ' rights-clickable' : '';
+  const title = clickable ? ' title="Show authorship &amp; copyright"' : '';
+  return `<span class="rights-pill ${cls}${clickable}"${title}>${label}</span>`;
+}
+
+// Quiet "+N" after the primary composer when the work has co-authors (lyricists).
+function authorsInlineHTML(enr) {
+  const n = (enr.authors || []).length;
+  return n > 1 ? ` <span class="authors-more" title="${n} authors, see Rights">+${n - 1}</span>` : '';
+}
+
+// One plain-language sentence explaining the copyright status.
+function copyrightSentence(enr) {
+  const yr = enr.latest_author_death_year;
+  if (enr.public_domain === true)
+    return `Public domain${yr ? ` since ${yr + 71}` : ''}. Every author has been deceased at least 70 years.`;
+  if (enr.public_domain === false) {
+    const last = (enr.authors || []).find(a => a.death_year === yr);
+    return `In copyright until ${yr + 71}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
+  }
+  if ((enr.authors || []).length || enr.composer)
+    return `Undetermined. A contributing author’s death year is missing, or they are still living.`;
+  return '';
+}
+
+// Unified detail panel (one expandable row per cue): authorship, the copyright
+// verdict, and - for ensemble runs - each provider's raw answer.
+function detailPanelHTML(cue) {
   const enr = cue.enrichment || {};
-  const uncertain = enr.composer_match === 'search';
+  const sections = [];
+
+  const authors = enr.authors || [];
+  if (authors.length) {
+    const lines = authors.map(a => {
+      const roles = (a.roles || []).map(r => ROLE_LABELS[r] || r).join(' · ');
+      const dead = a.death_year ? `d. ${a.death_year}` : 'death unknown';
+      const clock = enr.latest_author_death_year && a.death_year === enr.latest_author_death_year;
+      return `<div class="author-line${clock ? ' author-clock' : ''}">`
+           + `<span class="author-name">${fmt(a.name)}</span>`
+           + `<span class="author-role">${roles}</span>`
+           + `<span class="author-death">${dead}</span></div>`;
+    }).join('');
+    sections.push(`<div class="detail-section detail-authors"><div class="detail-label">Authorship</div>${lines}</div>`);
+  }
+
+  const copyright = copyrightSentence(enr);
+  if (copyright)
+    sections.push(`<div class="detail-section detail-copyright-col"><div class="detail-label">Copyright</div><div class="detail-copyright">${copyright}</div></div>`);
+
+  if (cue.votes && cue.votes.length > 1) {
+    const lines = cue.votes.map(v => {
+      const label = PROVIDER_LABELS[v.provider] || v.provider;
+      const agree = (cue.agreement && (cue.agreement.providers || []).includes(v.provider));
+      let answer;
+      if (v.error) answer = `<span class="vote-error">error: ${fmt(v.error)}</span>`;
+      else if (v.matched) answer = `${fmt(v.title)}${v.artist ? ' – ' + fmt(v.artist) : ''}`;
+      else answer = '<span class="vote-none">no match</span>';
+      return `<div class="vote-line${agree ? ' vote-agree' : ''}"><span class="vote-provider">${label}</span>${answer}</div>`;
+    }).join('');
+    sections.push(`<div class="detail-section detail-providers"><div class="detail-label">Identified by</div>${lines}</div>`);
+  }
+
+  return `<td colspan="9"><div class="cue-detail-inner">${sections.join('')}</div></td>`;
+}
+
+function cueHasDetail(cue) {
+  return (cue.votes && cue.votes.length > 1) || ((cue.enrichment || {}).authors || []).length > 0;
+}
+
+// Group cues into unique pieces (same normalized title + artist). Recurrences of
+// one work collapse into a single Tracks entry; the representative is the cue with
+// the strongest ensemble agreement (best identification of that piece).
+function trackKey(cue) {
+  const norm = s => (s || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return norm(cue.title) + ' ' + norm(cue.artist);
+}
+function groupCues(cues) {
+  const map = new Map();
+  cues.forEach(cue => {
+    if (!cue.title) return;  // unidentified segments live only in the timeline
+    const k = trackKey(cue);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(cue);
+  });
+  const agree = c => (c.agreement && c.agreement.count) || 0;
+  return Array.from(map.values()).map(cs => ({
+    rep: cs.reduce((b, c) => (agree(c) > agree(b) ? c : b), cs[0]),
+    cues: cs,
+    anachronistic: cs.every(isAnachronistic),
+  }));
+}
+
+// ── Tracks report (grouped): one row per unique piece with full metadata + rights.
+function buildTrackRowHTML(group) {
+  const cue = group.rep;
+  const enr = cue.enrichment || {};
+  const cover = cue.photo_url ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">` : '';
+  const uncertain = enr.composer_match && enr.composer_match !== 'isrc';
   const cls = uncertain ? ' class="composer-uncertain"' : '';
-  const badge = uncertain
-    ? '<span class="composer-uncertain-badge" title="Matched by title search, not via ISRC — please verify manually.">?</span>'
-    : '';
-  // With a stored video, playing a cue drives the shared player (image track +
-  // stop at segment end). Without one (e.g. older history runs), fall back to the
-  // extracted-segment audio element.
-  const playCell = hasVideo
-    ? '<td><button type="button" class="seg-play" title="Im Video abspielen">▶ Video</button></td>'
-    : `<td><audio controls controlsList="nodownload noplaybackrate" oncontextmenu="return false" src="${url}"></audio></td>`;
-  // Date column: the work's original year when known (Wikidata), else ACRCloud's
-  // recording/release year as a weaker hint.
+  // Date column: show the work's real original year (Wikidata) when known. Fall
+  // back to the recording/release year only when it's plausible; drop it when it
+  // postdates the film (an obviously-wrong reissue date, not the original).
+  const fy = currentFilmYear();
   const hasOrig = enr.original_year != null;
-  const dateYear = hasOrig ? enr.original_year : (cue.release_year != null ? cue.release_year : '');
-  const dateTitle = hasOrig
-    ? 'Original publication / composition year (Wikidata)'
-    : (cue.release_year != null ? 'Recording / release year (ACRCloud) — original year unknown' : '');
-  const dateCls = hasOrig ? '' : ' style="color:#9ca3af"';
+  let dateYear = '', dateCls = '';
+  if (hasOrig) {
+    dateYear = enr.original_year;
+  } else if (cue.release_year != null && !(fy && cue.release_year > fy + ANACHRONISM_TOLERANCE)) {
+    dateYear = cue.release_year;
+    dateCls = ' style="color:#9ca3af"';
+  }
+  const expander = cueHasDetail(cue)
+    ? '<button type="button" class="vote-toggle" title="Show details">▸</button>'
+    : '';
+  const composerCls = 'editable' + (uncertain ? ' composer-uncertain' : '');
+  const temporalBadge = cue.temporal_pick
+    ? '<span class="temporal-badge" title="Re-ranked to a period-plausible match: the top result postdated the film, so an earlier candidate was chosen.">↻</span>'
+    : '';
+  return `
+    <td class="expand-cell">${expander}</td>
+    <td class="editable" data-field="title" title="Double-click to edit">${cover}${fmt(cue.title)}${temporalBadge}${platformLinkIcons(cue)}</td>
+    <td class="editable" data-field="artist" title="Double-click to edit">${fmt(cue.artist)}</td>
+    <td class="${composerCls}" data-field="composer" title="Double-click to edit">${fmt(enr.composer)}${authorsInlineHTML(enr)}</td>
+    <td class="editable" data-field="date" title="Double-click to edit"${dateCls}>${fmt(dateYear)}</td>
+    <td class="editable col-album" data-field="album" title="${fmt(cue.album)}">${fmt(cue.album)}</td>
+    <td class="conf-cell">${confBadgeHTML(cue)}</td>
+    <td class="rights-cell">${rightsPillHTML(enr)}</td>
+    <td class="row-actions"><button type="button" class="track-remove" title="Remove track">×</button></td>`;
+}
+
+// Read a track field's underlying value (for prefilling the inline editor).
+function trackFieldValue(cue, field) {
+  const enr = cue.enrichment || {};
+  if (field === 'title') return cue.title || '';
+  if (field === 'artist') return cue.artist || '';
+  if (field === 'album') return cue.album || '';
+  if (field === 'composer') return enr.composer || '';
+  if (field === 'date') return enr.original_year != null ? enr.original_year : '';
+  return '';
+}
+
+// Write an edited field to every cue of the group, then persist + re-render.
+function applyTrackEdit(group, field, raw) {
+  const val = String(raw).trim();
+  group.cues.forEach(cue => {
+    if (field === 'title') cue.title = val || null;
+    else if (field === 'artist') cue.artist = val || null;
+    else if (field === 'album') cue.album = val || null;
+    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; cue.enrichment.composer = val || null; }
+    else if (field === 'date') { cue.enrichment = cue.enrichment || {}; cue.enrichment.original_year = val ? (parseInt(val, 10) || null) : null; }
+  });
+  persistAndRerender();
+}
+
+function removeTrack(group) {
+  const ids = new Set(group.cues.map(c => c.segment_id));
+  currentResults.cues = (currentResults.cues || []).filter(c => !ids.has(c.segment_id));
+  persistAndRerender();
+}
+
+// Turn a cell into an inline text editor; Enter/blur commits, Esc cancels.
+function startCellEdit(td, group) {
+  if (td.querySelector('input')) return;
+  const field = td.dataset.field;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cell-edit';
+  td.innerHTML = '';
+  td.appendChild(input);
+  input.value = trackFieldValue(group.rep, field);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = () => { if (done) return; done = true; applyTrackEdit(group, field, input.value); };
+  const cancel = () => { if (done) return; done = true; rerenderResults(); };
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', commit);
+}
+
+function attachTrackRow(tr, group) {
+  // Clicking a track row expands its authorship/copyright/providers detail panel.
+  function toggleDetail() {
+    const det = tr.nextElementSibling;
+    if (!det || !det.classList.contains('cue-detail')) return;
+    det.hidden = !det.hidden;
+    tr.classList.toggle('detail-open', !det.hidden);
+    const vt = tr.querySelector('.vote-toggle');
+    if (vt) { vt.textContent = det.hidden ? '▸' : '▾'; vt.classList.toggle('open', !det.hidden); }
+  }
+  tr.addEventListener('click', e => {
+    // Editable cells (edit on double-click), the remove control, and links handle
+    // their own interaction; a plain click elsewhere toggles the detail panel.
+    if (e.target.closest('a, .editable, .track-remove, input')) return;
+    toggleDetail();
+  });
+  tr.querySelectorAll('.editable').forEach(td => {
+    td.addEventListener('dblclick', e => { e.stopPropagation(); startCellEdit(td, group); });
+  });
+  const rm = tr.querySelector('.track-remove');
+  if (rm) rm.addEventListener('click', e => { e.stopPropagation(); removeTrack(group); });
+}
+
+// Persist the current cues to disk and re-render both tabs from currentResults.
+function persistAndRerender() {
+  rerenderResults();
+  saveCues();
+}
+
+function rerenderResults() {
+  const cues = (currentResults && currentResults.cues) || [];
+  renderTracks(groupCues(cues), currentVideoName);
+  renderTimeline(cues, currentVideoName);
+  switchResultsView(currentResultsView);
+  updateAnachronismToolbar(cues);
+}
+
+async function saveCues() {
+  if (!currentVideoName) return;
+  try {
+    const r = await fetch(`/results/${encodeURIComponent(currentVideoName)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cues: currentResults.cues || [] }),
+    });
+    if (!r.ok) throw new Error('server returned ' + r.status);
+  } catch (err) {
+    errorArea.textContent = 'Could not save changes: ' + err.message;
+    errorArea.style.display = 'block';
+  }
+}
+
+function renderTracks(groups, videoName) {
+  const body = document.getElementById('tracks-body');
+  body.innerHTML = '';
+  if (groups.length === 0) {
+    body.innerHTML = '<tr><td colspan="9" class="tracks-empty">No tracks identified.</td></tr>';
+    return;
+  }
+  groups.forEach(group => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.innerHTML = buildTrackRowHTML(group);
+    tr.classList.toggle('anachronistic', group.anachronistic);
+    attachTrackRow(tr, group);
+    body.appendChild(tr);
+    if (cueHasDetail(group.rep)) {
+      const det = document.createElement('tr');
+      det.className = 'cue-detail';
+      det.hidden = true;
+      det.innerHTML = detailPanelHTML(group.rep);
+      body.appendChild(det);
+    }
+  });
+}
+
+// Timeline (chronological): the raw detection sequence, minimal, for oversight.
+function buildTimelineRowHTML(cue, videoName) {
   const anaBadge = isAnachronistic(cue)
-    ? `<span class="anachronism-badge" title="Dates to ${dateYear}, later than the film — likely a later work (sample/cover), not the original score.">⚠ ${dateYear}</span>`
+    ? '<span class="anachronism-badge" title="Later than the film; likely a later work, not the original score.">⚠</span>'
     : '';
   return `
     <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
     <td>${fmtTime(cue.start)}</td>
     <td>${fmtTime(cue.duration)}</td>
-    ${playCell}
-    <td style="padding:0.3rem 0.75rem;text-align:center">${cover}</td>
-    <td>${fmt(cue.title)}${linkIcon}${anaBadge}</td>
-    <td>${fmt(cue.artist)}</td>
-    <td>${fmt(cue.album)}</td>
-    <td${dateCls} title="${dateTitle}">${fmt(dateYear)}</td>
-    <td${cls}>${fmt(enr.composer)}${badge}</td>
-    <td${cls}>${fmt(enr.composer_death_year)}</td>`;
+    <td>${fmt(cue.title)}${platformLinkIcons(cue)}${anaBadge}</td>
+    <td>${fmt(cue.artist)}</td>`;
 }
 
-// Wire a result row: clicking the row body focuses the cue on the timeline; the
-// Play button (when present) drives the shared video player.
-function attachRowHandlers(tr, cue) {
+// Clicking a timeline row plays that segment in the shared player (stops at its end).
+function attachTimelineRow(tr, cue) {
   tr.addEventListener('click', e => {
-    if (e.target.closest('audio, a, button')) return;
+    if (e.target.closest('a')) return;
     const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
     focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
+    playSegment(cue);
   });
-  const playBtn = tr.querySelector('.seg-play');
-  if (playBtn) {
-    playBtn.addEventListener('click', e => { e.stopPropagation(); playSegment(cue); });
-  }
 }
+
+function renderTimeline(cues, videoName) {
+  resultsBody.innerHTML = '';
+  cues.forEach(cue => {
+    const tr = document.createElement('tr');
+    tr.dataset.segmentId = cue.segment_id;
+    tr.style.cursor = 'pointer';
+    tr.innerHTML = buildTimelineRowHTML(cue, videoName);
+    tr.classList.toggle('anachronistic', isAnachronistic(cue));
+    attachTimelineRow(tr, cue);
+    resultsBody.appendChild(tr);
+  });
+}
+
+let currentResultsView = 'tracks';
+function switchResultsView(view) {
+  currentResultsView = view;
+  document.querySelectorAll('.results-tab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.getElementById('tracks-view').style.display = view === 'tracks' ? '' : 'none';
+  document.getElementById('timeline-view').style.display = view === 'timeline' ? '' : 'none';
+}
+document.getElementById('results-tabs').addEventListener('click', e => {
+  const btn = e.target.closest('.results-tab');
+  if (btn) switchResultsView(btn.dataset.view);
+});
+
+// Click the Album header to hide/show that (often long) column.
+document.getElementById('album-header').addEventListener('click', () => {
+  document.getElementById('tracks-table').classList.toggle('hide-album');
+});
+
+// ── API keys settings ─────────────────────────────────────────────────────
+async function loadApiKeyState() {
+  try {
+    const r = await fetch('/settings');
+    if (!r.ok) return;
+    const state = await r.json();
+    document.querySelectorAll('#api-keys input[data-key]').forEach(inp => {
+      const s = state[inp.dataset.key];
+      inp.value = '';
+      inp.placeholder = (s && s.configured) ? s.preview : 'not set';
+    });
+  } catch (_) { /* offline is fine */ }
+}
+loadApiKeyState();
+
+document.getElementById('save-keys').addEventListener('click', async () => {
+  const status = document.getElementById('keys-status');
+  // Send only fields the user typed into; blank fields keep their saved value.
+  const payload = {};
+  document.querySelectorAll('#api-keys input[data-key]').forEach(inp => {
+    if (inp.value.trim() !== '') payload[inp.dataset.key] = inp.value.trim();
+  });
+  if (Object.keys(payload).length === 0) { status.textContent = 'Nothing to save.'; return; }
+  status.textContent = 'Saving...';
+  try {
+    const r = await fetch('/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('server returned ' + r.status);
+    status.textContent = 'Saved. New analyses will use these keys.';
+    await loadApiKeyState();
+  } catch (err) {
+    status.textContent = 'Could not save: ' + err.message;
+  }
+});
 
 function showResults(results) {
   if (!results) {
@@ -2028,34 +2542,86 @@ function showResults(results) {
     return;
   }
   currentResults = results;
-  resultsView.style.display  = 'block';
+  resultsView.style.display = 'block';
 
   const cues = results.cues || [];
   const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
+  currentVideoName = videoName;
 
   setupVideo(results, videoName);
   renderFilmHeader(results.film);
 
-  resultsBody.innerHTML = '';
+  const tabs = document.getElementById('results-tabs');
+  const tracksView = document.getElementById('tracks-view');
+  const timelineView = document.getElementById('timeline-view');
+
   if (cues.length === 0) {
-    resultsTable.style.display = 'none';
+    tabs.style.display = 'none';
+    tracksView.style.display = 'none';
+    timelineView.style.display = 'none';
     emptyState.style.display = 'block';
   } else {
-    resultsTable.style.display = '';
     emptyState.style.display = 'none';
-    cues.forEach(cue => {
-      const tr = document.createElement('tr');
-      tr.dataset.segmentId = cue.segment_id;
-      tr.style.cursor = 'pointer';
-      tr.innerHTML = buildCueRowHTML(cue, videoName);
-      tr.classList.toggle('anachronistic', isAnachronistic(cue));
-      attachRowHandlers(tr, cue);
-      resultsBody.appendChild(tr);
-    });
+    tabs.style.display = 'flex';
+    renderTracks(groupCues(cues), videoName);
+    renderTimeline(cues, videoName);
+    switchResultsView(currentResultsView);
   }
 
   updateAnachronismToolbar(cues);
+  updateRateLimitBanner(results);
 }
+
+// Show a resume prompt when detection stopped early on a provider rate limit.
+function updateRateLimitBanner(results) {
+  const banner = document.getElementById('ratelimit-banner');
+  if (!banner) return;
+  const cues = results.cues || [];
+  const unidentified = cues.filter(c => !c.title).length;
+  if (!results.rate_limited) { banner.style.display = 'none'; return; }
+  document.getElementById('ratelimit-text').textContent =
+    `Detection stopped at a provider rate limit. ${cues.length - unidentified} of ${cues.length} identified; ${unidentified} still pending.`;
+  banner.style.display = 'flex';
+  document.getElementById('resume-btn').disabled = false;
+}
+
+function resumeDetection() {
+  if (!currentVideoName) return;
+  const btn = document.getElementById('resume-btn');
+  const text = document.getElementById('ratelimit-text');
+  btn.disabled = true;
+  const providers = selectedProviders();
+  fetch(`/resume/${encodeURIComponent(currentVideoName)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api: providers.join(',') || 'acrcloud' }),
+  }).then(res => {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    (function pump() {
+      reader.read().then(({ done, value }) => {
+        if (done) return;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n'); buf = parts.pop();
+        parts.forEach(part => {
+          if (!part.startsWith('data: ')) return;
+          let ev; try { ev = JSON.parse(part.slice(6)); } catch (_) { return; }
+          if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
+          else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
+          else if (ev.step === 'done') {
+            currentResults = ev.results;
+            showResults(ev.results);   // re-renders + refreshes the banner
+          } else if (ev.step === 'error') {
+            text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
+            btn.disabled = false;
+          }
+        });
+        pump();
+      }).catch(err => { text.textContent = 'Resume connection lost: ' + err.message; btn.disabled = false; });
+    })();
+  }).catch(err => { text.textContent = 'Resume failed: ' + err.message; btn.disabled = false; });
+}
+document.getElementById('resume-btn').addEventListener('click', resumeDetection);
 
 function updateAnachronismToolbar(cues) {
   const toolbar = document.getElementById('results-toolbar');
@@ -2069,6 +2635,7 @@ function updateAnachronismToolbar(cues) {
 
 document.getElementById('opt-hide-anachronism').addEventListener('change', function() {
   resultsBody.classList.toggle('hide-anachronism', this.checked);
+  document.getElementById('tracks-body').classList.toggle('hide-anachronism', this.checked);
 });
 
 resetBtn.addEventListener('click', () => {
