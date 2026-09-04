@@ -100,6 +100,7 @@ class ResultsOutput:
     fiwi_id: str | None = None
     waveform: dict | None = None
     film: dict[str, Any] | None = None
+    rate_limited: bool = False   # detection stopped early on a provider quota
 
     def _build_cues(self) -> list[dict[str, Any]]:
         ident_map = {id_.segment_id: id_ for id_ in self.identifications}
@@ -119,6 +120,9 @@ class ResultsOutput:
                 "album": ident.album if ident else None,
                 "release_year": ident.metadata.get("release_year") if ident else None,
                 "isrc": ident.metadata.get("isrc") if ident else None,
+                "agreement": ident.metadata.get("agreement") if ident else None,
+                "votes": ident.metadata.get("votes") if ident else None,
+                "candidates": ident.metadata.get("candidates") if ident else None,
                 "genre": ident.metadata.get("genre") if ident else None,
                 "photo_url": ident.metadata.get("photo_url") if ident else None,
                 "youtube_link": ident.metadata.get("youtube_link") if ident else None,
@@ -138,6 +142,7 @@ class ResultsOutput:
             "film": self.film,
             "cues": self._build_cues(),
             "waveform": self.waveform,
+            "rate_limited": self.rate_limited,
         }
         return result
 

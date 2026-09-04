@@ -12,7 +12,7 @@ from scipy.io import wavfile
 from fiwi_filmmusik.aggregator import ChunkAggregator
 from fiwi_filmmusik.chunker import AudioChunker
 from fiwi_filmmusik.classifiers import BaseClassifier
-from fiwi_filmmusik.detection import BaseMusicDetectionClient
+from fiwi_filmmusik.detection import BaseMusicDetectionClient, RateLimitError
 from fiwi_filmmusik.isolators import BaseMusicIsolator, DummyIsolator
 from fiwi_filmmusik.loaders import VideoLoader
 from fiwi_filmmusik.models import (
@@ -265,10 +265,25 @@ class Pipeline:
         # call sleep, to exercise the frontend's stall watchdog. No effect unset.
         debug_sleep = float(os.environ.get("FIWI_DEBUG_DETECT_SLEEP") or 0)
 
+        rate_limited = False
+
         def detect_one(seg: MusicSegment) -> DetectionResult:
             if debug_sleep:
                 time.sleep(debug_sleep)
             return self.detection_client.detect(seg)
+
+        def empty_result(seg: MusicSegment) -> DetectionResult:
+            return DetectionResult(segment=seg, title=None, artist=None, confidence=0.0)
+
+        def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
+            """Return a detection, converting a provider rate-limit into a
+            no-match (and flagging the run) instead of aborting everything."""
+            nonlocal rate_limited
+            try:
+                return fut.result()
+            except RateLimitError:
+                rate_limited = True
+                return empty_result(chunk_seg)
 
         def emit_reaped(idx: int, chunk_seg: MusicSegment, detection: DetectionResult, *, label: bool) -> None:
             # Always emit an "identified" progress event (title=null means the
@@ -302,7 +317,7 @@ class Pipeline:
             # keeps overlapping the still-running classification loop.
             for fut in [f for f in pending if f.done()]:
                 idx, chunk_seg = pending.pop(fut)
-                emit_reaped(idx, chunk_seg, fut.result(), label=False)
+                emit_reaped(idx, chunk_seg, reap(fut, chunk_seg), label=False)
 
         def classified_stream():
             for chunk in self.chunker.chunk(audio, sample_rate):
@@ -330,7 +345,12 @@ class Pipeline:
                 )
                 idx = total_chunks
                 total_chunks += 1
-                pending[executor.submit(detect_one, chunk_seg)] = (idx, chunk_seg)
+                if rate_limited:
+                    # Provider is throttled; don't burn more calls. Record the
+                    # remaining windows as unidentified so they can be resumed.
+                    emit_reaped(idx, chunk_seg, empty_result(chunk_seg), label=False)
+                else:
+                    pending[executor.submit(detect_one, chunk_seg)] = (idx, chunk_seg)
                 drain_finished()
 
             # Classification is complete: the total chunk count is now known, so
@@ -355,7 +375,7 @@ class Pipeline:
                 waited = 0.0
                 for fut in done_set:
                     idx, chunk_seg = pending.pop(fut)
-                    emit_reaped(idx, chunk_seg, fut.result(), label=True)
+                    emit_reaped(idx, chunk_seg, reap(fut, chunk_seg), label=True)
         except BaseException:
             executor.shutdown(wait=False, cancel_futures=True)
             raise
@@ -368,7 +388,9 @@ class Pipeline:
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
-        return self.output_writer.write(video_path, detection_results, waveform=waveform_data, film=container_tags or None)
+        output = self.output_writer.write(video_path, detection_results, waveform=waveform_data, film=container_tags or None)
+        output.rate_limited = rate_limited
+        return output
 
 
 if __name__ == "__main__":
@@ -395,9 +417,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--api",
-        choices=("shazam", "acrcloud"),
         default="acrcloud",
-        help="Detection provider (default: acrcloud)",
+        help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
+             "list for ensemble majority voting (default: acrcloud)",
     )
     parser.add_argument(
         "--classifier",
