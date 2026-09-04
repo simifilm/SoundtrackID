@@ -75,14 +75,22 @@ echo "[sign-fiwi-server] Materialised $link_count Mach-O symlink(s) as flat-sign
 # the generic loop above would have stripped. Re-sign it with its own entitlements
 # (honored at runtime via the app's embedded provisioning profile). Skipped when
 # the helper wasn't bundled.
+# Apply the restricted com.apple.developer.shazamkit entitlement only when a
+# provisioning profile authorizing it is available (SHAZAMKIT_PROVISION_PROFILE).
+# Without a profile the entitlement is non-functional and can jeopardize
+# notarization, so we leave the helper signed with the standard entitlements from
+# the loop above — ShazamKit then returns 202 and the client falls back to shazamio.
 SHAZAMKIT_ENTITLEMENTS="$REPO_ROOT/shazamkit/shazamkit-match.entitlements"
-if [[ -f "$SHAZAMKIT_ENTITLEMENTS" ]]; then
+if [[ -n "${SHAZAMKIT_PROVISION_PROFILE:-}" && -f "$SHAZAMKIT_ENTITLEMENTS" ]]; then
   while IFS= read -r -d '' helper; do
     codesign --force --timestamp --options runtime \
       --entitlements "$SHAZAMKIT_ENTITLEMENTS" \
       --sign "$APPLE_SIGNING_IDENTITY" "$helper" >/dev/null
     echo "[sign-fiwi-server] Re-signed $helper with the ShazamKit entitlement."
   done < <(find "$TARGET" -type f -name "shazamkit-match" -print0)
+else
+  echo "[sign-fiwi-server] SHAZAMKIT_PROVISION_PROFILE not set — building without the"
+  echo "                   ShazamKit entitlement (Shazam falls back to shazamio)."
 fi
 
 # Seal the main executable last so its signature covers the finished directory.

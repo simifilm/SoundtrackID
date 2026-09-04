@@ -22,15 +22,9 @@ swiftc "$SRC" -o "$OUT" \
     -framework ShazamKit -framework AVFoundation -framework Foundation \
     -O
 
-if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-    echo "[shazamkit] signing with ShazamKit entitlement ..."
-    codesign --force --timestamp --options runtime \
-        --entitlements "$ENTITLEMENTS" \
-        --sign "$APPLE_SIGNING_IDENTITY" "$OUT"
-else
-    echo "[shazamkit] APPLE_SIGNING_IDENTITY not set — leaving the binary unsigned"
-    echo "           (compiles + runs, but ShazamKit matching returns 202 without"
-    echo "            the entitlement + provisioning profile)."
-fi
-
-echo "[shazamkit] built $OUT"
+# Signing is intentionally NOT done here. For a dev build the binary stays
+# unsigned (ShazamKit returns 202, and the Python client falls back to shazamio).
+# For the packaged .app, scripts/sign-fiwi-server.sh signs this helper — with the
+# ShazamKit entitlement only when SHAZAMKIT_PROVISION_PROFILE points at a profile
+# that authorizes it (see README). $ENTITLEMENTS is used there.
+echo "[shazamkit] built $OUT (unsigned; the .app build signs it)"
