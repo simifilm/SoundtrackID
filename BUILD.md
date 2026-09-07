@@ -108,7 +108,24 @@ is signed normally and Shazam identification uses the `shazamio` fallback. Set
 
 ## 4. Windows build
 
-Not yet set up. The Tauri front end is cross-platform, but the packaging
-(PyInstaller spec, signing script) is macOS-specific and would need a Windows
-equivalent (PyInstaller onedir for the server, Tauri NSIS/MSI target, code
-signing). This is an open handover item.
+Supported and documented (see the "Build the installer (Windows)" section in
+`README.md`). Windows builds must run on a Windows machine, PyInstaller and Tauri
+do not cross-compile from macOS. The same `fiwi-server.spec` and
+`npm run tauri build` produce an NSIS installer:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[onnx,shazam,web,metadata,build]"
+npm install
+pyinstaller --noconfirm fiwi-server.spec
+npm run tauri build
+```
+
+Output: `src-tauri\target\release\bundle\nsis\SoundtrackID_0.1.0_x64-setup.exe`.
+The bundled Swift ShazamKit helper is macOS-only and is simply absent on Windows;
+Shazam identification uses the `shazamio` fallback there.
+
+The one open item is signing: Windows builds are currently unsigned, so
+SmartScreen shows a "More info -> Run anyway" prompt on first launch. Native
+matching and Gatekeeper concerns are macOS-only.
