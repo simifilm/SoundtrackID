@@ -1,6 +1,7 @@
 """FastAPI web application for the SoundtrackID pipeline."""
 
 import asyncio
+import io
 import json
 import mimetypes
 import os
@@ -9,12 +10,13 @@ import shutil
 import tempfile
 import threading
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import sys as _sys
@@ -169,7 +171,7 @@ def _get_classifier(threshold: float = 0.2):
     return _classifier
 
 
-def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, api: str = "acrcloud"):
+def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, export_mava: bool = False, api: str = "acrcloud"):
     from fiwi_filmmusik.aggregator import ChunkAggregator
     from fiwi_filmmusik.chunker import AudioChunker
     from fiwi_filmmusik.detection import build_detection_client
@@ -186,6 +188,7 @@ def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: f
         detection_client=build_detection_client(api),
         output_dir=output_dir,
         export_csv=export_csv,
+        export_mava=export_mava,
     )
 
 
@@ -356,6 +359,7 @@ async def analyze(
     threshold: float = Form(0.2),
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
+    export_mava: str = Form("0"),
 ) -> StreamingResponse:
     """Accept a video file (or a staged upload) and stream SSE progress events.
 
@@ -396,6 +400,7 @@ async def analyze(
             threshold=threshold,
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
+            export_mava=export_mava == "1",
             api=api,
             film_override=film_override,
         ),
@@ -415,6 +420,7 @@ async def _run_pipeline_sse(
     threshold: float = 0.2,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
+    export_mava: bool = False,
     api: str = "acrcloud",
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -444,7 +450,7 @@ async def _run_pipeline_sse(
             else:
                 from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
                 container_tags = read_mp4_tags(tmp_path) or None
-            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, api=api)
+            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             result_dict = results.to_dict()
 
@@ -645,6 +651,37 @@ async def serve_video(video_name: str) -> FileResponse:
     video_path = matches[0]
     media_type = mimetypes.guess_type(str(video_path))[0] or "video/mp4"
     return FileResponse(video_path, media_type=media_type)
+
+
+@app.get("/output/{video_name}/mava")
+async def export_mava(video_name: str) -> Response:
+    """Export this run's cues as a MAVA/VIAN-Export compatible TSV + mapping JSON.
+
+    MAVA (https://github.com/sdsc-ordes/mava-api) has no flat JSON export format;
+    it ingests a TSV file plus a JSON "mapping" via POST /graph/import_tsv, which
+    turns each row into a mava:AnnotationSegment. Bundles both files as a zip since
+    that endpoint expects them together.
+    """
+    results_path = _safe_run_dir(video_name) / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        data = json.loads(results_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read results.json: {exc}")
+
+    from fiwi_filmmusik.mava_export import build_mava_mapping, build_mava_tsv
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mava_annotations.tsv", build_mava_tsv(data.get("cues", [])))
+        zf.writestr("mava_mapping.json", json.dumps(build_mava_mapping(video_name), indent=2))
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{video_name}_mava_export.zip"'},
+    )
 
 
 @app.get("/output/{video_name}/filmstrip")

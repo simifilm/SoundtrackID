@@ -73,10 +73,17 @@ def _group_detections(
 class OutputWriter:
     """Handles writing detection results to disk."""
 
-    def __init__(self, output_dir: Path, conditioning: str = "original", export_csv: bool = False) -> None:
+    def __init__(
+        self,
+        output_dir: Path,
+        conditioning: str = "original",
+        export_csv: bool = False,
+        export_mava: bool = False,
+    ) -> None:
         self.output_dir = output_dir
         self.conditioning = conditioning
         self.export_csv = export_csv
+        self.export_mava = export_mava
 
     def write(
         self,
@@ -177,6 +184,13 @@ class OutputWriter:
                     ])
             print(f"  CSV written to: {csv_path}")
 
+        if self.export_mava:
+            from fiwi_filmmusik.mava_export import write_mava_export
+            tsv_path, mapping_path = write_mava_export(
+                results_output.to_dict()["cues"], video_output_dir, video_name=video_name
+            )
+            print(f"  MAVA export written to: {tsv_path.name} + {mapping_path.name}")
+
         return results_output
 
 
@@ -191,6 +205,7 @@ class Pipeline:
         detection_client: BaseMusicDetectionClient,
         output_dir: Path | None = None,
         export_csv: bool = False,
+        export_mava: bool = False,
         detection_concurrency: int = 4,
     ) -> None:
         self.loader = loader
@@ -207,7 +222,9 @@ class Pipeline:
 
         # Determine conditioning based on isolator type
         conditioning = "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
-        self.output_writer = OutputWriter(self.output_dir, conditioning=conditioning, export_csv=export_csv)
+        self.output_writer = OutputWriter(
+            self.output_dir, conditioning=conditioning, export_csv=export_csv, export_mava=export_mava
+        )
 
     def run(self, video_path: Path, on_progress=None, max_segment_duration: float | None = None, container_tags: dict | None = None) -> ResultsOutput:
         """Run the pipeline on a video file.

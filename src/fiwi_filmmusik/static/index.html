@@ -1260,6 +1260,7 @@
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="download-btn" id="download-btn">Download results</button>
+      <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
     </div>
   </div>
 
@@ -2656,6 +2657,11 @@ downloadBtn.addEventListener('click', () => {
   if (document.getElementById('opt-csv').checked) {
     triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
   }
+});
+
+document.getElementById('mava-export-btn').addEventListener('click', () => {
+  if (!currentVideoName) return;
+  window.location.href = `/output/${encodeURIComponent(currentVideoName)}/mava`;
 });
 
 cancelBtn.addEventListener('click', async () => {
