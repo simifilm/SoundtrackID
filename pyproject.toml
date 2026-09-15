@@ -36,7 +36,8 @@ shazam = [
     "truststore>=0.9",
 ]
 acrcloud = [
-    "pyacrcloud>=1.0",
+    "pyacrcloud>=1.0; sys_platform != 'win32'",
+    "pyacrcloud @ git+https://github.com/acrcloud/acrcloud_sdk_python ; sys_platform == 'win32'",
 ]
 web = [
     "fastapi>=0.100",
