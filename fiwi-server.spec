@@ -28,12 +28,13 @@ if _missing:
         "fiwi-server.spec"
     )
 
-# Outdated VC++/UCRT DLLs from conda (or any other PATH entry) crash the
-# bundled server, so prefer the ones from System32.
-os.environ["PATH"] = os.pathsep.join(
-    [os.path.join(os.environ["SystemRoot"], "System32")]
-    + [p for p in os.environ["PATH"].split(os.pathsep) if "conda" not in p.lower()]
-)
+# Windows: outdated VC++/UCRT DLLs from conda (or any other PATH entry) crash
+# the bundled server, so prefer the ones from System32.
+if os.name == "nt":
+    os.environ["PATH"] = os.pathsep.join(
+        [os.path.join(os.environ["SystemRoot"], "System32")]
+        + [p for p in os.environ["PATH"].split(os.pathsep) if "conda" not in p.lower()]
+    )
 
 block_cipher = None
 
