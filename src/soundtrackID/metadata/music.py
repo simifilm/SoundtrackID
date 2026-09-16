@@ -11,7 +11,7 @@ from typing import Any, Literal
 import httpx
 
 MB_BASE = "https://musicbrainz.org/ws/2"
-MB_USER_AGENT = "FIWI-Filmmusik/0.1 (stmh@zhaw.ch)"
+MB_USER_AGENT = "SoundtrackID/0.1 (stmh@zhaw.ch)"
 MB_RATE_LIMIT_SEC = 1.0
 WD_BASE = "https://query.wikidata.org/sparql"
 

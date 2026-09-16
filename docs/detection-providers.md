@@ -1,6 +1,6 @@
 # Music detection providers
 
-FIWI Filmmusik can identify music cues through three different backends. This
+SoundtrackID can identify music cues through three different backends. This
 document records what each one is, how it behaves, and — importantly — the
 empirical findings from testing them against real film audio. The short version:
 
@@ -8,7 +8,7 @@ empirical findings from testing them against real film audio. The short version:
 > a solid baseline, and AcoustID is unsuitable.**
 
 All three implement `BaseMusicDetectionClient.detect()` in
-[`detection.py`](../src/fiwi_filmmusik/detection.py) and are selectable via the
+[`detection.py`](../src/soundtrackID/detection.py) and are selectable via the
 **Detection API** dropdown in the UI, the `--api` CLI flag, or
 `build_detection_client(...)`.
 

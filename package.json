@@ -1,5 +1,5 @@
 {
-  "name": "fiwi-filmmusik",
+  "name": "soundtrackid",
   "private": true,
   "scripts": {
     "tauri": "tauri",

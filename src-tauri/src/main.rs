@@ -97,7 +97,7 @@ fn main() {
         // Dev fallback: spawn via Python interpreter
         let python = find_python();
         let mut c = Command::new(&python);
-        c.args(["-m", "fiwi_filmmusik", "--port", &port.to_string(), "--host", "127.0.0.1"]);
+        c.args(["-m", "soundtrackID", "--port", &port.to_string(), "--host", "127.0.0.1"]);
         c
     };
 
@@ -144,7 +144,7 @@ fn main() {
                         .expect("invalid server URL"),
                 ),
             )
-            .title("FIWI Filmmusik")
+            .title("SoundtrackID")
             .inner_size(1280.0, 860.0)
             .min_inner_size(900.0, 600.0)
             .disable_drag_drop_handler()

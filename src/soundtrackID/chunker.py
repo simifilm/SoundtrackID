@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import numpy as np
 from numpy.typing import NDArray
 
-from fiwi_filmmusik.models import AudioChunk
+from soundtrackID.models import AudioChunk
 
 
 class AudioChunker:

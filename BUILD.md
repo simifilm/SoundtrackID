@@ -27,10 +27,10 @@ The ONNX classifier weights live in `assets/ast_model/` and are pulled via
 
 ```bash
 # Backend only (http://localhost:8000)
-.venv/bin/python -m fiwi_filmmusik
+.venv/bin/python -m soundtrackID
 
 # Backend + Tauri dev window
-.venv/bin/python -m fiwi_filmmusik &
+.venv/bin/python -m soundtrackID &
 npm run tauri dev
 ```
 

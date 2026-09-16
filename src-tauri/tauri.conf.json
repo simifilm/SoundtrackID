@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "ch.uzh.soundtrackid",
   "build": {
-    "frontendDist": "../src/fiwi_filmmusik/static"
+    "frontendDist": "../src/soundtrackID/static"
   },
   "app": {
     "withGlobalTauri": false,

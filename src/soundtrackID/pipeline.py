@@ -9,13 +9,13 @@ from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
 
-from fiwi_filmmusik.aggregator import ChunkAggregator
-from fiwi_filmmusik.chunker import AudioChunker
-from fiwi_filmmusik.classifiers import BaseClassifier
-from fiwi_filmmusik.detection import BaseMusicDetectionClient, RateLimitError
-from fiwi_filmmusik.isolators import BaseMusicIsolator, DummyIsolator
-from fiwi_filmmusik.loaders import VideoLoader
-from fiwi_filmmusik.models import (
+from soundtrackID.aggregator import ChunkAggregator
+from soundtrackID.chunker import AudioChunker
+from soundtrackID.classifiers import BaseClassifier
+from soundtrackID.detection import BaseMusicDetectionClient, RateLimitError
+from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
+from soundtrackID.loaders import VideoLoader
+from soundtrackID.models import (
     DetectionResult,
     IdentificationOutput,
     MusicSegment,
@@ -185,7 +185,7 @@ class OutputWriter:
             print(f"  CSV written to: {csv_path}")
 
         if self.export_mava:
-            from fiwi_filmmusik.mava_export import write_mava_export
+            from soundtrackID.mava_export import write_mava_export
             tsv_path, mapping_path = write_mava_export(
                 results_output.to_dict()["cues"], video_output_dir, video_name=video_name
             )
@@ -413,7 +413,7 @@ class Pipeline:
 if __name__ == "__main__":
     import argparse
 
-    from fiwi_filmmusik.detection import build_detection_client
+    from soundtrackID.detection import build_detection_client
 
     try:
         from dotenv import load_dotenv
@@ -475,10 +475,10 @@ if __name__ == "__main__":
     chunker = AudioChunker(chunk_duration=args.chunk_duration, overlap=2.0)
 
     if args.classifier == "hf":
-        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        from soundtrackID.classifiers import HuggingFaceClassifier
         classifier: BaseClassifier = HuggingFaceClassifier(music_labels=["Music"], threshold=args.threshold)
     else:
-        from fiwi_filmmusik.classifiers import OnnxClassifier
+        from soundtrackID.classifiers import OnnxClassifier
         onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
         classifier = OnnxClassifier(
             model_dir=str(onnx_model_dir), music_labels=["Music"], threshold=args.threshold
@@ -489,7 +489,7 @@ if __name__ == "__main__":
     if args.no_isolation:
         isolator: BaseMusicIsolator = DummyIsolator()
     else:
-        from fiwi_filmmusik.isolators import DemucsIsolator
+        from soundtrackID.isolators import DemucsIsolator
         isolator = DemucsIsolator()
 
     detection_client = build_detection_client(args.api)

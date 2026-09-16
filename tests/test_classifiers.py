@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from fiwi_filmmusik.models import AudioChunk
+from soundtrackID.models import AudioChunk
 
 
 class TestHuggingFaceClassifier:
@@ -14,7 +14,7 @@ class TestHuggingFaceClassifier:
     @pytest.fixture
     def mock_classifier(self):
         """Create a HuggingFaceClassifier with mocked internals."""
-        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        from soundtrackID.classifiers import HuggingFaceClassifier
 
         # Create instance without calling __init__
         classifier = HuggingFaceClassifier.__new__(HuggingFaceClassifier)
@@ -109,7 +109,7 @@ class TestHuggingFaceClassifier:
         audio = np.ones(1000, dtype=np.float32)
 
         # Call the actual _resample method from the class
-        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        from soundtrackID.classifiers import HuggingFaceClassifier
 
         result = HuggingFaceClassifier._resample(classifier, audio, 16000, 16000)
 
@@ -123,7 +123,7 @@ class TestHuggingFaceClassifier:
         with patch("librosa.resample") as mock_resample:
             mock_resample.return_value = np.ones(500, dtype=np.float32)
 
-            from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+            from soundtrackID.classifiers import HuggingFaceClassifier
 
             result = HuggingFaceClassifier._resample(classifier, audio, 32000, 16000)
 
@@ -151,7 +151,7 @@ class TestHuggingFaceClassifierIntegration:
     @pytest.mark.slow
     def test_real_model_loading(self):
         """Test loading real model (skipped in CI)."""
-        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        from soundtrackID.classifiers import HuggingFaceClassifier
 
         classifier = HuggingFaceClassifier()
         assert classifier.model is not None
@@ -163,7 +163,7 @@ class TestHuggingFaceClassifierIntegration:
         """Test classification with real audio from test video."""
         import librosa
 
-        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+        from soundtrackID.classifiers import HuggingFaceClassifier
 
         # Load 10 seconds of audio starting at 60s (music section)
         audio, sr = librosa.load(test_video_path, sr=16000, duration=10.0, offset=60.0)

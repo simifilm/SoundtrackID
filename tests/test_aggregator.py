@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from fiwi_filmmusik.aggregator import ChunkAggregator
-from fiwi_filmmusik.models import AudioChunk, ClassificationResult
+from soundtrackID.aggregator import ChunkAggregator
+from soundtrackID.models import AudioChunk, ClassificationResult
 
 
 def test_aggregate_single_music_chunk():

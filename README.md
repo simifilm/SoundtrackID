@@ -1,4 +1,4 @@
-# FIWI Filmmusik Analyzer
+# SoundtrackID Analyzer
 
 Detects and identifies music in film videos. Upload a video, and the pipeline classifies audio chunks, aggregates them into music segments, and identifies each segment via Shazam — all inside a native macOS desktop app.
 
@@ -9,7 +9,7 @@ Detects and identifies music in film videos. Upload a video, and the pipeline cl
 ### Install
 
 1. Download `FIWI-Filmmusik.zip` from the latest release.
-2. Unzip and move **FIWI Filmmusik.app** to `/Applications`.
+2. Unzip and move **SoundtrackID.app** to `/Applications`.
 3. First launch: right-click the app → **Open** → **Open** (required once to bypass Gatekeeper on unsigned builds).
 
 The app is self-contained — no Python or Rust installation needed.
@@ -63,7 +63,7 @@ git lfs pull                          # downloads the ONNX model (~331 MB)
 Start the server:
 
 ```bash
-uv run --extra app python -m fiwi_filmmusik
+uv run --extra app python -m soundtrackID
 ```
 
 Open [http://localhost:8000](http://localhost:8000) in your browser.
@@ -73,7 +73,7 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m fiwi_filmmusik
+FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
 ```
 
 ### Optional: ACRCloud identification
@@ -129,7 +129,7 @@ native ShazamKit once the profile is in place. Set
 Strips non-music audio before Shazam fingerprinting (improves accuracy on dialogue-heavy films). Requires a CUDA GPU for practical speed.
 
 ```bash
-uv run --extra app --extra demucs python -m fiwi_filmmusik
+uv run --extra app --extra demucs python -m soundtrackID
 ```
 
 ---
@@ -137,7 +137,7 @@ uv run --extra app --extra demucs python -m fiwi_filmmusik
 ## CLI
 
 ```bash
-python3 -m fiwi_filmmusik.pipeline path/to/video.mp4 --no-isolation
+python3 -m soundtrackID.pipeline path/to/video.mp4 --no-isolation
 ```
 
 ```
@@ -196,8 +196,8 @@ PATH="$HOME/.cargo/bin:$PATH" npm run tauri build
 ```
 
 Output:
-- `src-tauri/target/release/bundle/macos/FIWI Filmmusik.app`
-- `src-tauri/target/release/bundle/dmg/FIWI Filmmusik_0.1.0_aarch64.dmg`
+- `src-tauri/target/release/bundle/macos/SoundtrackID.app`
+- `src-tauri/target/release/bundle/dmg/SoundtrackID_0.1.0_aarch64.dmg`
 
 ### Code signing and notarization (macOS)
 
@@ -222,7 +222,7 @@ PATH="$HOME/.cargo/bin:$PATH" npm run tauri build
 `APPLE_PASSWORD` is an app-specific password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. `APPLE_TEAM_ID` is the 10-character team ID from [developer.apple.com/account](https://developer.apple.com/account) → Membership. Verify the finished app after building:
 
 ```bash
-spctl -a -vvv --type exec "src-tauri/target/release/bundle/macos/FIWI Filmmusik.app"
+spctl -a -vvv --type exec "src-tauri/target/release/bundle/macos/SoundtrackID.app"
 # expect: "accepted" + "source=Notarized Developer ID"
 ```
 
@@ -273,7 +273,7 @@ uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
 npm run tauri build
 ```
 
-Output: `src-tauri\target\release\bundle\nsis\FIWI Filmmusik_0.1.0_x64-setup.exe`
+Output: `src-tauri\target\release\bundle\nsis\SoundtrackID_0.1.0_x64-setup.exe`
 
 > **Note:** Windows uses WebView2 (Edge) as the embedded browser, which ships pre-installed on Windows 10 (May 2021 update) and Windows 11. No separate browser installation is required.
 
@@ -283,7 +283,7 @@ Run the `.exe` installer. Windows SmartScreen may show a warning for unsigned bu
 ### Development mode
 
 ```bash
-uv run --extra app python -m fiwi_filmmusik &   # start Python server on :8000
+uv run --extra app python -m soundtrackID &   # start Python server on :8000
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ```
 

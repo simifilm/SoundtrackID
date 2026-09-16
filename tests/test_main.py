@@ -1,6 +1,6 @@
 """Tests for main module."""
 
-from fiwi_filmmusik.main import main
+from soundtrackID.main import main
 
 
 def test_main() -> None:

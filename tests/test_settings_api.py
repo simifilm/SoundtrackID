@@ -4,7 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from fiwi_filmmusik import app as app_module
+from soundtrackID import app as app_module
 
 client = TestClient(app_module.app)
 

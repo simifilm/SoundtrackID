@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from fiwi_filmmusik.metadata.film import (
+from soundtrackID.metadata.film import (
     _extract_tmdb_director_id,
     _parse_imdbapi_title,
     _parse_tmdb_movie,

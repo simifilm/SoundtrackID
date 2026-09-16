@@ -148,7 +148,7 @@ def _get_classifier(threshold: float = 0.2):
         with _classifier_lock:
             if _classifier is None:
                 if getattr(_sys, "frozen", False):
-                    from fiwi_filmmusik.classifiers import OnnxClassifier
+                    from soundtrackID.classifiers import OnnxClassifier
                     _classifier = OnnxClassifier(
                         model_dir=str(Path(_sys._MEIPASS) / "ast_model"),
                         music_labels=["Music"],
@@ -158,10 +158,10 @@ def _get_classifier(threshold: float = 0.2):
                     onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
                     use_hf = os.environ.get("FIWI_HF") or not onnx_model_dir.exists()
                     if use_hf:
-                        from fiwi_filmmusik.classifiers import HuggingFaceClassifier
+                        from soundtrackID.classifiers import HuggingFaceClassifier
                         _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
                     else:
-                        from fiwi_filmmusik.classifiers import OnnxClassifier
+                        from soundtrackID.classifiers import OnnxClassifier
                         _classifier = OnnxClassifier(
                             model_dir=str(onnx_model_dir),
                             music_labels=["Music"],
@@ -172,12 +172,12 @@ def _get_classifier(threshold: float = 0.2):
 
 
 def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, export_mava: bool = False, api: str = "acrcloud"):
-    from fiwi_filmmusik.aggregator import ChunkAggregator
-    from fiwi_filmmusik.chunker import AudioChunker
-    from fiwi_filmmusik.detection import build_detection_client
-    from fiwi_filmmusik.isolators import DummyIsolator
-    from fiwi_filmmusik.loaders import VideoLoader
-    from fiwi_filmmusik.pipeline import Pipeline
+    from soundtrackID.aggregator import ChunkAggregator
+    from soundtrackID.chunker import AudioChunker
+    from soundtrackID.detection import build_detection_client
+    from soundtrackID.isolators import DummyIsolator
+    from soundtrackID.loaders import VideoLoader
+    from soundtrackID.pipeline import Pipeline
 
     return Pipeline(
         loader=VideoLoader(),
@@ -281,7 +281,7 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
 
     film: dict = {}
     try:
-        from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
+        from soundtrackID.metadata.mp4_tags import read_mp4_tags
         film = read_mp4_tags(staged_path) or {}
     except Exception:
         film = {}
@@ -289,7 +289,7 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
     if online == "1":
         try:
             import httpx
-            from fiwi_filmmusik.metadata.film import FilmLookup
+            from soundtrackID.metadata.film import FilmLookup
             client = httpx.Client(timeout=15.0)
             try:
                 lookup = FilmLookup(
@@ -318,7 +318,7 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
 async def film_lookup(hint: dict = Body(default={})) -> dict:
     """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year). No file needed."""
     import httpx
-    from fiwi_filmmusik.metadata.film import FilmLookup
+    from soundtrackID.metadata.film import FilmLookup
     year = hint.get("year")
     try:
         year = int(year) if year not in (None, "") else None
@@ -448,7 +448,7 @@ async def _run_pipeline_sse(
                 # User-confirmed metadata from the pre-analysis step wins.
                 container_tags = film_override
             else:
-                from fiwi_filmmusik.metadata.mp4_tags import read_mp4_tags
+                from soundtrackID.metadata.mp4_tags import read_mp4_tags
                 container_tags = read_mp4_tags(tmp_path) or None
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
@@ -457,7 +457,7 @@ async def _run_pipeline_sse(
             # Temporal re-rank: prefer a period-plausible candidate over an
             # anachronistic top hit, now that the film year is known.
             try:
-                from fiwi_filmmusik.temporal import temporal_rerank
+                from soundtrackID.temporal import temporal_rerank
                 film_year = (result_dict.get("film") or {}).get("year")
                 temporal_rerank(result_dict, film_year)
             except Exception:
@@ -469,7 +469,7 @@ async def _run_pipeline_sse(
             # an ISRC. Best-effort — a network failure must not fail the analysis.
             try:
                 import httpx
-                from fiwi_filmmusik.metadata.enricher import enrich as _enrich_results
+                from soundtrackID.metadata.enricher import enrich as _enrich_results
 
                 def _music_cb(step: str, **kw) -> None:
                     if cancel_event.is_set():
@@ -504,7 +504,7 @@ async def _run_pipeline_sse(
                 ext = Path(original_name).suffix or ".mp4"
                 video_dest = run_dir / f"source{ext}"
                 shutil.move(str(tmp_path), str(video_dest))
-                from fiwi_filmmusik.thumbnails import extract_filmstrip
+                from soundtrackID.thumbnails import extract_filmstrip
                 film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
                 result_dict["video"] = {"file": f"source{ext}", "filmstrip": film}
                 _atomic_write_json(run_dir / "results.json", result_dict)
@@ -670,7 +670,7 @@ async def export_mava(video_name: str) -> Response:
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=f"Failed to read results.json: {exc}")
 
-    from fiwi_filmmusik.mava_export import build_mava_mapping, build_mava_tsv
+    from soundtrackID.mava_export import build_mava_mapping, build_mava_tsv
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -753,7 +753,7 @@ async def _run_enrich_sse(
 
     ev_queue: queue.Queue[dict] = queue.Queue()
 
-    from fiwi_filmmusik.metadata.enricher import EnrichmentCancelled, enrich
+    from soundtrackID.metadata.enricher import EnrichmentCancelled, enrich
 
     def progress_cb(step: str, **kwargs) -> None:
         if cancel_event.is_set():
@@ -879,8 +879,8 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
         import numpy as np
         from scipy.io import wavfile
 
-        from fiwi_filmmusik.detection import RateLimitError, build_detection_client
-        from fiwi_filmmusik.models import MusicSegment
+        from soundtrackID.detection import RateLimitError, build_detection_client
+        from soundtrackID.models import MusicSegment
 
         try:
             results = json.loads(results_path.read_text())
@@ -933,7 +933,7 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
 
         # Temporal re-rank the freshly-identified cues before enriching.
         try:
-            from fiwi_filmmusik.temporal import temporal_rerank
+            from soundtrackID.temporal import temporal_rerank
             temporal_rerank(results, (results.get("film") or {}).get("year"))
         except Exception:
             pass
@@ -942,7 +942,7 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
         try:
             import httpx
 
-            from fiwi_filmmusik.metadata.enricher import enrich as _enrich
+            from soundtrackID.metadata.enricher import enrich as _enrich
 
             def _cb(step: str, **kw) -> None:
                 if step == "music_start":

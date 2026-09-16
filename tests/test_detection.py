@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from fiwi_filmmusik.detection import ShazamDetectionClient
-from fiwi_filmmusik.models import MusicSegment
+from soundtrackID.detection import ShazamDetectionClient
+from soundtrackID.models import MusicSegment
 
 
 def _segment():
@@ -51,7 +51,7 @@ def test_shazamkit_genuine_no_match_is_trusted_no_fallback():
 
 def test_202_falls_back_to_shazamio():
     ShazamDetectionClient._warned = True
-    from fiwi_filmmusik.models import DetectionResult
+    from soundtrackID.models import DetectionResult
     fb = DetectionResult(segment=_segment(), title="From shazamio", artist="X",
                          confidence=1.0, provider="shazam")
     with patch.object(ShazamDetectionClient, "_detect_shazamio", return_value=fb) as m, \
@@ -62,10 +62,10 @@ def test_202_falls_back_to_shazamio():
 
 
 def test_no_helper_uses_shazamio():
-    from fiwi_filmmusik.models import DetectionResult
+    from soundtrackID.models import DetectionResult
     fb = DetectionResult(segment=_segment(), title="Fallback hit", artist="Y",
                          confidence=1.0, provider="shazam")
-    with patch("fiwi_filmmusik.detection._find_shazamkit_helper", return_value=None), \
+    with patch("soundtrackID.detection._find_shazamkit_helper", return_value=None), \
          patch.object(ShazamDetectionClient, "_detect_shazamio", return_value=fb) as m:
         r = ShazamDetectionClient().detect(_segment())
     assert r.title == "Fallback hit"

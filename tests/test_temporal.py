@@ -1,6 +1,6 @@
 """Tests for temporal re-ranking of identification candidates."""
 
-from fiwi_filmmusik.temporal import temporal_rerank
+from soundtrackID.temporal import temporal_rerank
 
 
 def _cue(primary_year, alts):

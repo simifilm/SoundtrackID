@@ -9,8 +9,8 @@ import httpx
 
 Scope = Literal["film", "music", "all"]
 
-from fiwi_filmmusik.metadata.film import FilmInfo, FilmLookup
-from fiwi_filmmusik.metadata.music import MusicLookup
+from soundtrackID.metadata.film import FilmInfo, FilmLookup
+from soundtrackID.metadata.music import MusicLookup
 
 
 class EnrichmentCancelled(Exception):

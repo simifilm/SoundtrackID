@@ -6,8 +6,8 @@ import zipfile
 
 from fastapi.testclient import TestClient
 
-from fiwi_filmmusik import app as app_module
-from fiwi_filmmusik.mava_export import build_mava_mapping, build_mava_tsv
+from soundtrackID import app as app_module
+from soundtrackID.mava_export import build_mava_mapping, build_mava_tsv
 
 client = TestClient(app_module.app)
 

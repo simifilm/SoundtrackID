@@ -240,7 +240,7 @@ cancel button throughout.
 ## File layout
 
 ```
-src/fiwi_filmmusik/metadata/
+src/soundtrackID/metadata/
   __init__.py
   mp4_tags.py      # mutagen-based Subler-compatible MP4 atom reader
   film.py          # TMDb + Wikidata + imdbapi.dev — FilmInfo + FilmLookup

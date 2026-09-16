@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from fiwi_filmmusik.models import AudioChunk, ClassificationResult
+from soundtrackID.models import AudioChunk, ClassificationResult
 
 
 class BaseClassifier(ABC):
@@ -111,7 +111,7 @@ class HuggingFaceClassifier(BaseClassifier):
         except ImportError as e:
             raise ImportError(
                 "HuggingFaceClassifier requires the 'hf' extras. "
-                "Install with: pip install fiwi-filmmusik[hf]"
+                "Install with: pip install soundtrackID[hf]"
             ) from e
 
         self.model_id = model_id
@@ -168,7 +168,7 @@ class HuggingFaceClassifier(BaseClassifier):
         except ImportError as e:
             raise ImportError(
                 "Resampling requires librosa. "
-                "Install with: pip install fiwi-filmmusik[hf]"
+                "Install with: pip install soundtrackID[hf]"
             ) from e
         return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
 

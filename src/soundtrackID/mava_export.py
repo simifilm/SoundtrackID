@@ -40,7 +40,7 @@ def build_mava_tsv(cues: list[dict[str, Any]]) -> str:
 
 def build_mava_mapping(video_name: str | None = None) -> dict[str, Any]:
     """Build the mapping JSON MAVA expects alongside the TSV (its `mapping_json` form field)."""
-    description = f"FIWI Filmmusik cues — {video_name}" if video_name else "FIWI Filmmusik cues"
+    description = f"SoundtrackID cues — {video_name}" if video_name else "SoundtrackID cues"
     return {
         "series_description": description,
         "value_description": "Identified music cue (title — artist)",

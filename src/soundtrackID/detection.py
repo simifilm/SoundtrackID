@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from scipy.io import wavfile
 
-from fiwi_filmmusik.models import DetectionResult, MusicSegment
+from soundtrackID.models import DetectionResult, MusicSegment
 
 
 def _find_shazamkit_helper() -> str | None:

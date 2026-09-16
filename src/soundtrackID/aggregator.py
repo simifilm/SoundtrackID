@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.io import wavfile
 
-from fiwi_filmmusik.models import ClassificationResult, MusicSegment
+from soundtrackID.models import ClassificationResult, MusicSegment
 
 
 class ChunkAggregator:
@@ -159,9 +159,9 @@ if __name__ == "__main__":
     import sys
     from pathlib import Path
 
-    from fiwi_filmmusik.chunker import AudioChunker
-    from fiwi_filmmusik.classifiers import HuggingFaceClassifier
-    from fiwi_filmmusik.loaders import VideoLoader
+    from soundtrackID.chunker import AudioChunker
+    from soundtrackID.classifiers import HuggingFaceClassifier
+    from soundtrackID.loaders import VideoLoader
 
     path = sys.argv[1] if len(sys.argv) > 1 else "tests/test_video.mp4"
 

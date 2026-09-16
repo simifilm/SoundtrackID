@@ -1,4 +1,4 @@
-"""Main module: launches the FIWI Filmmusik web server."""
+"""Main module: launches the SoundtrackID web server."""
 
 try:
     import truststore
@@ -17,12 +17,12 @@ def main() -> None:
         print("uvicorn is not installed. Run: pip install -e '.[web]'")
         raise SystemExit(1)
 
-    parser = argparse.ArgumentParser(description="FIWI Filmmusik web server")
+    parser = argparse.ArgumentParser(description="SoundtrackID web server")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 
-    uvicorn.run("fiwi_filmmusik.app:app", host=args.host, port=args.port, reload=False)
+    uvicorn.run("soundtrackID.app:app", host=args.host, port=args.port, reload=False)
 
 
 if __name__ == "__main__":

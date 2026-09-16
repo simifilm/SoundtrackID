@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from fiwi_filmmusik import app as app_module
+from soundtrackID import app as app_module
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app_module.app)

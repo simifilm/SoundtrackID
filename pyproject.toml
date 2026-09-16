@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fiwi-filmmusik"
+name = "soundtrackID"
 version = "0.1.0"
 description = "Film Music Analysis Pipeline"
 requires-python = ">=3.10"
@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 # Bundled desktop app
 app = [
-    "fiwi-filmmusik[onnx,shazam,web,metadata]",
+    "soundtrackID[onnx,shazam,web,metadata]",
 ]
 demucs = [
     "demucs>=4.0",
@@ -63,7 +63,7 @@ build = [
 pyacrcloud = { git = "https://github.com/acrcloud/acrcloud_sdk_python", marker = "sys_platform == 'win32'" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/fiwi_filmmusik"]
+packages = ["src/soundtrackID"]
 
 [tool.ruff]
 line-length = 88

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from fiwi_filmmusik.metadata.music import (
+from soundtrackID.metadata.music import (
     _artist_death,
     _extract_authors,
     _normalize_name,

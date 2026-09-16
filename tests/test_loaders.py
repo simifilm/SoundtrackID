@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fiwi_filmmusik.loaders import VideoLoader
+from soundtrackID.loaders import VideoLoader
 
 
 @pytest.fixture

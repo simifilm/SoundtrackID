@@ -2,14 +2,14 @@
 
 import numpy as np
 
-from fiwi_filmmusik.detection import (
+from soundtrackID.detection import (
     BaseMusicDetectionClient,
     EnsembleDetectionClient,
     _consensus_from_votes,
     _normalize_title,
     build_detection_client,
 )
-from fiwi_filmmusik.models import DetectionResult, MusicSegment
+from soundtrackID.models import DetectionResult, MusicSegment
 
 
 def _vote(provider, title, isrc=None, conf=1.0, matched=True, meta=None):
@@ -203,7 +203,7 @@ def test_ensemble_survives_a_raising_provider():
 
 def test_build_single_returns_plain_client(monkeypatch):
     # acrcloud construction needs creds; stub it out.
-    import fiwi_filmmusik.detection as det
+    import soundtrackID.detection as det
 
     monkeypatch.setattr(det, "_build_single_client", lambda name: _FakeClient(name))
     client = build_detection_client("audd")
@@ -211,7 +211,7 @@ def test_build_single_returns_plain_client(monkeypatch):
 
 
 def test_build_list_returns_ensemble_in_priority_order(monkeypatch):
-    import fiwi_filmmusik.detection as det
+    import soundtrackID.detection as det
 
     monkeypatch.setattr(det, "_build_single_client", lambda name: _FakeClient(name))
     client = build_detection_client("audd,acrcloud")
