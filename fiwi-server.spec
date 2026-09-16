@@ -1,9 +1,39 @@
 # PyInstaller spec for fiwi-server
-# Run: .venv/bin/pyinstaller fiwi-server.spec
+# Run: uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
 
 import glob
+import importlib.util
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+# PyInstaller only warns about missing imports, so fail early instead.
+_REQUIRED_MODULES = [
+    "acrcloud",
+    "dotenv",
+    "fastapi",
+    "httpx",
+    "mutagen",
+    "onnxruntime",
+    "PIL",
+    "python_multipart",
+    "shazamio",
+    "truststore",
+    "uvicorn",
+]
+_missing = [m for m in _REQUIRED_MODULES if importlib.util.find_spec(m) is None]
+if _missing:
+    raise SystemExit(
+        "fiwi-server.spec: missing modules: " + ", ".join(_missing) + "\n"
+        "Build with: uv run --extra app --group build pyinstaller --noconfirm "
+        "fiwi-server.spec"
+    )
+
+# Outdated VC++/UCRT DLLs from conda (or any other PATH entry) crash the
+# bundled server, so prefer the ones from System32.
+os.environ["PATH"] = os.pathsep.join(
+    [os.path.join(os.environ["SystemRoot"], "System32")]
+    + [p for p in os.environ["PATH"].split(os.pathsep) if "conda" not in p.lower()]
+)
 
 block_cipher = None
 
@@ -138,6 +168,12 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Windows 10+ ships the UCRT itself; bundling stale copies found on PATH breaks it.
+a.binaries = [
+    b for b in a.binaries
+    if not (b[0].lower().startswith("api-ms-win-") or b[0].lower() == "ucrtbase.dll")
+]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

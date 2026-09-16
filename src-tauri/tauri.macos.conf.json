@@ -1,0 +1,5 @@
+{
+  "build": {
+    "beforeBundleCommand": "bash \"$(git rev-parse --show-toplevel)/scripts/sign-fiwi-server.sh\""
+  }
+}

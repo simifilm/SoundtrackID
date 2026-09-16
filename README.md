@@ -58,15 +58,12 @@ Requires Python 3.10+.
 git clone https://github.zhaw.ch/stmh/FIWI-Filmmusik.git
 cd FIWI-Filmmusik
 git lfs pull                          # downloads the ONNX model (~331 MB)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud]"
 ```
 
 Start the server:
 
 ```bash
-python3 -m fiwi_filmmusik
+uv run --extra app python -m fiwi_filmmusik
 ```
 
 Open [http://localhost:8000](http://localhost:8000) in your browser.
@@ -76,8 +73,7 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-pip install -e ".[hf,shazam,web]"
-FIWI_HF=1 python3 -m fiwi_filmmusik
+FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m fiwi_filmmusik
 ```
 
 ### Optional: ACRCloud identification
@@ -90,9 +86,7 @@ links too. See [docs/detection-providers.md](docs/detection-providers.md) for a
 detailed comparison of Shazam, ACRCloud and AcoustID and the test findings
 behind this recommendation.
 
-```bash
-pip install -e ".[acrcloud]"
-```
+`pyacrcloud` is a core dependency; no extra install step is needed.
 
 Create a project connected to the **Music Recognition** database at
 [console.acrcloud.com](https://console.acrcloud.com) (a plain "Audio
@@ -135,7 +129,7 @@ native ShazamKit once the profile is in place. Set
 Strips non-music audio before Shazam fingerprinting (improves accuracy on dialogue-heavy films). Requires a CUDA GPU for practical speed.
 
 ```bash
-pip install -e ".[demucs]"
+uv run --extra app --extra demucs python -m fiwi_filmmusik
 ```
 
 ---
@@ -189,15 +183,11 @@ npm install
 ### Bundle the Python server
 
 ```bash
-source .venv/bin/activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
-pyinstaller --noconfirm fiwi-server.spec
+uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
 ```
 
 This produces `dist/fiwi-server/` (~300 MB), which Tauri copies into the `.app`
-bundle. Installing the `acrcloud` extra before building ensures the native
-fingerprint extractor gets bundled; otherwise the ACRCloud provider is absent
-from the `.app`.
+bundle.
 
 ### Build the `.app` (macOS)
 
@@ -215,7 +205,7 @@ Without signing, recipients see a *"damaged and can't be opened"* Gatekeeper err
 
 For distribution outside the App Store, **notarization is mandatory** — a valid signature alone is not enough. Gatekeeper blocks any Developer-ID-signed app that Apple has not notarized. Tauri runs signing, notarization, and stapling automatically when the credentials below are present.
 
-Because the bundled `fiwi-server` (a PyInstaller directory of Python `.so`/`.dylib` files) is copied in as a Tauri **resource** — which Tauri does *not* auto-sign — it must be deep-signed with Hardened Runtime before notarization. This is handled automatically by `scripts/sign-fiwi-server.sh` (with `scripts/fiwi-server.entitlements`), wired into the build via `beforeBundleCommand` in `tauri.conf.json`. No manual step is needed; it only runs when `APPLE_SIGNING_IDENTITY` is set.
+Because the bundled `fiwi-server` (a PyInstaller directory of Python `.so`/`.dylib` files) is copied in as a Tauri **resource** — which Tauri does *not* auto-sign — it must be deep-signed with Hardened Runtime before notarization. This is handled automatically by `scripts/sign-fiwi-server.sh` (with `scripts/fiwi-server.entitlements`), wired into the build via `beforeBundleCommand` in `src-tauri/tauri.macos.conf.json`, so Windows builds skip it. No manual step is needed; it only runs when `APPLE_SIGNING_IDENTITY` is set.
 
 **Option A — Account Holder builds and distributes**
 
@@ -266,10 +256,8 @@ rustup default stable
 # Node.js (if not already installed)
 winget install OpenJS.NodeJS
 
-# Python 3.10+ with dependencies
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e ".[onnx,shazam,web,metadata,acrcloud,build]"
+# Rust on Windows uses Microsoft's C++ linker (link.exe) to build programs
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 
 # Install npm packages
 npm install
@@ -277,8 +265,7 @@ npm install
 
 **Bundle the Python server:**
 ```powershell
-.venv\Scripts\activate
-pyinstaller --noconfirm fiwi-server.spec
+uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
 ```
 
 **Build the Windows installer:**
@@ -296,8 +283,7 @@ Run the `.exe` installer. Windows SmartScreen may show a warning for unsigned bu
 ### Development mode
 
 ```bash
-source .venv/bin/activate
-python3 -m fiwi_filmmusik &          # start Python server on :8000
+uv run --extra app python -m fiwi_filmmusik &   # start Python server on :8000
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ```
 
@@ -306,6 +292,5 @@ PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ## Development (Python)
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv run pytest
 ```

@@ -8,8 +8,9 @@
 # helper executables) must therefore be signed here, inside-out, before Tauri
 # copies the directory into the .app and notarizes it.
 #
-# Wired into `tauri build` via `build.beforeBundleCommand` in tauri.conf.json,
-# so it runs automatically. Safe to run standalone too.
+# Wired into `tauri build` via `build.beforeBundleCommand` in
+# tauri.macos.conf.json (macOS only), so it runs automatically. Safe to run
+# standalone too.
 #
 # Requires APPLE_SIGNING_IDENTITY in the environment. If it is unset (a normal
 # unsigned dev build), the script no-ops so `tauri build` still works.

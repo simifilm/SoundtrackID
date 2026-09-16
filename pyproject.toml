@@ -9,6 +9,7 @@ description = "Film Music Analysis Pipeline"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
+    "pyacrcloud>=1.0",
     "pyyaml>=6.0",
     "av>=10.0",
     "scipy>=1.10",
@@ -16,9 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "ruff>=0.1",
+# Bundled desktop app
+app = [
+    "fiwi-filmmusik[onnx,shazam,web,metadata]",
 ]
 demucs = [
     "demucs>=4.0",
@@ -37,24 +38,29 @@ shazam = [
     "shazamio>=0.7",
     "truststore>=0.9",
 ]
-acrcloud = [
-    "pyacrcloud>=1.0; sys_platform != 'win32'",
-    "pyacrcloud @ git+https://github.com/acrcloud/acrcloud_sdk_python ; sys_platform == 'win32'",
-]
 web = [
     "fastapi>=0.100",
     "uvicorn>=0.23",
     "python-multipart>=0.0.6",
     "pillow>=10.0",
 ]
-build = [
-    "pyinstaller>=6.0",
-]
 metadata = [
     "httpx>=0.27",
     "mutagen>=1.47",
     "python-dotenv>=1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[tool.uv.sources]
+pyacrcloud = { git = "https://github.com/acrcloud/acrcloud_sdk_python", marker = "sys_platform == 'win32'" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fiwi_filmmusik"]

@@ -103,6 +103,15 @@ fn main() {
 
     cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
+    // The release app has no console (see windows_subsystem above), so Windows
+    // would open a separate console window for the server process.
+    #[cfg(all(target_os = "windows", not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let proc = match cmd.spawn() {
         Ok(p) => p,
         Err(e) => {
@@ -146,8 +155,11 @@ fn main() {
                 // Open external links (Spotify, Apple Music, YouTube) in the system browser
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("open").arg(url.as_str()).spawn();
+                // Not `cmd /c start`: cmd cuts the URL at `&` and flashes a console window.
                 #[cfg(target_os = "windows")]
-                let _ = std::process::Command::new("cmd").args(["/c", "start", "", url.as_str()]).spawn();
+                let _ = std::process::Command::new("rundll32")
+                    .args(["url.dll,FileProtocolHandler", url.as_str()])
+                    .spawn();
                 false
             })
             .build()?;
