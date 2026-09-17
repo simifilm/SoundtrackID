@@ -155,7 +155,8 @@ class OutputWriter:
                 ))
 
         results_output = ResultsOutput(
-            source=str(video_path),
+            source=video_path.name,
+            video_name=video_name,
             segments=segment_outputs,
             identifications=identification_outputs,
             waveform=waveform,

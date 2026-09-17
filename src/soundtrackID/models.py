@@ -95,6 +95,7 @@ class ResultsOutput:
 
     source: str
     segments: list[SegmentOutput]
+    video_name: str | None = None   # run folder name, used in URLs
     identifications: list[IdentificationOutput] = field(default_factory=list)
     ID: str | None = None
     fiwi_id: str | None = None
@@ -139,6 +140,7 @@ class ResultsOutput:
             "ID": self.ID,
             "fiwi_id": self.fiwi_id,
             "source": self.source,
+            "video_name": self.video_name,
             "film": self.film,
             "cues": self._build_cues(),
             "waveform": self.waveform,

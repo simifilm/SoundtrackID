@@ -2588,7 +2588,7 @@ function showResults(results) {
   resultsView.style.display = 'block';
 
   const cues = results.cues || [];
-  const videoName = (results.source || '').split('/').pop().replace(/\.[^.]+$/, '');
+  const videoName = results.video_name;
   currentVideoName = videoName;
 
   setupVideo(results, videoName);
@@ -2702,7 +2702,7 @@ resetBtn.addEventListener('click', () => {
 
 downloadBtn.addEventListener('click', () => {
   if (!currentResults) return;
-  const stem = (currentResults.source || 'results').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  const stem = currentResults.video_name || 'results';
   triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
   if (document.getElementById('opt-csv').checked) {
     triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
