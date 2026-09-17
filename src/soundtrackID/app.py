@@ -453,6 +453,8 @@ async def _run_pipeline_sse(
             pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             result_dict = results.to_dict()
+            # Saved so /resume continues with the same providers.
+            result_dict["providers"] = [p.strip() for p in api.split(",") if p.strip()]
 
             # Temporal re-rank: prefer a period-plausible candidate over an
             # anachronistic top hit, now that the film year is known.

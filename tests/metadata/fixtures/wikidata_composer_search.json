@@ -4,6 +4,7 @@
       {
         "workLabel": {"value": "Symphony No. 9"},
         "composerLabel": {"value": "Ludwig van Beethoven"},
+        "birth": {"value": "1770-12-17T00:00:00Z"},
         "death": {"value": "1827-03-26T00:00:00Z"}
       }
     ]

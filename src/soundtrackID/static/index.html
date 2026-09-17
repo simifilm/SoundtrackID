@@ -321,6 +321,7 @@
   .provider-checks input { margin: 0; cursor: pointer; accent-color: #7c3aed; }
   input[type="checkbox"] { accent-color: #7c3aed; }
   .provider-hint { color: #9ca3af; font-size: 0.72rem; margin-top: 0.3rem; }
+  .provider-warning { color: #b45309; font-size: 0.72rem; }
 
   /* API keys settings */
   .api-keys { border-top: 1px solid #ede9fe; padding: 0.75rem 1.25rem 1rem; }
@@ -397,7 +398,7 @@
   }
   .author-name { font-size: 0.85rem; font-weight: 500; color: #4c1d95; }
   .author-role { font-size: 0.72rem; color: #a09cb8; }
-  .author-death {
+  .author-birth, .author-death {
     font-size: 0.8rem; color: #6b7280; font-variant-numeric: tabular-nums;
   }
   .author-clock .author-death { color: #6d28d9; font-weight: 600; }
@@ -1041,11 +1042,12 @@
       <div class="setting-group">
         <label>Detection providers</label>
         <div id="opt-api" class="provider-checks">
-          <label><input type="checkbox" class="opt-provider" value="acrcloud" checked> ACRCloud</label>
+          <label><input type="checkbox" class="opt-provider" value="acrcloud"> ACRCloud</label>
           <label><input type="checkbox" class="opt-provider" value="shazam" checked> Shazam</label>
-          <label><input type="checkbox" class="opt-provider" value="audd" checked> AudD</label>
+          <label><input type="checkbox" class="opt-provider" value="audd"> AudD</label>
         </div>
         <small class="provider-hint">2+ selected → ensemble (majority vote)</small>
+        <small id="provider-key-warning" class="provider-warning" hidden></small>
       </div>
 
       <div class="setting-group">
@@ -1431,6 +1433,18 @@ document.getElementById('fc-cancel').addEventListener('click', () => {
 
 document.getElementById('fc-start').addEventListener('click', () => {
   if (!pendingStagingId) { fcStatus.textContent = 'File not ready yet. Please wait a moment.'; return; }
+  // Check before closing the dialog, so the user can fix settings and retry.
+  if (selectedProviders().length === 0) {
+    alert('Select at least one detection provider in Settings.');
+    return;
+  }
+  const missing = providersMissingKeys();
+  if (missing.length) {
+    alert(`API keys missing for ${missing.join(' and ')}. Add them under Settings → API keys, or unselect the provider.`);
+    document.getElementById('settings-panel').open = true;
+    document.getElementById('api-keys').open = true;
+    return;
+  }
   filmConfirm.style.display = 'none';
   // Merge the edited fields over the full retrieved record so nothing extra
   // (e.g. director_death_year) is lost.
@@ -1740,10 +1754,6 @@ function selectedProviders() {
 }
 
 function startAnalysis(stagingId, film) {
-  if (selectedProviders().length === 0) {
-    alert('Select at least one detection provider in Settings.');
-    return;
-  }
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   setupVideo(null, null);
@@ -2036,7 +2046,7 @@ function triggerDownload(content, filename, type) {
 function buildCSV(results) {
   const header = ['segment_id','start','duration','conditioning','confidence','provider','agreement','title','artist','album','original_year','release_year','anachronistic','composer','authors','latest_author_death_year','public_domain'];
   const pdStr = pd => pd === true ? 'yes' : pd === false ? 'no' : 'unknown';
-  const authorsStr = enr => (enr.authors || []).map(a => `${a.name} [${(a.roles || []).join('/')}] d.${a.death_year ?? '?'}`).join('; ');
+  const authorsStr = enr => (enr.authors || []).map(a => `${a.name} [${(a.roles || []).join('/')}] b.${a.birth_year ?? '?'} d.${a.death_year ?? '?'}`).join('; ');
   const rows = (results.cues || []).map(cue => {
     const enr = cue.enrichment || {};
     return [
@@ -2208,6 +2218,10 @@ function copyrightSentence(enr) {
     const last = (enr.authors || []).find(a => a.death_year === yr);
     return `In copyright until ${yr + 71}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
   }
+  if (enr.pd_presumption === true)
+    return "The presumption rule applies, under which it can be assumed with reasonable certainty that the author has been dead for at least 70 years.";
+  if (enr.pd_presumption === false)
+    return "The presumption rule can't be applied, because it can't be assumed with reasonable certainty that the author has been dead for at least 70 years.";
   if ((enr.authors || []).length || enr.composer)
     return `Undetermined. A contributing author’s death year is missing, or they are still living.`;
   return '';
@@ -2223,11 +2237,13 @@ function detailPanelHTML(cue) {
   if (authors.length) {
     const lines = authors.map(a => {
       const roles = (a.roles || []).map(r => ROLE_LABELS[r] || r).join(' · ');
+      const born = a.birth_year ? `b. ${a.birth_year}` : 'birth unknown';
       const dead = a.death_year ? `d. ${a.death_year}` : 'death unknown';
       const clock = enr.latest_author_death_year && a.death_year === enr.latest_author_death_year;
       return `<div class="author-line${clock ? ' author-clock' : ''}">`
            + `<span class="author-name">${fmt(a.name)}</span>`
            + `<span class="author-role">${roles}</span>`
+           + `<span class="author-birth">${born}</span>`
            + `<span class="author-death">${dead}</span></div>`;
     }).join('');
     sections.push(`<div class="detail-section detail-authors"><div class="detail-label">Authorship</div>${lines}</div>`);
@@ -2500,16 +2516,42 @@ document.getElementById('album-header').addEventListener('click', () => {
 });
 
 // ── API keys settings ─────────────────────────────────────────────────────
+// Key fields each provider needs (Shazam needs none).
+const PROVIDER_KEYS = {
+  acrcloud: ['acrcloud_host', 'acrcloud_access_key', 'acrcloud_access_secret'],
+  audd: ['audd_api_token'],
+};
+let apiKeyState = null;  // last /settings response
+
+// Labels of providers with a missing key, e.g. ['ACRCloud'].
+function providersMissingKeys(providers = selectedProviders()) {
+  if (!apiKeyState) return [];
+  return providers
+    .filter(p => (PROVIDER_KEYS[p] || []).some(k => !apiKeyState[k]?.configured))
+    .map(p => PROVIDER_LABELS[p]);
+}
+
+function updateProviderKeyWarning() {
+  const missing = providersMissingKeys();
+  const el = document.getElementById('provider-key-warning');
+  el.hidden = missing.length === 0;
+  el.textContent = `API keys missing for ${missing.join(' and ')}. Add them under API keys below.`;
+}
+document.querySelectorAll('.opt-provider').forEach(cb =>
+  cb.addEventListener('change', updateProviderKeyWarning));
+
 async function loadApiKeyState() {
   try {
     const r = await fetch('/settings');
     if (!r.ok) return;
     const state = await r.json();
+    apiKeyState = state;
     document.querySelectorAll('#api-keys input[data-key]').forEach(inp => {
       const s = state[inp.dataset.key];
       inp.value = '';
       inp.placeholder = (s && s.configured) ? s.preview : 'not set';
     });
+    updateProviderKeyWarning();
   } catch (_) { /* offline is fine */ }
 }
 loadApiKeyState();
@@ -2590,8 +2632,16 @@ function resumeDetection() {
   if (!currentVideoName) return;
   const btn = document.getElementById('resume-btn');
   const text = document.getElementById('ratelimit-text');
+  // Continue with the run's own providers; older runs didn't save them.
+  const providers = currentResults?.providers || selectedProviders();
+  const missing = providersMissingKeys(providers);
+  if (missing.length) {
+    alert(`API keys missing for ${missing.join(' and ')}. Add them under Settings → API keys.`);
+    document.getElementById('settings-panel').open = true;
+    document.getElementById('api-keys').open = true;
+    return;
+  }
   btn.disabled = true;
-  const providers = selectedProviders();
   fetch(`/resume/${encodeURIComponent(currentVideoName)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api: providers.join(',') || 'acrcloud' }),
