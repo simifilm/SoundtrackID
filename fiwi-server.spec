@@ -81,6 +81,7 @@ a = Analysis(
     datas=[
         ("src/soundtrackID/static", "static"),
         ("assets/ast_model", "ast_model"),
+        ("LICENSE", "."),
     ] + shazamio_datas + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
     hiddenimports=[
         # soundtrackID modules
