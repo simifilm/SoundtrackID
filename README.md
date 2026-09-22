@@ -372,3 +372,10 @@ FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
 The server reads `.env` at startup. For the bundled `.app`, the spec file bundles `.env` into the application so the production build picks up the same credentials.
 
 ---
+
+## License
+
+Copyright 2026 University of Zurich. Licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): free to use, modify and share for any
+noncommercial purpose, including research and teaching. Commercial use requires a
+separate license.

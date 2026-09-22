@@ -1,6 +1,7 @@
 {
   "name": "soundtrackid",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

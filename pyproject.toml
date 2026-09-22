@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "soundtrackID"
 version = "0.1.0"
 description = "Film Music Analysis Pipeline"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
