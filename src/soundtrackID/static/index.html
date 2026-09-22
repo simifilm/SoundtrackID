@@ -2303,15 +2303,12 @@ function buildTrackRowHTML(group) {
   const cover = cue.photo_url ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">` : '';
   const uncertain = enr.composer_match && enr.composer_match !== 'isrc';
   const cls = uncertain ? ' class="composer-uncertain"' : '';
-  // Date column: show the work's real original year (Wikidata) when known. Fall
-  // back to the recording/release year only when it's plausible; drop it when it
-  // postdates the film (an obviously-wrong reissue date, not the original).
-  const fy = currentFilmYear();
-  const hasOrig = enr.original_year != null;
+  // Date column: the work's real original year (Wikidata) when known, else the
+  // provider's release year in grey - a reissue date, so only a hint.
   let dateYear = '', dateCls = '';
-  if (hasOrig) {
+  if (enr.original_year != null) {
     dateYear = enr.original_year;
-  } else if (cue.release_year != null && !(fy && cue.release_year > fy + ANACHRONISM_TOLERANCE)) {
+  } else if (cue.release_year != null) {
     dateYear = cue.release_year;
     dateCls = ' style="color:#9ca3af"';
   }

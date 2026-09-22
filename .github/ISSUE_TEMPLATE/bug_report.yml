@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in Soundtrack ID Analyzer doesn't work as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What went wrong?
+      description: What happened, and what did you expect instead?
+      placeholder: Your problem description
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: What do we have to do to see it happen?
+      placeholder: Your steps, one per line
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: You'll find it in the name of the file you downloaded.
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How are you running it?
+      default: 0
+      options:
+        - Installed app
+        - From source (browser)
+        - From source (command line)
+    validations:
+      required: true
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Screenshots, files, anything else
+      description: >-
+        Anything you can show us helps a lot — even a quick photo of the screen.
+        Drag files straight into this box.
+      placeholder: Your screenshots or files
+    validations:
+      required: false
