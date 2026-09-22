@@ -126,7 +126,7 @@ AcoustID and records the tests behind this recommendation.
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.zhaw.ch/stmh/SoundtrackID.git
+git clone https://github.com/simifilm/SoundtrackID.git
 cd SoundtrackID
 git lfs pull                          # downloads the ONNX model (~331 MB)
 ```
