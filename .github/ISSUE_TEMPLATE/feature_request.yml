@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a new feature or an improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What should it do?
+      description: What would you like to be able to do, and why?
+      placeholder: Your idea
+    validations:
+      required: true
+
+  - type: textarea
+    id: ui
+    attributes:
+      label: How could it look in the app? (optional)
+      description: >-
+        Only if it needs something you can see. A sketch or screenshot says more than a
+        paragraph — drag it into this box.
+      placeholder: Your idea for the look
+    validations:
+      required: false
+
+  - type: input
+    id: needed-by
+    attributes:
+      label: Preferred date (optional)
+      placeholder: e.g. 30 November 2026
+    validations:
+      required: false
