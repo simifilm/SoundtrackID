@@ -166,9 +166,11 @@ class MusicLookup:
         authors: list[dict[str, Any]] = []
         for entry in merged.values():
             birth = death = None
+            wikidata_url = None
             aid = entry["artist_id"]
             if aid:
                 artist = self._mb_artist(aid) or {}
+                wikidata_url = _wikidata_url(artist)
                 kind = artist.get("type")
                 # Life dates only for people: a band's begin/end are founding and
                 # break-up, and copyright lies with its individual members.
@@ -187,6 +189,7 @@ class MusicLookup:
                 "roles": entry["roles"],
                 "birth_year": birth,
                 "death_year": death,
+                "wikidata_url": wikidata_url,
             })
         return authors, used_wikidata
 
@@ -254,7 +257,7 @@ class MusicLookup:
         cached = self._cache_artist.get(artist_id)
         if cached is not None:
             return cached or None
-        data = self._mb_get(f"/artist/{artist_id}")
+        data = self._mb_get(f"/artist/{artist_id}", params={"inc": "url-rels"})
         self._cache_artist[artist_id] = data or {}
         return data
 
@@ -440,6 +443,18 @@ def _presumption_applies(
         return None
     latest_birth = max(a["birth_year"] for a in unknown)
     return (current_year - latest_birth) > max_lifespan + term
+
+
+def _wikidata_url(artist: dict) -> str | None:
+    """The artist's Wikidata page from MusicBrainz's url-rels - the same
+    cross-reference Wikidata mirrors as P434, so it names the person whose life
+    dates we read there."""
+    for rel in artist.get("relations") or []:
+        if rel.get("type") == "wikidata":
+            url = (rel.get("url") or {}).get("resource")
+            if url:
+                return url
+    return None
 
 
 def _artist_birth(artist: dict) -> str | None:

@@ -397,6 +397,8 @@
     display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.15rem 0.6rem; padding: 0.2rem 0;
   }
   .author-name { font-size: 0.85rem; font-weight: 500; color: #4c1d95; }
+  .author-name a { color: #7c3aed; text-decoration: none; }
+  .author-name a:hover { text-decoration: underline; }
   .author-role { font-size: 0.72rem; color: #a09cb8; }
   .author-birth, .author-death {
     font-size: 0.8rem; color: #6b7280; font-variant-numeric: tabular-nums;
@@ -2112,7 +2114,7 @@ function platformLinkIcons(cue) {
   ].filter(l => l.url);
   return links.map(({ url, platform }) => {
     const { color, title, path } = PLATFORM_ICONS[platform];
-    return `<a class="track-link" href="${url}" onclick="event.preventDefault();location.href=this.href;" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
+    return `<a class="track-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
   }).join('');
 }
 
@@ -2133,9 +2135,9 @@ function renderFilmHeader(film) {
   const yearPart = film.year ? ` (${film.year})` : '';
   // The director's death year is not shown - PD status depends on the composer, not the director.
   const parts = [];
-  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" onclick="event.preventDefault();location.href=this.href;">${fmt(film.director)}</a>`);
-  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" onclick="event.preventDefault();location.href=this.href;">${film.imdb_id}</a>`);
-  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" onclick="event.preventDefault();location.href=this.href;">${film.tmdb_id}</a>`);
+  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" target="_blank" rel="noopener noreferrer">${fmt(film.director)}</a>`);
+  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" target="_blank" rel="noopener noreferrer">${film.imdb_id}</a>`);
+  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" target="_blank" rel="noopener noreferrer">${film.tmdb_id}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
     <div class="film-title">${fmt(film.title || '')}${yearPart}</div>
@@ -2240,8 +2242,12 @@ function detailPanelHTML(cue) {
       const born = a.birth_year ? `b. ${a.birth_year}` : 'birth unknown';
       const dead = a.death_year ? `d. ${a.death_year}` : 'death unknown';
       const clock = enr.latest_author_death_year && a.death_year === enr.latest_author_death_year;
+      // Linked to their Wikidata entity when MusicBrainz knows one; plain text otherwise.
+      const name = a.wikidata_url
+        ? `<a href="${a.wikidata_url}" target="_blank" rel="noopener noreferrer" title="View on Wikidata">${fmt(a.name)}</a>`
+        : fmt(a.name);
       return `<div class="author-line${clock ? ' author-clock' : ''}">`
-           + `<span class="author-name">${fmt(a.name)}</span>`
+           + `<span class="author-name">${name}</span>`
            + `<span class="author-role">${roles}</span>`
            + `<span class="author-birth">${born}</span>`
            + `<span class="author-death">${dead}</span></div>`;
