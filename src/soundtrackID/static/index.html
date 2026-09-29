@@ -397,6 +397,8 @@
     display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.15rem 0.6rem; padding: 0.2rem 0;
   }
   .author-name { font-size: 0.85rem; font-weight: 500; color: #4c1d95; }
+  .author-name a { color: #7c3aed; text-decoration: none; }
+  .author-name a:hover { text-decoration: underline; }
   .author-role { font-size: 0.72rem; color: #a09cb8; }
   .author-birth, .author-death {
     font-size: 0.8rem; color: #6b7280; font-variant-numeric: tabular-nums;
@@ -2112,7 +2114,7 @@ function platformLinkIcons(cue) {
   ].filter(l => l.url);
   return links.map(({ url, platform }) => {
     const { color, title, path } = PLATFORM_ICONS[platform];
-    return `<a class="track-link" href="${url}" onclick="event.preventDefault();location.href=this.href;" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
+    return `<a class="track-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
   }).join('');
 }
 
@@ -2133,9 +2135,9 @@ function renderFilmHeader(film) {
   const yearPart = film.year ? ` (${film.year})` : '';
   // The director's death year is not shown - PD status depends on the composer, not the director.
   const parts = [];
-  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" onclick="event.preventDefault();location.href=this.href;">${fmt(film.director)}</a>`);
-  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" onclick="event.preventDefault();location.href=this.href;">${film.imdb_id}</a>`);
-  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" onclick="event.preventDefault();location.href=this.href;">${film.tmdb_id}</a>`);
+  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" target="_blank" rel="noopener noreferrer">${fmt(film.director)}</a>`);
+  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" target="_blank" rel="noopener noreferrer">${film.imdb_id}</a>`);
+  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" target="_blank" rel="noopener noreferrer">${film.tmdb_id}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
     <div class="film-title">${fmt(film.title || '')}${yearPart}</div>
@@ -2216,12 +2218,16 @@ function copyrightSentence(enr) {
     return `Public domain${yr ? ` since ${yr + 71}` : ''}. Every author has been deceased at least 70 years.`;
   if (enr.public_domain === false) {
     const last = (enr.authors || []).find(a => a.death_year === yr);
-    return `In copyright until ${yr + 71}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
+    return `In copyright ${enr.authors_partial ? `at least until ${yr + 71}` : `until ${yr + 71}`}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
   }
   if (enr.pd_presumption === true)
     return "The presumption rule applies, under which it can be assumed with reasonable certainty that the author has been dead for at least 70 years.";
   if (enr.pd_presumption === false)
     return "The presumption rule can't be applied, because it can't be assumed with reasonable certainty that the author has been dead for at least 70 years.";
+  // Everyone we found is accounted for, but the set itself may be short a name -
+  // so the gap is the missing people, not the missing dates.
+  if (enr.authors_partial && (enr.authors || []).length && (enr.authors || []).every(a => a.death_year))
+    return `Undetermined. Only the composer could be established for this work — an uncredited lyricist or co-writer may still hold rights.`;
   if ((enr.authors || []).length || enr.composer)
     return `Undetermined. A contributing author’s death year is missing, or they are still living.`;
   return '';
@@ -2240,8 +2246,12 @@ function detailPanelHTML(cue) {
       const born = a.birth_year ? `b. ${a.birth_year}` : 'birth unknown';
       const dead = a.death_year ? `d. ${a.death_year}` : 'death unknown';
       const clock = enr.latest_author_death_year && a.death_year === enr.latest_author_death_year;
+      // Linked to their Wikidata entity when MusicBrainz knows one; plain text otherwise.
+      const name = a.wikidata_url
+        ? `<a href="${a.wikidata_url}" target="_blank" rel="noopener noreferrer" title="View on Wikidata">${fmt(a.name)}</a>`
+        : fmt(a.name);
       return `<div class="author-line${clock ? ' author-clock' : ''}">`
-           + `<span class="author-name">${fmt(a.name)}</span>`
+           + `<span class="author-name">${name}</span>`
            + `<span class="author-role">${roles}</span>`
            + `<span class="author-birth">${born}</span>`
            + `<span class="author-death">${dead}</span></div>`;
@@ -2343,13 +2353,34 @@ function trackFieldValue(cue, field) {
 }
 
 // Write an edited field to every cue of the group, then persist + re-render.
+// A hand-edited composer names a different person than the one that was looked
+// up, so their life dates - and every verdict derived from them - no longer apply
+// and are cleared rather than shown against the new name. Co-authors found earlier
+// (a lyricist, say) are kept: the edit says nothing about them. The author set is
+// partial from here on, so the rights verdict stays "Unverified" until the cue is
+// enriched again.
+function setComposerOverride(enr, name) {
+  const others = (enr.authors || []).filter(a => !(a.roles || []).includes('composer'));
+  enr.authors = name
+    ? [{ name, roles: ['composer'], birth_year: null, death_year: null, wikidata_url: null }, ...others]
+    : others;
+  enr.composer = name;
+  enr.composer_birth_year = null;
+  enr.composer_death_year = null;
+  enr.authors_partial = true;
+  enr.authors_complete = false;
+  enr.latest_author_death_year = null;
+  enr.public_domain = null;
+  enr.pd_presumption = null;
+}
+
 function applyTrackEdit(group, field, raw) {
   const val = String(raw).trim();
   group.cues.forEach(cue => {
     if (field === 'title') cue.title = val || null;
     else if (field === 'artist') cue.artist = val || null;
     else if (field === 'album') cue.album = val || null;
-    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; cue.enrichment.composer = val || null; }
+    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; setComposerOverride(cue.enrichment, val || null); }
     else if (field === 'date') { cue.enrichment = cue.enrichment || {}; cue.enrichment.original_year = val ? (parseInt(val, 10) || null) : null; }
   });
   persistAndRerender();
