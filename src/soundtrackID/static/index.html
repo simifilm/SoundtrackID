@@ -2218,12 +2218,16 @@ function copyrightSentence(enr) {
     return `Public domain${yr ? ` since ${yr + 71}` : ''}. Every author has been deceased at least 70 years.`;
   if (enr.public_domain === false) {
     const last = (enr.authors || []).find(a => a.death_year === yr);
-    return `In copyright until ${yr + 71}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
+    return `In copyright ${enr.authors_partial ? `at least until ${yr + 71}` : `until ${yr + 71}`}` + (last ? `, 70 years after the last surviving author, ${fmt(last.name)} (d. ${yr}).` : '.');
   }
   if (enr.pd_presumption === true)
     return "The presumption rule applies, under which it can be assumed with reasonable certainty that the author has been dead for at least 70 years.";
   if (enr.pd_presumption === false)
     return "The presumption rule can't be applied, because it can't be assumed with reasonable certainty that the author has been dead for at least 70 years.";
+  // Everyone we found is accounted for, but the set itself may be short a name -
+  // so the gap is the missing people, not the missing dates.
+  if (enr.authors_partial && (enr.authors || []).length && (enr.authors || []).every(a => a.death_year))
+    return `Undetermined. Only the composer could be established for this work — an uncredited lyricist or co-writer may still hold rights.`;
   if ((enr.authors || []).length || enr.composer)
     return `Undetermined. A contributing author’s death year is missing, or they are still living.`;
   return '';
@@ -2349,13 +2353,34 @@ function trackFieldValue(cue, field) {
 }
 
 // Write an edited field to every cue of the group, then persist + re-render.
+// A hand-edited composer names a different person than the one that was looked
+// up, so their life dates - and every verdict derived from them - no longer apply
+// and are cleared rather than shown against the new name. Co-authors found earlier
+// (a lyricist, say) are kept: the edit says nothing about them. The author set is
+// partial from here on, so the rights verdict stays "Unverified" until the cue is
+// enriched again.
+function setComposerOverride(enr, name) {
+  const others = (enr.authors || []).filter(a => !(a.roles || []).includes('composer'));
+  enr.authors = name
+    ? [{ name, roles: ['composer'], birth_year: null, death_year: null, wikidata_url: null }, ...others]
+    : others;
+  enr.composer = name;
+  enr.composer_birth_year = null;
+  enr.composer_death_year = null;
+  enr.authors_partial = true;
+  enr.authors_complete = false;
+  enr.latest_author_death_year = null;
+  enr.public_domain = null;
+  enr.pd_presumption = null;
+}
+
 function applyTrackEdit(group, field, raw) {
   const val = String(raw).trim();
   group.cues.forEach(cue => {
     if (field === 'title') cue.title = val || null;
     else if (field === 'artist') cue.artist = val || null;
     else if (field === 'album') cue.album = val || null;
-    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; cue.enrichment.composer = val || null; }
+    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; setComposerOverride(cue.enrichment, val || null); }
     else if (field === 'date') { cue.enrichment = cue.enrichment || {}; cue.enrichment.original_year = val ? (parseInt(val, 10) || null) : null; }
   });
   persistAndRerender();
