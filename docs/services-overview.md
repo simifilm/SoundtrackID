@@ -10,8 +10,8 @@ Handover companion to `detection-providers.md` and `metadata-enrichment.md`.
 |---------|---------|-----------------|----------|--------------------------|
 | ACRCloud | Primary music identification. Returns a ranked candidate list used for majority voting and temporal reranking. | ACRCloud project (host + access key/secret) | `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET` | Default provider. Rate-limited (error 3xxx); the pipeline saves partial results and can resume. |
 | AudD | Second identification provider; participates in ensemble voting. | AudD API token | `AUDD_API_TOKEN` | Reports a constant confidence of 1.0, so ensemble tie-breaks by provider priority, not confidence. Rate limit codes 900/901 trigger resume. |
-| Shazam (shazamio) | Third identification provider (ensemble). Unofficial Shazam client. | None (no key) | - | Interim path. Used because native ShazamKit is currently unshippable (see below). |
-| Shazam (native ShazamKit) | Official Apple music matching via a bundled Swift helper. | Apple entitlement `com.apple.developer.shazamkit` in the app's provisioning profile | - | Excluded by default: Apple omits the entitlement from Developer ID profiles (bug FB22582333), so the entitled helper is killed at runtime. Auto-upgrades once Apple fixes it (`SHAZAMKIT_ENABLE=1`). |
+| Shazam (shazamio) | Third identification provider (ensemble). Unofficial Shazam client. | None (no key) | - | Fallback when native ShazamKit is unavailable (see below). |
+| Shazam (native ShazamKit) | Official Apple music matching via a bundled Swift helper. | ShazamKit App Service on the helper's App ID (`ch.uzh.soundtrackid.shazamkit-match`) + its Developer ID profile embedded in the helper bundle | - | Active in signed macOS builds whose signing certificate is listed in the helper profile (see BUILD.md "Note on ShazamKit"); otherwise, and on Windows, falls back to shazamio. |
 
 ## Metadata enrichment
 

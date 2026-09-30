@@ -16,20 +16,30 @@ from soundtrackID.models import DetectionResult, MusicSegment
 def _find_shazamkit_helper() -> str | None:
     """Locate the compiled ShazamKit helper binary (macOS only).
 
-    Order: SHAZAMKIT_HELPER env override → next to the bundled binary (frozen
-    app) → the repo's shazamkit/ dir (dev build)."""
+    The helper ships as a minimal .app bundle (shazamkit-match.app) so it can
+    carry its own provisioning profile, which ShazamKit requires; the bare
+    binary is only a fallback (it always gets ShazamKit error 202).
+
+    Order: SHAZAMKIT_HELPER env override → bundle, then bare binary, in
+    sys._MEIPASS / next to the bundled binary (frozen app) or in the repo's
+    shazamkit/ dir (dev build)."""
     import sys
     from pathlib import Path
 
+    in_bundle = Path("shazamkit-match.app") / "Contents" / "MacOS" / "shazamkit-match"
     override = os.environ.get("SHAZAMKIT_HELPER")
     candidates = [Path(override)] if override else []
     if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).parent / "shazamkit-match")
+        bases = []
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
-            candidates.append(Path(meipass) / "shazamkit-match")
+            bases.append(Path(meipass))
+        bases.append(Path(sys.executable).parent)
+        candidates += [b / in_bundle for b in bases] + [b / "shazamkit-match" for b in bases]
     else:
-        candidates.append(Path(__file__).resolve().parents[2] / "shazamkit" / "shazamkit-match")
+        shazamkit_dir = Path(__file__).resolve().parents[2] / "shazamkit"
+        candidates.append(shazamkit_dir / "build" / in_bundle)
+        candidates.append(shazamkit_dir / "shazamkit-match")
     for c in candidates:
         if c.is_file() and os.access(c, os.X_OK):
             return str(c)
@@ -90,13 +100,12 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
     """Music detection via Shazam.
 
     Prefers Apple's official **ShazamKit** through a small native Swift helper
-    (``shazamkit-match``). ShazamKit requires the ``com.apple.developer.shazamkit``
-    entitlement, honored only when the helper runs inside an app whose provisioning
-    profile grants it — so a bare dev build returns error 202. Until that is in
-    place (or off macOS / no helper), this client **falls back to shazamio**, so
-    the ``shazam`` provider keeps working today and silently upgrades to native
-    ShazamKit once the profile is present. A genuine ShazamKit "no match" is
-    trusted and does not fall back.
+    (``shazamkit-match.app``). On macOS, ShazamKit only authorizes a caller that
+    carries an embedded provisioning profile for an App ID with the ShazamKit App
+    Service, so the helper ships as its own small .app with its own profile; an
+    unauthorized helper (e.g. an unsigned dev build) gets error 202. On 202 or any
+    other error (or off macOS / no helper), this client **falls back to
+    shazamio**. A genuine ShazamKit "no match" is trusted and does not fall back.
     """
 
     _warned = False
