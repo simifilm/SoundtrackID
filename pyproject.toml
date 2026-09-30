@@ -37,6 +37,7 @@ onnx = [
 # Shazam prefers Apple's native ShazamKit (shazamkit/ Swift helper); shazamio is
 # the fallback used until the ShazamKit entitlement/profile is in place.
 shazam = [
+    "audioop-lts>=0.2.2 ; python_full_version >= '3.13'",
     "shazamio>=0.7",
     "truststore>=0.9",
 ]

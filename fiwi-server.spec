@@ -65,14 +65,18 @@ acrcloud_datas, acrcloud_bins, acrcloud_hidden = collect_all("acrcloud")
 # Bundle .env if present so the .app has TMDb credentials
 _env_extra = [(".env", ".")] if os.path.exists(".env") else []
 
-# The native ShazamKit helper (built by shazamkit/build.sh). Placed next to the
-# server binary so detection._find_shazamkit_helper() finds it. sign-fiwi-server.sh
-# re-signs it with the ShazamKit entitlement before bundling.
-_shazamkit_extra = (
-    [("shazamkit/shazamkit-match", ".")]
-    if os.path.exists("shazamkit/shazamkit-match")
-    else []
-)
+# The native ShazamKit helper. Rebuilt on every macOS build (so it is never
+# missing or stale) and placed next to the server binary so
+# detection._find_shazamkit_helper() finds it. sign-fiwi-server.sh re-signs it
+# with the ShazamKit entitlement only when SHAZAMKIT_ENABLE=1.
+import subprocess
+import sys
+
+if sys.platform == "darwin":
+    subprocess.run(["bash", "shazamkit/build.sh"], check=True)
+    _shazamkit_extra = [("shazamkit/shazamkit-match", ".")]
+else:
+    _shazamkit_extra = []
 
 a = Analysis(
     ["src/soundtrackID/__main__.py"],

@@ -39,15 +39,19 @@ npm run tauri dev
 The release wraps a PyInstaller onedir of the FastAPI server inside the Tauri
 app bundle.
 
-### 3.1 Compile the native ShazamKit helper (optional)
+### 3.1 Native ShazamKit helper (built automatically)
+
+`fiwi-server.spec` runs `bash shazamkit/build.sh` on every macOS build and
+bundles the resulting `shazamkit/shazamkit-match` next to the server binary, so
+it is never missing or stale (the binary is gitignored). A compile failure
+aborts the build. To build it on its own:
 
 ```bash
 bash shazamkit/build.sh   # -> shazamkit/shazamkit-match
 ```
 
-The helper is bundled by the PyInstaller spec. Native ShazamKit matching is
-currently disabled at signing time (see note below); the app falls back to the
-`shazamio` client, so this step is not required for a working build.
+Native ShazamKit matching is currently disabled at signing time (see note
+below); the app falls back to the `shazamio` client.
 
 ### 3.2 Bundle the Python server
 
