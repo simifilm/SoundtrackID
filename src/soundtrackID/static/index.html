@@ -65,6 +65,23 @@
     margin: 0 auto;
   }
 
+  /* Footer: data-source credits (TMDB attribution is required by its API terms) */
+  footer {
+    max-width: 1200px;
+    margin: 2.5rem auto 0;
+    padding-top: 1rem;
+    border-top: 1px solid #ddd6fe;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: #a09cb8;
+    line-height: 1.4;
+  }
+  footer img { height: 12px; display: block; }
+  footer a { color: inherit; }
+
   /* Drop Zone */
   #drop-zone {
     border: 2px dashed #ddd6fe;
@@ -1270,6 +1287,13 @@
 
 
 </div>
+
+<footer>
+  <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer"><img src="/static/tmdb-logo.svg" alt="TMDB"></a>
+  <span>This product uses the TMDB API but is not endorsed or certified by TMDB.
+    Additional data from <a href="https://musicbrainz.org/" target="_blank" rel="noopener noreferrer">MusicBrainz</a>
+    and <a href="https://www.wikidata.org/" target="_blank" rel="noopener noreferrer">Wikidata</a>.</span>
+</footer>
 
 <script>
 const dropZone        = document.getElementById('drop-zone');
