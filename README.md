@@ -375,7 +375,7 @@ The server reads `.env` at startup. For the bundled `.app`, the spec file bundle
 
 ## License
 
-Copyright 2026 University of Zurich. Licensed under the
+Copyright 2026 University of Zurich and Zurich University of Applied Sciences. Licensed under the
 [PolyForm Noncommercial License 1.0.0](LICENSE): free to use, modify and share for any
 noncommercial purpose, including research and teaching. Commercial use requires a
 separate license.
@@ -383,6 +383,19 @@ separate license.
 ---
 
 ## Credits
+
+A collaborative project between the [University of Zurich](https://www.uzh.ch) and the
+[Zurich University of Applied Sciences](https://www.zhaw.ch).
+
+### Contributors
+
+| Role | Name |
+|---|---|
+| Concept | Simon Spiegel |
+| Software Development | Linus Carl Stuhlmann<br>Adrian Thür |
+| Academic Supervision | Ahmed Abdulkadir |
+
+### Data sources
 
 <a href="https://www.themoviedb.org/"><img src="src/soundtrackID/static/tmdb-logo.svg" alt="TMDB" height="14"></a>
 
