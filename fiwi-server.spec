@@ -65,18 +65,20 @@ acrcloud_datas, acrcloud_bins, acrcloud_hidden = collect_all("acrcloud")
 # Bundle .env if present so the .app has TMDb credentials
 _env_extra = [(".env", ".")] if os.path.exists(".env") else []
 
-# The native ShazamKit helper. Rebuilt on every macOS build (so it is never
-# missing or stale) and placed next to the server binary so
-# detection._find_shazamkit_helper() finds it. sign-fiwi-server.sh re-signs it
-# with the ShazamKit entitlement only when SHAZAMKIT_ENABLE=1.
+# The native ShazamKit helper, as a minimal .app bundle (it needs its own
+# embedded provisioning profile, see shazamkit/build.sh). Rebuilt on every
+# macOS build so it is never missing or stale. It is NOT passed through
+# Analysis (PyInstaller would treat the bundle's contents as loose files);
+# instead it is copied verbatim into the finished onedir after COLLECT, below.
+# sign-fiwi-server.sh signs it; detection._find_shazamkit_helper() finds it.
+import shutil
 import subprocess
 import sys
 
+_SHAZAMKIT_APP = "shazamkit/build/shazamkit-match.app"
 if sys.platform == "darwin":
     subprocess.run(["bash", "shazamkit/build.sh"], check=True)
-    _shazamkit_extra = [("shazamkit/shazamkit-match", ".")]
-else:
-    _shazamkit_extra = []
+_shazamkit_extra = []
 
 a = Analysis(
     ["src/soundtrackID/__main__.py"],
@@ -204,3 +206,11 @@ coll = COLLECT(
     upx=False,
     name="fiwi-server",
 )
+
+# Copy the ShazamKit helper bundle into the finished onedir, next to the other
+# bundled files (dist/fiwi-server/_internal/shazamkit-match.app).
+if sys.platform == "darwin":
+    _helper_dest = os.path.join(DISTPATH, "fiwi-server", "_internal", "shazamkit-match.app")
+    if os.path.exists(_helper_dest):
+        shutil.rmtree(_helper_dest)
+    shutil.copytree(_SHAZAMKIT_APP, _helper_dest, symlinks=True)

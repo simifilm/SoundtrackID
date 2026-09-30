@@ -41,17 +41,17 @@ app bundle.
 
 ### 3.1 Native ShazamKit helper (built automatically)
 
-`fiwi-server.spec` runs `bash shazamkit/build.sh` on every macOS build and
-bundles the resulting `shazamkit/shazamkit-match` next to the server binary, so
-it is never missing or stale (the binary is gitignored). A compile failure
-aborts the build. To build it on its own:
+`fiwi-server.spec` runs `bash shazamkit/build.sh` on every macOS build. It
+compiles the helper and wraps it in a minimal bundle,
+`shazamkit/build/shazamkit-match.app`, with its own provisioning profile. The
+spec copies that bundle to `dist/fiwi-server/_internal/`. Build outputs are
+gitignored; a compile failure aborts the build. To build it on its own:
 
 ```bash
-bash shazamkit/build.sh   # -> shazamkit/shazamkit-match
+bash shazamkit/build.sh   # -> shazamkit/build/shazamkit-match.app
 ```
 
-Native ShazamKit matching is currently disabled at signing time (see note
-below); the app falls back to the `shazamio` client.
+See "Note on ShazamKit" below for why it is a bundle.
 
 ### 3.2 Bundle the Python server
 
@@ -102,13 +102,46 @@ xcrun stapler staple SoundtrackID.dmg
 
 ### Note on ShazamKit
 
-`scripts/sign-fiwi-server.sh` applies the restricted
-`com.apple.developer.shazamkit` entitlement to the helper only when
-`SHAZAMKIT_ENABLE=1`. It is off by default: Apple currently omits that
-entitlement from Developer ID provisioning profiles (acknowledged bug
-FB22582333), so an entitled helper is killed at runtime. With it off the helper
-is signed normally and Shazam identification uses the `shazamio` fallback. Set
-`SHAZAMKIT_ENABLE=1` once Apple ships the fix.
+On macOS, ShazamKit is an App Service granted to an App ID. It only works for a
+caller that carries an **embedded provisioning profile** for that App ID. A bare
+command-line binary cannot carry one and always gets error 202. There is no
+`com.apple.developer.shazamkit` entitlement on macOS (it is iOS-only; adding it
+gets the process killed).
+
+Setup, as it exists now:
+
+| Piece | Value |
+|-------|-------|
+| Helper App ID | `ch.uzh.soundtrackid.shazamkit-match`, ShazamKit enabled under App Services |
+| Profile | Developer ID profile for that App ID, committed as `shazamkit/shazamkit-match.provisionprofile` (override with `SHAZAMKIT_PROVISION_PROFILE=/path`) |
+| Entitlements | `shazamkit/shazamkit-match.entitlements`: only `com.apple.application-identifier` and `com.apple.developer.team-identifier` |
+| Bundle | `shazamkit-match.app/Contents/{Info.plist, MacOS/shazamkit-match, embedded.provisionprofile}` |
+
+`scripts/sign-fiwi-server.sh` signs the bundle with those entitlements **only if
+the profile lists the certificate behind `APPLE_SIGNING_IDENTITY`** (a Developer
+ID profile only accepts the certificates selected when it was generated), and
+then test-launches the helper. If the profile is missing, doesn't match, or the
+launch test fails, it signs the helper without the entitlements instead and
+prints why; Shazam then falls back to `shazamio`, as before. The build log line
+`native ShazamKit: enabled` confirms it's active.
+
+**When the signing certificate changes** (the current one expires 2027-02-01):
+in the Apple Developer portal, edit the `shazamkit-match` profile, select the new
+Developer ID Application certificate, download it and replace
+`shazamkit/shazamkit-match.provisionprofile`.
+
+Check a built helper by hand:
+
+```bash
+H=dist/fiwi-server/_internal/shazamkit-match.app
+codesign -d --entitlements - "$H"
+$H/Contents/MacOS/shazamkit-match some-clip.wav   # {"title": ...} or {"result": null}
+```
+
+If it still returns 202 for well-known music, watch
+`log stream --predicate 'process == "shazamd"'` while matching: a 401 there
+means the App ID's ShazamKit service isn't active; "status 200" means
+authorization is fine and the clip just can't be matched.
 
 ## 4. Windows build
 

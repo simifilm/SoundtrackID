@@ -4,13 +4,16 @@
 // Output: a single JSON object on stdout, one of:
 //   {"title": "...", "artist": "...", "isrc": "...", "appleMusicURL": "...", "shazamID": "..."}
 //   {"result": null}                         // no match
-//   {"error": "<message>", "code": <int>}    // failure (code 202 == missing ShazamKit entitlement)
+//   {"error": "<message>", "code": <int>}    // failure (code 202 == matchAttemptFailed)
 //
-// ShazamKit catalog matching requires the `com.apple.developer.shazamkit`
-// entitlement, honored only when the binary is signed with a provisioning
-// profile from an App ID that has the ShazamKit capability enabled. Without it,
-// SHSession returns error 202 (matchAttemptFailed). The Python client treats a
-// non-zero/empty result as "unavailable" and falls back gracefully.
+// On macOS, ShazamKit catalog matching is authorized per App ID: the caller must
+// carry an embedded provisioning profile for an App ID with the ShazamKit App
+// Service enabled. This helper therefore ships as shazamkit-match.app with its
+// own profile (see build.sh and scripts/sign-fiwi-server.sh). There is no
+// `com.apple.developer.shazamkit` entitlement on macOS (it is iOS-only). Without
+// authorization SHSession returns error 202 (matchAttemptFailed); ShazamKit may
+// also return 202 for audio it cannot match at all. The Python client treats a
+// 202 as "unavailable" and falls back to shazamio.
 
 import AVFoundation
 import Foundation
