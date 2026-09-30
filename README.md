@@ -379,3 +379,16 @@ Copyright 2026 University of Zurich. Licensed under the
 [PolyForm Noncommercial License 1.0.0](LICENSE): free to use, modify and share for any
 noncommercial purpose, including research and teaching. Commercial use requires a
 separate license.
+
+---
+
+## Credits
+
+<a href="https://www.themoviedb.org/"><img src="src/soundtrackID/static/tmdb-logo.svg" alt="TMDB" height="14"></a>
+
+This product uses the TMDB API but is not endorsed or certified by TMDB. Film metadata
+comes from [TMDB](https://www.themoviedb.org/) and is used under the
+[TMDB API Terms of Use](https://www.themoviedb.org/api-terms-of-use).
+
+Composer and work data comes from [MusicBrainz](https://musicbrainz.org/) and
+[Wikidata](https://www.wikidata.org/).
