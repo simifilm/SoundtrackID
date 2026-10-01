@@ -72,26 +72,79 @@ while IFS= read -r -d '' link; do
 done < <(find "$TARGET" -type l -print0)
 echo "[sign-fiwi-server] Materialised $link_count Mach-O symlink(s) as flat-signed copies."
 
-# The ShazamKit helper needs the com.apple.developer.shazamkit entitlement, which
-# the generic loop above would have stripped. Re-sign it with its own entitlements
-# (honored at runtime via the app's embedded provisioning profile). Skipped when
-# the helper wasn't bundled.
-# Apply the restricted com.apple.developer.shazamkit entitlement only when a
-# ShazamKit is enabled (Apple currently omits the entitlement from Developer ID
-# Without a profile the entitlement is non-functional and can jeopardize
-# notarization, so we leave the helper signed with the standard entitlements from
-# the loop above — ShazamKit then returns 202 and the client falls back to shazamio.
+# ShazamKit helper bundle (_internal/shazamkit-match.app, see shazamkit/build.sh).
+#
+# macOS only authorizes ShazamKit for a caller that carries an embedded
+# provisioning profile for an App ID with the ShazamKit App Service. The helper
+# therefore has its own App ID (ch.uzh.soundtrackid.shazamkit-match), its own
+# Developer ID profile, and entitlements that bind it to that App ID
+# (shazamkit/shazamkit-match.entitlements). The loop above signed the loose
+# binary inside the bundle; here the whole bundle is (re-)signed.
+#
+# Safety: the ShazamKit entitlements are applied only if the embedded profile
+# lists the certificate we sign with. A mismatch would get the helper killed at
+# launch (AMFI), so in that case — and if no profile is embedded — the bundle is
+# signed with the standard entitlements instead. ShazamKit then returns 202 and
+# the app falls back to shazamio, exactly as before. A launch smoke test at the
+# end catches any remaining mismatch the same way.
+HELPER_APP="$TARGET/_internal/shazamkit-match.app"
 SHAZAMKIT_ENTITLEMENTS="$REPO_ROOT/shazamkit/shazamkit-match.entitlements"
-if [[ -n "${SHAZAMKIT_ENABLE:-}" && -f "$SHAZAMKIT_ENTITLEMENTS" ]]; then
-  while IFS= read -r -d '' helper; do
+
+sign_helper_plain() {
+  codesign --force --timestamp --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$APPLE_SIGNING_IDENTITY" "$HELPER_APP" >/dev/null
+}
+
+# True if the embedded profile lists the certificate behind APPLE_SIGNING_IDENTITY.
+profile_accepts_signer() {
+  local profile="$HELPER_APP/Contents/embedded.provisionprofile"
+  [[ -f "$profile" ]] || return 1
+  local signer
+  if [[ "$APPLE_SIGNING_IDENTITY" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    signer="$APPLE_SIGNING_IDENTITY"
+  else
+    signer="$(security find-identity -v -p codesigning \
+      | grep -F "\"$APPLE_SIGNING_IDENTITY\"" | head -1 | awk '{print $2}')"
+  fi
+  [[ -n "$signer" ]] || return 1
+  signer="$(echo "$signer" | tr '[:lower:]' '[:upper:]')"
+  local tmp n i h found=1
+  tmp="$(mktemp -d)"
+  security cms -D -i "$profile" > "$tmp/profile.plist" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  n="$(plutil -extract DeveloperCertificates raw -o - "$tmp/profile.plist" 2>/dev/null || echo 0)"
+  for ((i = 0; i < n; i++)); do
+    h="$(plutil -extract "DeveloperCertificates.$i" raw -o - "$tmp/profile.plist" \
+      | base64 -D | shasum | awk '{print toupper($1)}')"
+    [[ "$h" == "$signer" ]] && found=0
+  done
+  rm -rf "$tmp"
+  return $found
+}
+
+if [[ -d "$HELPER_APP" ]]; then
+  if [[ -f "$SHAZAMKIT_ENTITLEMENTS" ]] && profile_accepts_signer; then
     codesign --force --timestamp --options runtime \
       --entitlements "$SHAZAMKIT_ENTITLEMENTS" \
-      --sign "$APPLE_SIGNING_IDENTITY" "$helper" >/dev/null
-    echo "[sign-fiwi-server] Re-signed $helper with the ShazamKit entitlement."
-  done < <(find "$TARGET" -type f -name "shazamkit-match" -print0)
+      --sign "$APPLE_SIGNING_IDENTITY" "$HELPER_APP" >/dev/null
+    shazamkit_mode="enabled"
+  else
+    sign_helper_plain
+    shazamkit_mode="disabled (no profile, or profile does not list the signing certificate)"
+  fi
+
+  # Launch smoke test: without arguments the helper prints a usage JSON and
+  # exits 0. If macOS kills it (profile/entitlement mismatch), fall back.
+  if ! "$HELPER_APP/Contents/MacOS/shazamkit-match" >/dev/null 2>&1; then
+    echo "[sign-fiwi-server] WARNING: ShazamKit helper failed to launch with the"
+    echo "                   ShazamKit entitlements — re-signing without them."
+    sign_helper_plain
+    shazamkit_mode="disabled (launch test failed)"
+  fi
+  codesign --verify --strict "$HELPER_APP"
+  echo "[sign-fiwi-server] ShazamKit helper signed; native ShazamKit: $shazamkit_mode."
 else
-  echo "[sign-fiwi-server] SHAZAMKIT_ENABLE not set — building without the"
-  echo "                   ShazamKit entitlement (Shazam falls back to shazamio)."
+  echo "[sign-fiwi-server] ShazamKit helper bundle not found — skipping."
 fi
 
 # Seal the main executable last so its signature covers the finished directory.

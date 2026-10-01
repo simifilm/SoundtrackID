@@ -1,3 +1,4 @@
 assets/ast_model/*.onnx filter=lfs diff=lfs merge=lfs -text
 assets/ast_model/*.bin filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
+*.svg filter=lfs diff=lfs merge=lfs -text

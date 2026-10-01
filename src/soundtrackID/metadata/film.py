@@ -188,7 +188,7 @@ class FilmLookup:
         r = self._client.get(
             "https://query.wikidata.org/sparql",
             params={"query": sparql, "format": "json"},
-            headers={"accept": "application/sparql-results+json", "user-agent": "SoundtrackID/0.1 (stmh@zhaw.ch)"},
+            headers={"accept": "application/sparql-results+json", "user-agent": "SoundtrackID/0.1 (simon@simifilm.ch)"},
         )
         if r.status_code != 200:
             return None
