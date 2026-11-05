@@ -935,7 +935,7 @@
   .settings-grid {
     padding: 0.75rem 1.25rem 1rem;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 0 1.5rem;
     border-top: 1px solid #ede9fe;
   }
@@ -989,7 +989,7 @@
     accent-color: #7c3aed;
   }
 
-  #opt-threshold-val {
+  #opt-threshold-val, #opt-bridge-val {
     font-size: 0.82rem;
     color: #6b7280;
     min-width: 2.5rem;
@@ -1073,9 +1073,9 @@
         <label for="opt-chunk">Chunk Duration</label>
         <select id="opt-chunk">
           <option value="10">10 seconds</option>
-          <option value="15" selected>15 seconds</option>
+          <option value="15">15 seconds</option>
           <option value="20">20 seconds</option>
-          <option value="30">30 seconds</option>
+          <option value="30" selected>30 seconds</option>
         </select>
       </div>
 
@@ -1084,6 +1084,14 @@
         <div class="range-row">
           <input type="range" id="opt-threshold" min="0" max="100" value="20">
           <span id="opt-threshold-val">20%</span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label for="opt-bridge">Bridge Gaps</label>
+        <div class="range-row">
+          <input type="range" id="opt-bridge" min="0" max="30" value="2">
+          <span id="opt-bridge-val">2 s</span>
         </div>
       </div>
 
@@ -1250,6 +1258,7 @@
       <div id="results-tabs" class="results-tabs" style="display:none">
         <button type="button" class="results-tab active" data-view="tracks">Tracks</button>
         <button type="button" class="results-tab" data-view="timeline">Timeline</button>
+        <button type="button" class="results-tab" data-view="classes">Classes</button>
       </div>
 
       <!-- Tracks report: one entry per unique piece, with full metadata + rights -->
@@ -1276,10 +1285,23 @@
           <tbody id="results-body"></tbody>
         </table>
       </div>
+
+      <!-- Classes: every classification window with its top 3 classes -->
+      <div id="classes-view" style="display:none">
+        <table id="classes-table">
+          <thead>
+            <tr>
+              <th>Start</th><th>End</th><th>Music</th><th>Top 3 classes</th>
+            </tr>
+          </thead>
+          <tbody id="classes-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
+      <button class="reset-btn" id="rerun-btn" title="Analyze this video again with the current settings, without uploading it again">Re-run with current settings</button>
       <button class="download-btn" id="download-btn">Download results</button>
       <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
     </div>
@@ -1482,6 +1504,9 @@ document.getElementById('fc-start').addEventListener('click', () => {
 // Settings wiring
 document.getElementById('opt-threshold').addEventListener('input', function() {
   document.getElementById('opt-threshold-val').textContent = this.value + '%';
+});
+document.getElementById('opt-bridge').addEventListener('input', function() {
+  document.getElementById('opt-bridge-val').textContent = this.value + ' s';
 });
 document.getElementById('opt-csv').addEventListener('change', function() {
   document.getElementById('json-label').style.color = this.checked ? '#c4b5fd' : '#6b7280';
@@ -1779,7 +1804,8 @@ function selectedProviders() {
   return Array.from(document.querySelectorAll('.opt-provider:checked')).map(c => c.value);
 }
 
-function startAnalysis(stagingId, film) {
+// rerunVideo: name of a run whose stored video is analyzed again (no upload).
+function startAnalysis(stagingId, film, rerunVideo = null) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   setupVideo(null, null);
@@ -1822,15 +1848,18 @@ function startAnalysis(stagingId, film) {
   resultsView.style.display  = 'none';
 
   const formData = new FormData();
-  formData.append('staging_id', stagingId);
-  formData.append('film', JSON.stringify(film || {}));
+  if (!rerunVideo) {
+    formData.append('staging_id', stagingId);
+    formData.append('film', JSON.stringify(film || {}));
+  }
   formData.append('api', selectedProviders().join(','));
-  formData.append('chunk_duration', document.getElementById('opt-chunk').value);
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
+  formData.append('bridge_gap', document.getElementById('opt-bridge').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
   formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
 
-  fetch('/analyze', { method: 'POST', body: formData })
+  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
+  fetch(url, { method: 'POST', body: formData })
     .then(res => {
       const reader = res.body.getReader();
       activeReader = reader;
@@ -2550,12 +2579,41 @@ function renderTimeline(cues, videoName) {
   });
 }
 
+// Classes: each classification window's music score and top 3 classes, to trace
+// where a wrong music / no-music verdict comes from. Music windows are badged.
+function renderClasses(windows) {
+  const body = document.getElementById('classes-body');
+  if (!windows) {
+    body.innerHTML = '<tr><td colspan="4" class="tracks-empty">No class data for this run.</td></tr>';
+    return;
+  }
+  const pct = p => Math.round(p * 100) + '%';
+  body.innerHTML = '';
+  windows.forEach(w => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.innerHTML = `
+      <td>${fmtTime(w.start)}</td>
+      <td>${fmtTime(w.end)}</td>
+      <td>${w.is_music ? `<span class="badge music">${pct(w.music)}</span>` : pct(w.music)}</td>
+      <td>${Object.entries(w.classes).map(([name, p]) => `${name} ${pct(p)}`).join(' · ')}</td>`;
+    // Like a timeline row: show the window on the timeline and play it.
+    tr.addEventListener('click', () => {
+      const span = { start: w.start, end: w.end, duration: w.end - w.start };
+      focusCueOnTimeline(span);
+      playSegment(span);
+    });
+    body.appendChild(tr);
+  });
+}
+
 let currentResultsView = 'tracks';
 function switchResultsView(view) {
   currentResultsView = view;
   document.querySelectorAll('.results-tab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   document.getElementById('tracks-view').style.display = view === 'tracks' ? '' : 'none';
   document.getElementById('timeline-view').style.display = view === 'timeline' ? '' : 'none';
+  document.getElementById('classes-view').style.display = view === 'classes' ? '' : 'none';
 }
 document.getElementById('results-tabs').addEventListener('click', e => {
   const btn = e.target.closest('.results-tab');
@@ -2645,6 +2703,8 @@ function showResults(results) {
 
   setupVideo(results, videoName);
   renderFilmHeader(results.film);
+  // A re-run needs the video the server stored for this run.
+  document.getElementById('rerun-btn').style.display = results.video ? '' : 'none';
 
   const tabs = document.getElementById('results-tabs');
   const tracksView = document.getElementById('tracks-view');
@@ -2654,12 +2714,14 @@ function showResults(results) {
     tabs.style.display = 'none';
     tracksView.style.display = 'none';
     timelineView.style.display = 'none';
+    document.getElementById('classes-view').style.display = 'none';
     emptyState.style.display = 'block';
   } else {
     emptyState.style.display = 'none';
     tabs.style.display = 'flex';
     renderTracks(groupCues(cues), videoName);
     renderTimeline(cues, videoName);
+    renderClasses(results.classification_windows);
     switchResultsView(currentResultsView);
   }
 
@@ -2739,6 +2801,22 @@ function updateAnachronismToolbar(cues) {
 document.getElementById('opt-hide-anachronism').addEventListener('change', function() {
   resultsBody.classList.toggle('hide-anachronism', this.checked);
   document.getElementById('tracks-body').classList.toggle('hide-anachronism', this.checked);
+});
+
+// Analyze the shown run's stored video again with the current settings.
+document.getElementById('rerun-btn').addEventListener('click', () => {
+  if (selectedProviders().length === 0) {
+    alert('Select at least one detection provider in Settings.');
+    return;
+  }
+  const missing = providersMissingKeys();
+  if (missing.length) {
+    alert(`API keys missing for ${missing.join(' and ')}. Add them under Settings → API keys, or unselect the provider.`);
+    document.getElementById('settings-panel').open = true;
+    document.getElementById('api-keys').open = true;
+    return;
+  }
+  startAnalysis(null, null, currentVideoName);
 });
 
 resetBtn.addEventListener('click', () => {

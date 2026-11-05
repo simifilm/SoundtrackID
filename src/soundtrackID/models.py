@@ -21,6 +21,7 @@ class ClassificationResult:
     chunk: AudioChunk
     is_music: bool
     confidence: float
+    probs: NDArray[np.float32] | None = None
 
 
 @dataclass
@@ -102,6 +103,8 @@ class ResultsOutput:
     waveform: dict | None = None
     film: dict[str, Any] | None = None
     rate_limited: bool = False   # detection stopped early on a provider quota
+    classification: list[dict[str, Any]] | None = None
+    classification_windows: list[dict[str, Any]] | None = None
 
     def _build_cues(self) -> list[dict[str, Any]]:
         ident_map = {id_.segment_id: id_ for id_ in self.identifications}
@@ -144,6 +147,8 @@ class ResultsOutput:
             "film": self.film,
             "cues": self._build_cues(),
             "waveform": self.waveform,
+            "classification": self.classification,
+            "classification_windows": self.classification_windows,
             "rate_limited": self.rate_limited,
         }
         return result

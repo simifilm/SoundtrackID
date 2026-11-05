@@ -244,3 +244,77 @@ def test_aggregate_empty_results():
     segments = aggregator.aggregate([], full_audio, sample_rate)
 
     assert len(segments) == 0
+
+
+def _music_results(start, end, full_audio, sample_rate, step=5.0):
+    """Consecutive music results covering [start, end) in `step`-second slots."""
+    results = []
+    t = start
+    while t < end:
+        e = min(t + step, end)
+        chunk = AudioChunk(
+            data=full_audio[int(t * sample_rate) : int(e * sample_rate)],
+            start_time=t,
+            end_time=e,
+            sample_rate=sample_rate,
+        )
+        results.append(ClassificationResult(chunk=chunk, is_music=True, confidence=0.9))
+        t = e
+    return results
+
+
+def test_stream_windows_anchors_last_window_to_run_end():
+    """Each run's last window keeps the full length by overlapping the previous one."""
+    sample_rate = 1000
+    full_audio = np.arange(60000, dtype=np.float32)
+    # Two runs (5-25 s and 40-60 s): one closed by a gap, one by end of input.
+    results = _music_results(5.0, 25.0, full_audio, sample_rate) + _music_results(
+        40.0, 60.0, full_audio, sample_rate
+    )
+
+    aggregator = ChunkAggregator(gap_tolerance=1.0)
+    windows = list(
+        aggregator.stream_windows(
+            results, full_audio, sample_rate, window_duration=15.0
+        )
+    )
+
+    assert [(w.start_time, w.end_time) for w in windows] == [
+        (5.0, 20.0),
+        (10.0, 25.0),
+        (40.0, 55.0),
+        (45.0, 60.0),
+    ]
+    assert all(len(w.audio) == 15000 for w in windows)
+
+
+def test_stream_windows_keeps_short_run_short():
+    """A run shorter than the window is sent as it is."""
+    sample_rate = 1000
+    full_audio = np.arange(30000, dtype=np.float32)
+    results = _music_results(5.0, 15.0, full_audio, sample_rate)
+
+    aggregator = ChunkAggregator(gap_tolerance=1.0)
+    windows = list(
+        aggregator.stream_windows(
+            results, full_audio, sample_rate, window_duration=15.0
+        )
+    )
+
+    assert [(w.start_time, w.end_time) for w in windows] == [(5.0, 15.0)]
+
+
+def test_stream_windows_run_on_window_multiple_needs_no_extra_window():
+    """A run that is an exact multiple of the window gets no overlapping window."""
+    sample_rate = 1000
+    full_audio = np.arange(40000, dtype=np.float32)
+    results = _music_results(5.0, 35.0, full_audio, sample_rate)
+
+    aggregator = ChunkAggregator(gap_tolerance=1.0)
+    windows = list(
+        aggregator.stream_windows(
+            results, full_audio, sample_rate, window_duration=15.0
+        )
+    )
+
+    assert [(w.start_time, w.end_time) for w in windows] == [(5.0, 20.0), (20.0, 35.0)]
