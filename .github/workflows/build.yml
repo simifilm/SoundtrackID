@@ -1,0 +1,216 @@
+# Builds the desktop app for macOS and Windows, as described in README.md
+# ("Building a release"). The macOS app is signed, notarized and stapled
+# (Option A); the Windows installer stays unsigned. The builds only start once
+# the Python tests pass.
+#
+# Pull requests to main and manual runs (Actions -> Build -> Run workflow) are
+# test builds. Pushing a tag on main releases that version:
+#   git tag v0.3.0 && git push origin v0.3.0
+# builds version 0.3.0 and creates a draft release v0.3.0 with the DMG and the
+# Windows installer. The workflow fails if that release already exists.
+#
+# Repository secrets:
+#   APPLE_CERTIFICATE            Developer ID Application certificate + private key,
+#                                exported from Keychain Access as .p12, base64-encoded:
+#                                  base64 -i certificate.p12 | pbcopy
+#   APPLE_CERTIFICATE_PASSWORD   password chosen when exporting the .p12
+#   APPLE_SIGNING_IDENTITY       \
+#   APPLE_ID                      | as in README, Option A
+#   APPLE_PASSWORD                |
+#   APPLE_TEAM_ID                /
+#   FIWI_TMDB_API_TOKEN          TMDb credentials bundled into the app via .env
+#   FIWI_TMDB_KEY                (at least one of the two)
+
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The tests don't need the ONNX model, so this job skips Git LFS.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Run tests
+        run: uv run --extra app --group dev pytest
+
+  # On a tag push, takes the version from the tag (v0.3.0 -> 0.3.0). Test
+  # builds leave it empty and keep the version in tauri.conf.json.
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # draft releases are only visible with write access
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check the tag and that its release doesn't exist yet
+        id: version
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag must look like v0.3.0, got '$GITHUB_REF_NAME'."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::Release $GITHUB_REF_NAME already exists."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [version, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: src-tauri/target/release/bundle/dmg/*.dmg
+          - os: windows-latest
+            artifact: src-tauri/target/release/bundle/nsis/*-setup.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The ONNX model is ~350 MB of Git LFS. Cache it so builds don't eat the
+      # LFS bandwidth quota; saved right after the pull so failed builds keep it.
+      - name: List Git LFS objects
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+      - name: Restore Git LFS cache
+        id: lfs-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .git/lfs
+          key: lfs-${{ runner.os }}-${{ hashFiles('.lfs-assets-id') }}
+      - name: Pull Git LFS objects
+        run: git lfs pull
+      - name: Save Git LFS cache
+        if: steps.lfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-cache.outputs.cache-primary-key }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Node packages
+        run: npm ci
+
+      # .env is gitignored; fiwi-server.spec bundles it into the app if present.
+      - name: Write TMDb credentials to .env
+        shell: bash
+        env:
+          FIWI_TMDB_API_TOKEN: ${{ secrets.FIWI_TMDB_API_TOKEN }}
+          FIWI_TMDB_KEY: ${{ secrets.FIWI_TMDB_KEY }}
+        run: |
+          if [[ -z "$FIWI_TMDB_API_TOKEN$FIWI_TMDB_KEY" ]]; then
+            echo "::error::Set the FIWI_TMDB_API_TOKEN or FIWI_TMDB_KEY secret."
+            exit 1
+          fi
+          : > .env
+          if [[ -n "$FIWI_TMDB_API_TOKEN" ]]; then echo "FIWI_TMDB_API_TOKEN=$FIWI_TMDB_API_TOKEN" >> .env; fi
+          if [[ -n "$FIWI_TMDB_KEY" ]]; then echo "FIWI_TMDB_KEY=$FIWI_TMDB_KEY" >> .env; fi
+
+      # The runner has no keychain holding the certificate. Tauri's own
+      # APPLE_CERTIFICATE import happens too late: scripts/sign-fiwi-server.sh
+      # (beforeBundleCommand) already needs the identity, so import it here.
+      - name: Import signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN"
+          if ! security find-identity -v -p codesigning | grep -qiF "$APPLE_SIGNING_IDENTITY"; then
+            echo "::error::APPLE_CERTIFICATE does not contain a valid identity matching APPLE_SIGNING_IDENTITY."
+            security find-identity -v -p codesigning
+            exit 1
+          fi
+
+      - name: Bundle the Python server
+        run: uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
+
+      # Overrides the version in tauri.conf.json on a tag push; it ends up in the
+      # app and in the DMG and installer file names.
+      - name: Set version
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -n "$VERSION" ]]; then
+            echo "{\"version\": \"$VERSION\"}" > "$RUNNER_TEMP/version.json"
+          else
+            echo '{}' > "$RUNNER_TEMP/version.json"
+          fi
+
+      # Builds the .app and the DMG. On CI, Tauri skips the Finder step that
+      # arranges the DMG window (it needs a GUI session), so the DMG opens as a
+      # plain window with the app and an Applications shortcut.
+      - name: Build, sign and notarize the app
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri -- build --config "${{ runner.temp }}/version.json"
+
+      - name: Build the app
+        if: runner.os == 'Windows'
+        run: npm run tauri -- build --config "${{ runner.temp }}/version.json"
+
+      # Fails if Tauri skipped notarization (it only warns) or stapling failed.
+      - name: Verify notarization
+        if: runner.os == 'macOS'
+        run: xcrun stapler validate src-tauri/target/release/bundle/macos/SoundtrackID.app
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.artifact }}
+          archive: false
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --draft --prerelease --generate-notes

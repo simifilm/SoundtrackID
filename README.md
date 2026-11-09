@@ -53,8 +53,8 @@ Download the latest release, then follow the installer.
 
 #### macOS
 
-1. Download `SoundtrackID.zip` from the latest release.
-2. Unzip it and move **Soundtrack ID.app** into your `Applications` folder.
+1. Download `SoundtrackID_<version>_aarch64.dmg` from the latest release.
+2. Open it and drag **SoundtrackID** into your `Applications` folder.
 
 
 ## Usage
