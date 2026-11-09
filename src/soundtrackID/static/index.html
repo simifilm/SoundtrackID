@@ -935,7 +935,7 @@
   .settings-grid {
     padding: 0.75rem 1.25rem 1rem;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0 1.5rem;
     border-top: 1px solid #ede9fe;
   }
@@ -1073,9 +1073,18 @@
         <label for="opt-chunk">Chunk Duration</label>
         <select id="opt-chunk">
           <option value="10">10 seconds</option>
-          <option value="15" selected>15 seconds</option>
+          <option value="15">15 seconds</option>
           <option value="20">20 seconds</option>
-          <option value="30">30 seconds</option>
+          <option value="30" selected>30 seconds</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label for="opt-hop" title="Step between the overlapping 10.23 s classification windows">Hop Size</label>
+        <select id="opt-hop">
+          <option value="2.5">2.5 seconds</option>
+          <option value="5" selected>5 seconds</option>
+          <option value="10">10 seconds</option>
         </select>
       </div>
 
@@ -1085,6 +1094,16 @@
           <input type="range" id="opt-threshold" min="0" max="100" value="20">
           <span id="opt-threshold-val">20%</span>
         </div>
+      </div>
+
+      <div class="setting-group">
+        <label for="opt-bridge" title="Join clips of the same track across up to this many non-music hops">Bridge Gaps</label>
+        <select id="opt-bridge">
+          <option value="0" selected>0 hops</option>
+          <option value="1">1 hop</option>
+          <option value="2">2 hops</option>
+          <option value="3">3 hops</option>
+        </select>
       </div>
 
       <div class="setting-group">
@@ -1124,9 +1143,9 @@
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
     </svg>
-    <p class="drop-label">Drop a video file here</p>
-    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi accepted</p>
-    <input type="file" id="file-input" accept="video/*">
+    <p class="drop-label">Drop a video or audio file here</p>
+    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi, .mp3, .wav accepted</p>
+    <input type="file" id="file-input" accept="video/*,audio/*">
   </div>
 
   <!-- Film confirmation (shown after a file is picked, before analysis) -->
@@ -1250,6 +1269,7 @@
       <div id="results-tabs" class="results-tabs" style="display:none">
         <button type="button" class="results-tab active" data-view="tracks">Tracks</button>
         <button type="button" class="results-tab" data-view="timeline">Timeline</button>
+        <button type="button" class="results-tab" data-view="classes">Classes</button>
       </div>
 
       <!-- Tracks report: one entry per unique piece, with full metadata + rights -->
@@ -1276,10 +1296,23 @@
           <tbody id="results-body"></tbody>
         </table>
       </div>
+
+      <!-- Classes: every classification window with its top 3 classes -->
+      <div id="classes-view" style="display:none">
+        <table id="classes-table">
+          <thead>
+            <tr>
+              <th>Start</th><th>End</th><th>Music</th><th>Top 3 classes</th>
+            </tr>
+          </thead>
+          <tbody id="classes-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
+      <button class="reset-btn" id="rerun-btn" title="Analyze this video again with the current settings, without uploading it again">Re-run with current settings</button>
       <button class="download-btn" id="download-btn">Download results</button>
       <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
     </div>
@@ -1492,14 +1525,14 @@ document.getElementById('opt-csv').addEventListener('change', function() {
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-const VIDEO_EXTS = new Set(['.mp4','.mov','.avi','.mkv','.webm','.m4v','.mpg','.mpeg','.wmv','.flv']);
-function isVideoFile(file) {
-  if (file.type.startsWith('video/')) return true;
+const MEDIA_EXTS = new Set(['.mp4','.mov','.avi','.mkv','.webm','.m4v','.mpg','.mpeg','.wmv','.flv','.mp3','.wav']);
+function isMediaFile(file) {
+  if (file.type.startsWith('video/') || file.type.startsWith('audio/')) return true;
   const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-  return VIDEO_EXTS.has(ext);
+  return MEDIA_EXTS.has(ext);
 }
 function rejectFile() {
-  errorArea.textContent = 'Only video files are supported (.mp4, .mov, .avi, .mkv …)';
+  errorArea.textContent = 'Only video or audio files are supported (.mp4, .mov, .mkv, .mp3, .wav …)';
   errorArea.style.display = 'block';
 }
 
@@ -1508,13 +1541,13 @@ dropZone.addEventListener('drop', e => {
   dropZone.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
   if (!file) return;
-  if (!isVideoFile(file)) { rejectFile(); return; }
+  if (!isMediaFile(file)) { rejectFile(); return; }
   beginIdentify(file);
 });
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
   if (!file) return;
-  if (!isVideoFile(file)) { rejectFile(); fileInput.value = ''; return; }
+  if (!isMediaFile(file)) { rejectFile(); fileInput.value = ''; return; }
   beginIdentify(file);
 });
 
@@ -1779,7 +1812,8 @@ function selectedProviders() {
   return Array.from(document.querySelectorAll('.opt-provider:checked')).map(c => c.value);
 }
 
-function startAnalysis(stagingId, film) {
+// rerunVideo: name of a run whose stored video is analyzed again (no upload).
+function startAnalysis(stagingId, film, rerunVideo = null) {
   wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
   detectingInitialized = false;
   setupVideo(null, null);
@@ -1822,15 +1856,20 @@ function startAnalysis(stagingId, film) {
   resultsView.style.display  = 'none';
 
   const formData = new FormData();
-  formData.append('staging_id', stagingId);
-  formData.append('film', JSON.stringify(film || {}));
+  if (!rerunVideo) {
+    formData.append('staging_id', stagingId);
+    formData.append('film', JSON.stringify(film || {}));
+  }
   formData.append('api', selectedProviders().join(','));
-  formData.append('chunk_duration', document.getElementById('opt-chunk').value);
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
+  // The bridge gap is chosen in hops; the backend takes seconds.
+  formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
+  formData.append('hop', document.getElementById('opt-hop').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
   formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
 
-  fetch('/analyze', { method: 'POST', body: formData })
+  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
+  fetch(url, { method: 'POST', body: formData })
     .then(res => {
       const reader = res.body.getReader();
       activeReader = reader;
@@ -2060,8 +2099,20 @@ function handleEvent(ev) {
 }
 
 // Download helpers
-function triggerDownload(content, filename, type) {
-  const blob = new Blob([content], { type });
+// `content` is a string, or a Blob (e.g. a zip fetched from the server).
+async function triggerDownload(content, filename, type) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  // In the desktop app, ask where to save (the webview would save straight to
+  // Downloads). In a plain browser, download as usual.
+  if (window.__TAURI__) {
+    try {
+      const contents = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      await window.__TAURI__.core.invoke('save_file', { filename, contents });
+    } catch (err) {
+      alert(`Could not save ${filename}: ${err}`);
+    }
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -2550,12 +2601,41 @@ function renderTimeline(cues, videoName) {
   });
 }
 
+// Classes: each classification window's music score and top 3 classes, to trace
+// where a wrong music / no-music verdict comes from. Music windows are badged.
+function renderClasses(windows) {
+  const body = document.getElementById('classes-body');
+  if (!windows) {
+    body.innerHTML = '<tr><td colspan="4" class="tracks-empty">No class data for this run.</td></tr>';
+    return;
+  }
+  const pct = p => Math.round(p * 100) + '%';
+  body.innerHTML = '';
+  windows.forEach(w => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.innerHTML = `
+      <td>${fmtTime(w.start)}</td>
+      <td>${fmtTime(w.end)}</td>
+      <td>${w.is_music ? `<span class="badge music">${pct(w.music)}</span>` : pct(w.music)}</td>
+      <td>${Object.entries(w.classes).map(([name, p]) => `${name} ${pct(p)}`).join(' · ')}</td>`;
+    // Like a timeline row: show the window on the timeline and play it.
+    tr.addEventListener('click', () => {
+      const span = { start: w.start, end: w.end, duration: w.end - w.start };
+      focusCueOnTimeline(span);
+      playSegment(span);
+    });
+    body.appendChild(tr);
+  });
+}
+
 let currentResultsView = 'tracks';
 function switchResultsView(view) {
   currentResultsView = view;
   document.querySelectorAll('.results-tab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   document.getElementById('tracks-view').style.display = view === 'tracks' ? '' : 'none';
   document.getElementById('timeline-view').style.display = view === 'timeline' ? '' : 'none';
+  document.getElementById('classes-view').style.display = view === 'classes' ? '' : 'none';
 }
 document.getElementById('results-tabs').addEventListener('click', e => {
   const btn = e.target.closest('.results-tab');
@@ -2645,6 +2725,8 @@ function showResults(results) {
 
   setupVideo(results, videoName);
   renderFilmHeader(results.film);
+  // A re-run needs the video the server stored for this run.
+  document.getElementById('rerun-btn').style.display = results.video ? '' : 'none';
 
   const tabs = document.getElementById('results-tabs');
   const tracksView = document.getElementById('tracks-view');
@@ -2654,12 +2736,14 @@ function showResults(results) {
     tabs.style.display = 'none';
     tracksView.style.display = 'none';
     timelineView.style.display = 'none';
+    document.getElementById('classes-view').style.display = 'none';
     emptyState.style.display = 'block';
   } else {
     emptyState.style.display = 'none';
     tabs.style.display = 'flex';
     renderTracks(groupCues(cues), videoName);
     renderTimeline(cues, videoName);
+    renderClasses(results.classification_windows);
     switchResultsView(currentResultsView);
   }
 
@@ -2741,6 +2825,22 @@ document.getElementById('opt-hide-anachronism').addEventListener('change', funct
   document.getElementById('tracks-body').classList.toggle('hide-anachronism', this.checked);
 });
 
+// Analyze the shown run's stored video again with the current settings.
+document.getElementById('rerun-btn').addEventListener('click', () => {
+  if (selectedProviders().length === 0) {
+    alert('Select at least one detection provider in Settings.');
+    return;
+  }
+  const missing = providersMissingKeys();
+  if (missing.length) {
+    alert(`API keys missing for ${missing.join(' and ')}. Add them under Settings → API keys, or unselect the provider.`);
+    document.getElementById('settings-panel').open = true;
+    document.getElementById('api-keys').open = true;
+    return;
+  }
+  startAnalysis(null, null, currentVideoName);
+});
+
 resetBtn.addEventListener('click', () => {
   filmConfirm.style.display = 'none';
   dropZone.style.display = 'block';
@@ -2752,18 +2852,22 @@ resetBtn.addEventListener('click', () => {
   loadHistory();
 });
 
-downloadBtn.addEventListener('click', () => {
+downloadBtn.addEventListener('click', async () => {
   if (!currentResults) return;
   const stem = currentResults.video_name || 'results';
-  triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
+  // Sequential, so the desktop app shows one save dialog after the other.
+  await triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
   if (document.getElementById('opt-csv').checked) {
-    triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
+    await triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
   }
 });
 
-document.getElementById('mava-export-btn').addEventListener('click', () => {
+document.getElementById('mava-export-btn').addEventListener('click', async () => {
   if (!currentVideoName) return;
-  window.location.href = `/output/${encodeURIComponent(currentVideoName)}/mava`;
+  const res = await fetch(`/output/${encodeURIComponent(currentVideoName)}/mava`);
+  if (!res.ok) { alert(`MAVA export failed (HTTP ${res.status})`); return; }
+  // Same name the server sends in Content-Disposition.
+  await triggerDownload(await res.blob(), currentVideoName + '_mava_export.zip');
 });
 
 cancelBtn.addEventListener('click', async () => {

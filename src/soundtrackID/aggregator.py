@@ -29,8 +29,10 @@ class ChunkAggregator:
         ``window_duration`` is set, each fixed-length window is emitted the moment
         classification has advanced past its end — so identification can overlap
         classification even for a single long, uninterrupted music cue. The
-        trailing (partial) window is emitted when the run closes (a gap larger
-        than ``gap_tolerance``) or when ``results`` is exhausted. With
+        trailing window is emitted when the run closes (a gap larger than
+        ``gap_tolerance``) or when ``results`` is exhausted; it is anchored to
+        the run's end, so it keeps the full ``window_duration`` by overlapping
+        the previous window, unless the run itself is shorter. With
         ``window_duration=None`` this degenerates to whole-segment streaming.
 
         Assumes music chunks arrive in ``start_time`` order, which the pipeline's
@@ -48,6 +50,10 @@ class ChunkAggregator:
                 sample_rate=sample_rate,
             )
 
+        def build_trailing(run_start: float, run_end: float, emitted_until: float) -> MusicSegment:
+            start = max(run_start, run_end - window_duration) if window_duration else emitted_until
+            return build(start, run_end)
+
         for result in results:
             if not result.is_music:
                 continue
@@ -59,7 +65,7 @@ class ChunkAggregator:
             else:
                 # Run closed by a gap: emit its trailing window, start a new run.
                 if run_end > emitted_until:
-                    yield build(emitted_until, run_end)
+                    yield build_trailing(run_start, run_end, emitted_until)
                 run_start, run_end, emitted_until = chunk.start_time, chunk.end_time, chunk.start_time
 
             if window_duration:
@@ -68,7 +74,7 @@ class ChunkAggregator:
                     emitted_until += window_duration
 
         if run_start is not None and run_end > emitted_until:
-            yield build(emitted_until, run_end)
+            yield build_trailing(run_start, run_end, emitted_until)
 
     def stream(
         self,

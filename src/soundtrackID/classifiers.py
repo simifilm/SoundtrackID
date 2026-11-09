@@ -23,10 +23,15 @@ class OnnxClassifier(BaseClassifier):
     """Audio classifier using a pre-exported ONNX model (no PyTorch required)."""
 
     _SAMPLE_RATE = 16000
+    _HOP_LENGTH = 160
+    _WIN_LENGTH = 400
     _NUM_MEL_BINS = 128
     _MAX_LENGTH = 1024
     _MEAN = -4.2677393
     _STD = 4.5689974
+    # librosa (center=True) yields 1 + n // hop frames, so this length gives
+    # exactly _MAX_LENGTH frames: no padding, no truncation.
+    window_duration = (_MAX_LENGTH - 1) * _HOP_LENGTH / _SAMPLE_RATE
 
     def __init__(
         self,
@@ -57,6 +62,8 @@ class OnnxClassifier(BaseClassifier):
             for label in self.music_labels
             if label in label2id
         ]
+        id2label = cfg.get("id2label", {})
+        self.labels = [id2label[str(i)] for i in range(len(id2label))]
 
     def _extract_features(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         """Compute Kaldi-style log-mel spectrogram matching ASTFeatureExtractor."""
@@ -67,8 +74,8 @@ class OnnxClassifier(BaseClassifier):
             y=audio.astype(np.float32),
             sr=self._SAMPLE_RATE,
             n_fft=512,
-            hop_length=160,
-            win_length=400,
+            hop_length=self._HOP_LENGTH,
+            win_length=self._WIN_LENGTH,
             window="hann",
             n_mels=self._NUM_MEL_BINS,
             htk=True,
@@ -89,11 +96,15 @@ class OnnxClassifier(BaseClassifier):
         exp = np.exp(logits - logits.max(axis=-1, keepdims=True))
         probs = exp / exp.sum(axis=-1, keepdims=True)
         confidence = float(probs[0, self.music_indices].sum())
-        return ClassificationResult(chunk=chunk, is_music=confidence > self.threshold, confidence=confidence)
+        return ClassificationResult(chunk=chunk, is_music=confidence > self.threshold, confidence=confidence, probs=probs[0])
 
 
 class HuggingFaceClassifier(BaseClassifier):
     """Audio classifier using HuggingFace models."""
+
+    # Same AST input length as the ONNX export. The HF feature extractor frames
+    # the audio itself, so it may still pad or cut a frame (not verified).
+    window_duration = OnnxClassifier.window_duration
 
     def __init__(
         self,
@@ -133,6 +144,8 @@ class HuggingFaceClassifier(BaseClassifier):
             for label in self.music_labels
             if label in self.label2id
         ]
+        id2label = self.model.config.id2label
+        self.labels = [id2label[i] for i in range(len(id2label))]
 
     def classify(self, chunk: AudioChunk) -> ClassificationResult:
         """Classify an audio chunk for music presence."""
@@ -155,7 +168,9 @@ class HuggingFaceClassifier(BaseClassifier):
         confidence = probs[0, self.music_indices].sum().item()
         is_music = confidence > self.threshold
 
-        return ClassificationResult(chunk=chunk, is_music=is_music, confidence=confidence)
+        return ClassificationResult(
+            chunk=chunk, is_music=is_music, confidence=confidence, probs=probs[0].cpu().numpy()
+        )
 
     def _resample(
         self, audio: np.ndarray, orig_sr: int, target_sr: int

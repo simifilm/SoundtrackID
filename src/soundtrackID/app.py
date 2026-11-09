@@ -171,7 +171,7 @@ def _get_classifier(threshold: float = 0.2):
     return _classifier
 
 
-def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, export_mava: bool = False, api: str = "acrcloud"):
+def _build_pipeline(output_dir: Path, threshold: float = 0.2, export_csv: bool = False, export_mava: bool = False, api: str = "acrcloud", bridge_gap: float = 2.0, hop: float = 5.0):
     from soundtrackID.aggregator import ChunkAggregator
     from soundtrackID.chunker import AudioChunker
     from soundtrackID.detection import build_detection_client
@@ -179,16 +179,19 @@ def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: f
     from soundtrackID.loaders import VideoLoader
     from soundtrackID.pipeline import Pipeline
 
+    classifier = _get_classifier(threshold=threshold)
+    window = classifier.window_duration
     return Pipeline(
         loader=VideoLoader(),
-        chunker=AudioChunker(chunk_duration=chunk_duration, overlap=0.0),
-        classifier=_get_classifier(threshold=threshold),
+        chunker=AudioChunker(chunk_duration=window, overlap=window - hop),
+        classifier=classifier,
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=build_detection_client(api),
         output_dir=output_dir,
         export_csv=export_csv,
         export_mava=export_mava,
+        bridge_gap=bridge_gap,
     )
 
 
@@ -355,8 +358,9 @@ async def analyze(
     staging_id: str = Form(""),
     film: str = Form(""),
     api: str = Form("acrcloud"),
-    chunk_duration: float = Form(10.0),
     threshold: float = Form(0.2),
+    bridge_gap: float = Form(2.0),
+    hop: float = Form(5.0),
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
     export_mava: str = Form("0"),
@@ -396,8 +400,9 @@ async def analyze(
             contents,
             original_name,
             run_id=run_id,
-            chunk_duration=chunk_duration,
             threshold=threshold,
+            bridge_gap=bridge_gap,
+            hop=hop,
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
             export_mava=export_mava == "1",
@@ -412,12 +417,57 @@ async def analyze(
     )
 
 
+@app.post("/rerun/{video_name}")
+async def rerun(
+    video_name: str,
+    api: str = Form("acrcloud"),
+    threshold: float = Form(0.2),
+    bridge_gap: float = Form(2.0),
+    hop: float = Form(5.0),
+    max_segment: float = Form(0.0),
+    export_csv: str = Form("0"),
+    export_mava: str = Form("0"),
+) -> StreamingResponse:
+    """Analyze a run's stored source video again with new settings.
+
+    Keeps the run's film metadata, so the video needn't be uploaded again.
+    """
+    run_dir = _safe_run_dir(video_name)
+    sources = sorted(run_dir.glob("source.*")) if run_dir.is_dir() else []
+    if not sources:
+        raise HTTPException(status_code=404, detail="No stored video for this run")
+    results_path = run_dir / "results.json"
+    film = json.loads(results_path.read_text()).get("film") if results_path.exists() else None
+
+    return StreamingResponse(
+        _run_pipeline_sse(
+            sources[0].read_bytes(),
+            f"{video_name}{sources[0].suffix}",
+            run_id=str(uuid.uuid4()),
+            threshold=threshold,
+            bridge_gap=bridge_gap,
+            hop=hop,
+            max_segment_duration=max_segment or None,
+            export_csv=export_csv == "1",
+            export_mava=export_mava == "1",
+            api=api,
+            film_override=film,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 async def _run_pipeline_sse(
     video_bytes: bytes,
     original_name: str,
     run_id: str,
-    chunk_duration: float = 10.0,
     threshold: float = 0.2,
+    bridge_gap: float = 2.0,
+    hop: float = 5.0,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
     export_mava: bool = False,
@@ -450,7 +500,7 @@ async def _run_pipeline_sse(
             else:
                 from soundtrackID.metadata.mp4_tags import read_mp4_tags
                 container_tags = read_mp4_tags(tmp_path) or None
-            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api)
+            pipeline = _build_pipeline(_OUTPUT_DIR, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api, bridge_gap=bridge_gap, hop=hop)
             results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
             result_dict = results.to_dict()
             # Saved so /resume continues with the same providers.

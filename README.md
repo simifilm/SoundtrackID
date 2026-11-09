@@ -153,6 +153,7 @@ uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolat
                       Music classifier backend (default: onnx)
 --no-isolation        Skip vocal isolation (faster)
 --chunk-duration SEC  Classifier chunk size in seconds (default: 10)
+--hop SEC             Step between overlapping classifier chunks (default: 5)
 --max-segment SEC     Split segments into chunks of at most N seconds before detection
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
 ```

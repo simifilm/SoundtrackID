@@ -16,12 +16,17 @@ from soundtrackID.detection import BaseMusicDetectionClient, RateLimitError
 from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackID.loaders import VideoLoader
 from soundtrackID.models import (
+    ClassificationResult,
     DetectionResult,
     IdentificationOutput,
     MusicSegment,
     ResultsOutput,
     SegmentOutput,
 )
+from soundtrackID.slots import merge_spans, stream_slots, top_classes
+
+# Seconds between the starts of overlapping classification windows.
+CLASSIFICATION_HOP_S = 5.0
 
 
 def _det_key(det: DetectionResult) -> tuple | None:
@@ -37,14 +42,20 @@ def _group_detections(
 ) -> list[list[tuple[MusicSegment, DetectionResult]]]:
     """Group detection results into cue-level blocks.
 
-    Pass 1: consecutive same-key runs (None==None so unidentified also merge).
-    Pass 2: bridge unidentified gaps <= gap_tolerance_s between identical tracks.
+    Pass 1: consecutive same-key runs (None==None so unidentified also merge),
+    as long as a clip starts <= gap_tolerance_s after the previous one ended.
+    Pass 2: bridge unidentified groups between identical tracks when the later
+    track starts <= gap_tolerance_s after the earlier one ended.
     """
-    # Pass 1: consecutive same-key grouping
+    # Pass 1: consecutive same-key grouping, not across longer non-music gaps
     groups: list[list[tuple[MusicSegment, DetectionResult]]] = []
     for item in results:
         key = _det_key(item[1])
-        if groups and key == _det_key(groups[-1][-1][1]):
+        if (
+            groups
+            and key == _det_key(groups[-1][-1][1])
+            and item[0].start_time - groups[-1][-1][0].end_time <= gap_tolerance_s
+        ):
             groups[-1].append(item)
         else:
             groups.append([item])
@@ -59,7 +70,7 @@ def _group_detections(
             gap_key is None
             and prev_key is not None
             and prev_key == _det_key(nxt[0][1])
-            and sum(seg.end_time - seg.start_time for seg, _ in curr) <= gap_tolerance_s
+            and nxt[0][0].start_time - prev[-1][0].end_time <= gap_tolerance_s
         ):
             groups[i - 1] = prev + curr + nxt
             groups.pop(i + 1)
@@ -79,11 +90,13 @@ class OutputWriter:
         conditioning: str = "original",
         export_csv: bool = False,
         export_mava: bool = False,
+        bridge_gap: float = 2.0,
     ) -> None:
         self.output_dir = output_dir
         self.conditioning = conditioning
         self.export_csv = export_csv
         self.export_mava = export_mava
+        self.bridge_gap = bridge_gap
 
     def write(
         self,
@@ -91,6 +104,8 @@ class OutputWriter:
         results: list[tuple[MusicSegment, DetectionResult]],
         waveform: dict | None = None,
         film: dict | None = None,
+        classification: list[dict] | None = None,
+        classification_windows: list[dict] | None = None,
     ) -> ResultsOutput:
         """Write detection results to disk.
 
@@ -104,7 +119,7 @@ class OutputWriter:
         segments_dir = video_output_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
 
-        groups = _group_detections(results)
+        groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
 
         segment_outputs: list[SegmentOutput] = []
         identification_outputs: list[IdentificationOutput] = []
@@ -114,7 +129,13 @@ class OutputWriter:
             audio_filename = f"{segment_id}.wav"
             audio_path = segments_dir / audio_filename
 
-            combined_audio = np.concatenate([seg.audio for seg, _ in group])
+            # A run's last clip is anchored to the run's end and can overlap the
+            # clip before it; keep only the part after the previous clip ended.
+            parts = [group[0][0].audio]
+            for (prev, _), (seg, _) in zip(group, group[1:]):
+                overlap = max(0, round((prev.end_time - seg.start_time) * seg.sample_rate))
+                parts.append(seg.audio[overlap:])
+            combined_audio = np.concatenate(parts)
             sample_rate = group[0][0].sample_rate
             audio_int16 = (np.clip(combined_audio, -1.0, 1.0) * 32767).astype(np.int16)
             wavfile.write(audio_path, sample_rate, audio_int16)
@@ -161,6 +182,8 @@ class OutputWriter:
             identifications=identification_outputs,
             waveform=waveform,
             film=film,
+            classification=classification,
+            classification_windows=classification_windows,
         )
 
         results_path = video_output_dir / "results.json"
@@ -208,6 +231,7 @@ class Pipeline:
         export_csv: bool = False,
         export_mava: bool = False,
         detection_concurrency: int = 4,
+        bridge_gap: float = 2.0,
     ) -> None:
         self.loader = loader
         self.chunker = chunker
@@ -224,7 +248,11 @@ class Pipeline:
         # Determine conditioning based on isolator type
         conditioning = "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
         self.output_writer = OutputWriter(
-            self.output_dir, conditioning=conditioning, export_csv=export_csv, export_mava=export_mava
+            self.output_dir,
+            conditioning=conditioning,
+            export_csv=export_csv,
+            export_mava=export_mava,
+            bridge_gap=bridge_gap,
         )
 
     def run(self, video_path: Path, on_progress=None, max_segment_duration: float | None = None, container_tags: dict | None = None) -> ResultsOutput:
@@ -337,14 +365,34 @@ class Pipeline:
                 idx, chunk_seg = pending.pop(fut)
                 emit_reaped(idx, chunk_seg, reap(fut, chunk_seg), label=False)
 
+        # Every window's top classes, so a wrong music verdict can be traced.
+        windows: list[dict] = []
+
         def classified_stream():
             for chunk in self.chunker.chunk(audio, sample_rate):
                 result = self.classifier.classify(chunk)
+                windows.append({
+                    "start": chunk.start_time,
+                    "end": chunk.end_time,
+                    "music": round(result.confidence, 4),
+                    "is_music": result.is_music,
+                    "classes": top_classes(result.probs, self.classifier.labels, 3),
+                })
                 status = "MUSIC" if result.is_music else "-----"
                 detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
                 print(f"  {detail}")
                 progress("classifying", detail)
                 yield result
+
+        # The aggregator gets gap-free hop-sized slots instead of the overlapping
+        # windows; the slots are also kept for the classification spans.
+        slots: list[ClassificationResult] = []
+
+        def slot_stream():
+            hop = self.chunker.chunk_duration - self.chunker.overlap
+            for slot in stream_slots(classified_stream(), audio, sample_rate, hop):
+                slots.append(slot)
+                yield slot
 
         try:
             # Windows are emitted as soon as each is fully classified (even mid
@@ -352,7 +400,7 @@ class Pipeline:
             # later audio. Isolation stays on this driver thread (a no-op for the
             # default DummyIsolator; the optional GPU DemucsIsolator is per-window).
             for window in self.aggregator.stream_windows(
-                classified_stream(), audio, sample_rate, window_duration=max_segment_duration
+                slot_stream(), audio, sample_rate, window_duration=max_segment_duration
             ):
                 iso_audio = self.isolator.isolate(window.audio, window.sample_rate)
                 chunk_seg = MusicSegment(
@@ -406,7 +454,14 @@ class Pipeline:
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
-        output = self.output_writer.write(video_path, detection_results, waveform=waveform_data, film=container_tags or None)
+        output = self.output_writer.write(
+            video_path,
+            detection_results,
+            waveform=waveform_data,
+            film=container_tags or None,
+            classification=merge_spans(slots, self.classifier.labels),
+            classification_windows=windows,
+        )
         output.rate_limited = rate_limited
         return output
 
@@ -457,6 +512,12 @@ if __name__ == "__main__":
         help="Chunk duration in seconds (default: 10.0)",
     )
     parser.add_argument(
+        "--hop",
+        type=float,
+        default=CLASSIFICATION_HOP_S,
+        help=f"Step between overlapping chunks in seconds (default: {CLASSIFICATION_HOP_S})",
+    )
+    parser.add_argument(
         "--max-segment",
         type=float,
         default=None,
@@ -473,7 +534,7 @@ if __name__ == "__main__":
 
     # Create components
     loader = VideoLoader()
-    chunker = AudioChunker(chunk_duration=args.chunk_duration, overlap=2.0)
+    chunker = AudioChunker(chunk_duration=args.chunk_duration, overlap=args.chunk_duration - args.hop)
 
     if args.classifier == "hf":
         from soundtrackID.classifiers import HuggingFaceClassifier
