@@ -201,4 +201,6 @@ if __name__ == "__main__":
         )
         result = classifier.classify(chunk)
         status = "YES" if result.is_music else "NO"
-        print(f"{offset:3d}-{offset+10:3d}s: {status}  ({result.confidence*100:.1f}%)")
+        print(
+            f"{offset:3d}-{offset + 10:3d}s: {status}  ({result.confidence * 100:.1f}%)"
+        )
