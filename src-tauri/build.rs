@@ -4,7 +4,14 @@ use std::process::Command;
 
 fn main() {
     ensure_icons_fetched();
-    tauri_build::build()
+    // Generates the `allow-save-file` permission; the page is served by the local
+    // Python server, which Tauri treats as remote, so commands must be granted
+    // explicitly (see capabilities/default.json).
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(&["save_file"])),
+    )
+    .expect("failed to run tauri-build");
 }
 
 fn ensure_icons_fetched() {

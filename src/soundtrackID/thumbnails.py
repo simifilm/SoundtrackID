@@ -17,8 +17,8 @@ def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
     """Extract an evenly-spaced frame strip and save it as one JPEG sprite.
 
     Returns metadata ``{"count", "thumb_width", "thumb_height", "duration"}`` on
-    success, or ``None`` if the file has no usable video stream or extraction
-    fails (callers treat that as "no filmstrip" and carry on).
+    success, or ``None`` if the file has no usable video stream (e.g. audio-only
+    uploads) or extraction fails (callers treat that as "no filmstrip" and carry on).
     """
     try:
         container = av.open(str(video_path))
@@ -26,9 +26,12 @@ def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
         return None
 
     try:
-        if not container.streams.video:
+        # Skip embedded cover art (e.g. in MP3s), which PyAV exposes as a video stream.
+        streams = [s for s in container.streams.video
+                   if not s.disposition & av.stream.Disposition.attached_pic]
+        if not streams:
             return None
-        stream = container.streams.video[0]
+        stream = streams[0]
 
         # Duration in seconds (prefer stream, fall back to container).
         duration = None

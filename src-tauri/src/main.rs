@@ -43,6 +43,30 @@ fn find_python() -> String {
     if cfg!(target_os = "windows") { "python".to_owned() } else { "python3".to_owned() }
 }
 
+/// Ask where to save a file from the page (results JSON/CSV, MAVA export zip) and
+/// write it there; the webview would otherwise drop downloads straight into
+/// Downloads. Returns `false` if the user cancelled the dialog.
+#[tauri::command]
+async fn save_file(
+    window: tauri::WebviewWindow,
+    filename: String,
+    contents: Vec<u8>,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(path) = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_file_name(filename)
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(path, contents).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 fn wait_for_server(port: u16) -> bool {
     use std::net::TcpStream;
     let addr = format!("127.0.0.1:{}", port);
@@ -133,6 +157,8 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![save_file])
         .setup(move |app| {
             let _ = find_bundled_server(app); // satisfies the Manager import
             tauri::WebviewWindowBuilder::new(

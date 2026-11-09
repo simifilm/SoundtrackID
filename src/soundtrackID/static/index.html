@@ -1132,9 +1132,9 @@
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
     </svg>
-    <p class="drop-label">Drop a video file here</p>
-    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi accepted</p>
-    <input type="file" id="file-input" accept="video/*">
+    <p class="drop-label">Drop a video or audio file here</p>
+    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi, .mp3, .wav accepted</p>
+    <input type="file" id="file-input" accept="video/*,audio/*">
   </div>
 
   <!-- Film confirmation (shown after a file is picked, before analysis) -->
@@ -1517,14 +1517,14 @@ document.getElementById('opt-csv').addEventListener('change', function() {
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-const VIDEO_EXTS = new Set(['.mp4','.mov','.avi','.mkv','.webm','.m4v','.mpg','.mpeg','.wmv','.flv']);
-function isVideoFile(file) {
-  if (file.type.startsWith('video/')) return true;
+const MEDIA_EXTS = new Set(['.mp4','.mov','.avi','.mkv','.webm','.m4v','.mpg','.mpeg','.wmv','.flv','.mp3','.wav']);
+function isMediaFile(file) {
+  if (file.type.startsWith('video/') || file.type.startsWith('audio/')) return true;
   const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-  return VIDEO_EXTS.has(ext);
+  return MEDIA_EXTS.has(ext);
 }
 function rejectFile() {
-  errorArea.textContent = 'Only video files are supported (.mp4, .mov, .avi, .mkv …)';
+  errorArea.textContent = 'Only video or audio files are supported (.mp4, .mov, .mkv, .mp3, .wav …)';
   errorArea.style.display = 'block';
 }
 
@@ -1533,13 +1533,13 @@ dropZone.addEventListener('drop', e => {
   dropZone.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
   if (!file) return;
-  if (!isVideoFile(file)) { rejectFile(); return; }
+  if (!isMediaFile(file)) { rejectFile(); return; }
   beginIdentify(file);
 });
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
   if (!file) return;
-  if (!isVideoFile(file)) { rejectFile(); fileInput.value = ''; return; }
+  if (!isMediaFile(file)) { rejectFile(); fileInput.value = ''; return; }
   beginIdentify(file);
 });
 
@@ -2089,8 +2089,20 @@ function handleEvent(ev) {
 }
 
 // Download helpers
-function triggerDownload(content, filename, type) {
-  const blob = new Blob([content], { type });
+// `content` is a string, or a Blob (e.g. a zip fetched from the server).
+async function triggerDownload(content, filename, type) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  // In the desktop app, ask where to save (the webview would save straight to
+  // Downloads). In a plain browser, download as usual.
+  if (window.__TAURI__) {
+    try {
+      const contents = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      await window.__TAURI__.core.invoke('save_file', { filename, contents });
+    } catch (err) {
+      alert(`Could not save ${filename}: ${err}`);
+    }
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -2830,18 +2842,22 @@ resetBtn.addEventListener('click', () => {
   loadHistory();
 });
 
-downloadBtn.addEventListener('click', () => {
+downloadBtn.addEventListener('click', async () => {
   if (!currentResults) return;
   const stem = currentResults.video_name || 'results';
-  triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
+  // Sequential, so the desktop app shows one save dialog after the other.
+  await triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
   if (document.getElementById('opt-csv').checked) {
-    triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
+    await triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
   }
 });
 
-document.getElementById('mava-export-btn').addEventListener('click', () => {
+document.getElementById('mava-export-btn').addEventListener('click', async () => {
   if (!currentVideoName) return;
-  window.location.href = `/output/${encodeURIComponent(currentVideoName)}/mava`;
+  const res = await fetch(`/output/${encodeURIComponent(currentVideoName)}/mava`);
+  if (!res.ok) { alert(`MAVA export failed (HTTP ${res.status})`); return; }
+  // Same name the server sends in Content-Disposition.
+  await triggerDownload(await res.blob(), currentVideoName + '_mava_export.zip');
 });
 
 cancelBtn.addEventListener('click', async () => {
