@@ -71,7 +71,7 @@ def test_classification_spans_cover_whole_audio(tmp_path):
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
-        classifier=FakeClassifier(),
+        classifier=FakeClassifier(music_starts=(5.0, 10.0, 15.0)),
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=NoMatchClient(),
@@ -121,11 +121,11 @@ def test_classification_windows_list_top_three_classes(tmp_path):
 
 
 def test_cue_audio_skips_overlap_of_anchored_clip(tmp_path):
-    """Clips 5-20 s and 10-25 s of one cue give 20 s of audio, not 30 s."""
+    """Clips 0-15 s and 5-20 s of one cue give 20 s of audio, not 30 s."""
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
-        classifier=FakeClassifier(music_starts=(5.0, 15.0)),  # music run 5-25 s
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0)),  # run 0-20 s
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=SameTitleClient(),
@@ -135,10 +135,10 @@ def test_cue_audio_skips_overlap_of_anchored_clip(tmp_path):
     results = pipeline.run(Path("film.mp4"), max_segment_duration=15.0)
 
     [cue] = results.segments
-    assert (cue.start, cue.duration) == (5.0, 20.0)
+    assert (cue.start, cue.duration) == (0.0, 20.0)
     rate, wav = wavfile.read(tmp_path / "film" / cue.audio_file)
     audio, _ = FakeLoader().load(None)
-    np.testing.assert_allclose(wav / 32767, audio[5 * SR : 25 * SR], atol=1e-4)
+    np.testing.assert_allclose(wav / 32767, audio[: 20 * SR], atol=1e-4)
 
 
 @pytest.mark.parametrize("bridge_gap, n_cues", [(10.0, 1), (5.0, 3)])

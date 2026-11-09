@@ -16,21 +16,24 @@ def stream_slots(
 ) -> Iterator[ClassificationResult]:
     """Turn overlapping window results into consecutive, gap-free hop-sized slots.
 
-    A slot is music if any window fully containing it is music. Its confidence
-    and probs are the mean over the containing windows that agree with that
-    verdict, so its music score stays on the same side of the threshold as the
-    verdict. Assumes windows arrive in start order and are at least ``hop``
-    long, which the chunker guarantees.
+    A slot is music if more than half of the windows that fully contain a slot
+    away from the edges say music: 3 of 4 at a 2.5 s hop, 2 of 2 at 5 s, 1 at
+    10 s. Near the start and end fewer windows cover a slot; there all of them
+    must say music. Its confidence and probs are the mean over the containing
+    windows that agree with the verdict, so its music score stays on the same
+    side of the threshold as the verdict. Assumes windows arrive in start order
+    and are at least ``hop`` long, which the chunker guarantees.
     """
     hop_n = round(hop * sample_rate)
     total = len(audio)
     pending: list[tuple[int, int, ClassificationResult]] = []
     next_slot = 0
+    needed = 0  # music votes a slot away from the edges needs (set from 1st window)
 
     def emit(a: int) -> ClassificationResult:
         b = min(a + hop_n, total)
         covering = [r for s, e, r in pending if s <= a and e >= b]
-        is_music = any(r.is_music for r in covering)
+        is_music = sum(r.is_music for r in covering) >= min(needed, len(covering))
         agreeing = [r for r in covering if r.is_music == is_music]
         return ClassificationResult(
             chunk=AudioChunk(
@@ -47,6 +50,8 @@ def stream_slots(
     for result in results:
         s = round(result.chunk.start_time * sample_rate)
         e = round(result.chunk.end_time * sample_rate)
+        if not needed:
+            needed = (e - s) // hop_n // 2 + 1
         # A window starting after a slot's start can't contain it, so every
         # slot before this window is final.
         while next_slot < s:

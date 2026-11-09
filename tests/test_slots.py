@@ -32,8 +32,8 @@ def spans_of(slots):
     return [(s.chunk.start_time, s.chunk.end_time, s.is_music) for s in slots]
 
 
-def test_slot_is_music_if_any_covering_window_is_music():
-    """One music window makes both slots it contains music (OR rule)."""
+def test_isolated_music_window_makes_no_music():
+    """At a 5 s hop both windows covering a slot must say music."""
     p_no, p_music = [0.9, 0.05, 0.05], [0.4, 0.5, 0.1]
     audio, results = classify_windows(
         20, [False, True, False], [p_no, p_music, p_no]
@@ -41,15 +41,29 @@ def test_slot_is_music_if_any_covering_window_is_music():
 
     slots = list(stream_slots(results, audio, SR, hop=5.0))
 
+    assert not any(s.is_music for s in slots)
+    # A no-music slot only uses the no-music windows covering it.
+    np.testing.assert_allclose(slots[1].probs, p_no)
+
+
+def test_slot_is_music_when_both_windows_agree():
+    """Two neighbouring music windows make the slot they share music."""
+    p_no, p_music = [0.9, 0.05, 0.05], [0.4, 0.5, 0.1]
+    audio, results = classify_windows(
+        25, [False, True, True, False], [p_no, p_music, p_music, p_no]
+    )
+
+    slots = list(stream_slots(results, audio, SR, hop=5.0))
+
     assert spans_of(slots) == [
         (0.0, 5.0, False),
-        (5.0, 10.0, True),
+        (5.0, 10.0, False),
         (10.0, 15.0, True),
         (15.0, 20.0, False),
+        (20.0, 25.0, False),
     ]
-    # A music slot only uses the music windows covering it.
-    np.testing.assert_allclose(slots[1].probs, p_music)
-    assert slots[1].confidence == 0.5
+    np.testing.assert_allclose(slots[2].probs, p_music)
+    assert slots[2].confidence == 0.5
 
 
 def test_no_music_slot_averages_all_covering_windows():
@@ -63,16 +77,47 @@ def test_no_music_slot_averages_all_covering_windows():
     np.testing.assert_allclose(slots[1].probs, np.mean([p0, p1], axis=0))
 
 
-def test_music_slot_averages_only_agreeing_windows():
-    """A mixed slot is music and ignores the no-music window."""
-    p0, p1, p2 = [0.3, 0.6, 0.1], [0.4, 0.5, 0.1], [0.9, 0.05, 0.05]
-    audio, results = classify_windows(20, [True, True, False], [p0, p1, p2])
+def test_three_of_four_is_music_and_averages_only_agreeing_windows():
+    """At a 2.5 s hop 3 of 4 music windows suffice; the no-music one is ignored."""
+    p = [[0.3, 0.6, 0.1], [0.4, 0.5, 0.1], [0.9, 0.05, 0.05], [0.2, 0.7, 0.1],
+         [0.9, 0.05, 0.05]]
+    audio, results = classify_windows(20, [True, True, False, True, False], p, hop=2.5)
+
+    slots = list(stream_slots(results, audio, SR, hop=2.5))
+
+    # Slot 7.5-10 s lies in the windows starting at 0, 2.5, 5 (no music) and 7.5.
+    assert slots[3].is_music
+    np.testing.assert_allclose(slots[3].probs, np.mean([p[0], p[1], p[3]], axis=0))
+
+
+def test_edge_slots_need_all_their_windows_at_hop_2_5():
+    """Near the start and end fewer than 4 windows cover a slot; all must agree."""
+    p = [[0.4, 0.5, 0.1]] * 5
+    audio, results = classify_windows(20, [True, True, False, True, True], p, hop=2.5)
+
+    slots = list(stream_slots(results, audio, SR, hop=2.5))
+
+    # Windows covering each slot: 1, 2, 3, 4, 4, 3, 2, 1 (the third has the miss).
+    assert [s.is_music for s in slots] == [
+        True, True, False, True, True, False, True, True,
+    ]
+
+
+def test_end_slots_covered_only_by_the_tail_window():
+    """The end-anchored tail can be the only window for the last two slots."""
+    p = [[0.4, 0.5, 0.1]] * 4
+    # 25.1 s: windows 0-10.23, 5-15.23, 10-20.23 and the tail 14.87-25.1.
+    audio, results = classify_windows(
+        25.1, [False, False, False, True], p, window=10.23, hop=5.0
+    )
 
     slots = list(stream_slots(results, audio, SR, hop=5.0))
 
-    np.testing.assert_allclose(slots[1].probs, np.mean([p0, p1], axis=0))
-    assert slots[2].is_music
-    np.testing.assert_allclose(slots[2].probs, p1)
+    assert spans_of(slots)[-3:] == [
+        (15.0, 20.0, False),  # 10-20.23 and the tail disagree
+        (20.0, 25.0, True),
+        (25.0, 25.1, True),
+    ]
 
 
 def test_slots_are_gapless_and_cover_the_tail():
@@ -132,16 +177,16 @@ def test_merge_spans_joins_same_verdict_slots_with_all_classes():
     """Neighbouring slots with the same verdict merge; every class is kept."""
     p_no, p_music = [0.9, 0.05, 0.05], [0.4, 0.5, 0.1]
     audio, results = classify_windows(
-        20, [False, True, False], [p_no, p_music, p_no]
+        30, [False, True, True, True, False], [p_no, p_music, p_music, p_music, p_no]
     )
     slots = list(stream_slots(results, audio, SR, hop=5.0))
 
     spans = merge_spans(slots, LABELS)
 
     assert [(s["start"], s["end"], s["is_music"]) for s in spans] == [
-        (0.0, 5.0, False),
-        (5.0, 15.0, True),
-        (15.0, 20.0, False),
+        (0.0, 10.0, False),
+        (10.0, 20.0, True),
+        (20.0, 30.0, False),
     ]
     music = spans[1]["classes"]
     assert list(music) == ["Music", "Speech", "Orchestra"]  # sorted by probability
