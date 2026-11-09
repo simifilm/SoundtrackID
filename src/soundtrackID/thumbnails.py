@@ -8,9 +8,9 @@ from pathlib import Path
 
 import av
 
-THUMB_HEIGHT = 48        # px, per thumbnail
-MAX_COLUMNS = 240        # cap on number of frames in the strip
-SECONDS_PER_THUMB = 4    # target spacing
+THUMB_HEIGHT = 48  # px, per thumbnail
+MAX_COLUMNS = 240  # cap on number of frames in the strip
+SECONDS_PER_THUMB = 4  # target spacing
 
 
 def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:

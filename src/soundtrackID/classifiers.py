@@ -49,20 +49,23 @@ class OnnxClassifier(BaseClassifier):
             providers=["CPUExecutionProvider"],
         )
 
-        import json, pathlib
+        import json
+        import pathlib
+
         cfg = json.loads((pathlib.Path(model_dir) / "config.json").read_text())
         label2id = cfg.get("label2id", {})
         self.music_indices = [
-            int(label2id[label])
-            for label in self.music_labels
-            if label in label2id
+            int(label2id[label]) for label in self.music_labels if label in label2id
         ]
 
     def _extract_features(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         """Compute Kaldi-style log-mel spectrogram matching ASTFeatureExtractor."""
         import librosa
+
         if sample_rate != self._SAMPLE_RATE:
-            audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=self._SAMPLE_RATE)
+            audio = librosa.resample(
+                audio, orig_sr=sample_rate, target_sr=self._SAMPLE_RATE
+            )
         mel = librosa.feature.melspectrogram(
             y=audio.astype(np.float32),
             sr=self._SAMPLE_RATE,
@@ -76,7 +79,9 @@ class OnnxClassifier(BaseClassifier):
         )
         log_mel = np.log(np.maximum(mel, 1e-10)).T  # (time, mels)
         if log_mel.shape[0] < self._MAX_LENGTH:
-            log_mel = np.pad(log_mel, ((0, self._MAX_LENGTH - log_mel.shape[0]), (0, 0)))
+            log_mel = np.pad(
+                log_mel, ((0, self._MAX_LENGTH - log_mel.shape[0]), (0, 0))
+            )
         else:
             log_mel = log_mel[: self._MAX_LENGTH]
         # Normalize with AudioSet statistics (matches ASTFeatureExtractor do_normalize)
@@ -89,7 +94,9 @@ class OnnxClassifier(BaseClassifier):
         exp = np.exp(logits - logits.max(axis=-1, keepdims=True))
         probs = exp / exp.sum(axis=-1, keepdims=True)
         confidence = float(probs[0, self.music_indices].sum())
-        return ClassificationResult(chunk=chunk, is_music=confidence > self.threshold, confidence=confidence)
+        return ClassificationResult(
+            chunk=chunk, is_music=confidence > self.threshold, confidence=confidence
+        )
 
 
 class HuggingFaceClassifier(BaseClassifier):
@@ -155,11 +162,11 @@ class HuggingFaceClassifier(BaseClassifier):
         confidence = probs[0, self.music_indices].sum().item()
         is_music = confidence > self.threshold
 
-        return ClassificationResult(chunk=chunk, is_music=is_music, confidence=confidence)
+        return ClassificationResult(
+            chunk=chunk, is_music=is_music, confidence=confidence
+        )
 
-    def _resample(
-        self, audio: np.ndarray, orig_sr: int, target_sr: int
-    ) -> np.ndarray:
+    def _resample(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
         """Resample audio to target sample rate."""
         if orig_sr == target_sr:
             return audio

@@ -6,15 +6,26 @@ from soundtrackID.temporal import temporal_rerank
 def _cue(primary_year, alts):
     """Build a cue whose top candidate has primary_year plus given alternatives
     (each a (release_year, score) tuple)."""
-    candidates = [{"title": "Top", "artist": "X", "release_year": primary_year, "score": 90.0}]
+    candidates = [
+        {"title": "Top", "artist": "X", "release_year": primary_year, "score": 90.0}
+    ]
     for i, (yr, score) in enumerate(alts):
-        candidates.append({
-            "title": f"Alt{i}", "artist": "Y", "release_year": yr, "score": score,
-            "isrc": f"ALT{i}", "album": "A",
-        })
+        candidates.append(
+            {
+                "title": f"Alt{i}",
+                "artist": "Y",
+                "release_year": yr,
+                "score": score,
+                "isrc": f"ALT{i}",
+                "album": "A",
+            }
+        )
     return {
-        "segment_id": "s1", "title": "Top", "artist": "X",
-        "release_year": primary_year, "candidates": candidates,
+        "segment_id": "s1",
+        "title": "Top",
+        "artist": "X",
+        "release_year": primary_year,
+        "candidates": candidates,
     }
 
 

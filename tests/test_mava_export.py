@@ -1,4 +1,7 @@
-"""Tests for MAVA/VIAN-Export compatible export (mava_export.py + GET /output/{video_name}/mava)."""
+"""Tests for the MAVA/VIAN-Export compatible export.
+
+Covers mava_export.py and GET /output/{video_name}/mava.
+"""
 
 import io
 import json
@@ -14,12 +17,21 @@ client = TestClient(app_module.app)
 
 def test_build_mava_tsv_uses_title_artist_label():
     cues = [
-        {"start": 12.5, "duration": 30.0, "title": "Main Theme", "artist": "John Williams"},
+        {
+            "start": 12.5,
+            "duration": 30.0,
+            "title": "Main Theme",
+            "artist": "John Williams",
+        },
         {"start": 100.0, "duration": 5.0, "title": None, "artist": None},
     ]
     tsv = build_mava_tsv(cues)
     lines = tsv.strip("\n").split("\n")
-    assert lines[0].split("\t") == ["start_in_seconds", "duration_in_seconds", "annotation"]
+    assert lines[0].split("\t") == [
+        "start_in_seconds",
+        "duration_in_seconds",
+        "annotation",
+    ]
     assert lines[1] == "12.5\t30.0\tMain Theme — John Williams"
     assert lines[2] == "100.0\t5.0\tUnidentified music"
 
@@ -37,9 +49,13 @@ def test_export_endpoint_returns_zip_with_tsv_and_mapping(tmp_path, monkeypatch)
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     run_dir = tmp_path / "myrun"
     run_dir.mkdir()
-    (run_dir / "results.json").write_text(json.dumps({
-        "cues": [{"start": 1.0, "duration": 2.0, "title": "T", "artist": "A"}],
-    }))
+    (run_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "cues": [{"start": 1.0, "duration": 2.0, "title": "T", "artist": "A"}],
+            }
+        )
+    )
 
     r = client.get("/output/myrun/mava")
     assert r.status_code == 200

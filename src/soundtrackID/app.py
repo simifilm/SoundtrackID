@@ -7,6 +7,7 @@ import mimetypes
 import os
 import queue
 import shutil
+import sys as _sys
 import tempfile
 import threading
 import uuid
@@ -19,11 +20,10 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-import sys as _sys
-
 # Load .env early so TMDb credentials are available downstream
 try:
     from dotenv import load_dotenv
+
     if getattr(_sys, "frozen", False):
         # In the bundled .app, .env lives next to the binary
         _env_path = Path(_sys.executable).parent / ".env"
@@ -45,7 +45,9 @@ else:
 
 if getattr(_sys, "frozen", False):
     # Writable user directory inside the macOS app sandbox
-    _OUTPUT_DIR = Path.home() / "Library" / "Application Support" / "SoundtrackID" / "cache"
+    _OUTPUT_DIR = (
+        Path.home() / "Library" / "Application Support" / "SoundtrackID" / "cache"
+    )
 else:
     _OUTPUT_DIR = Path("./output/cache")
 
@@ -100,6 +102,7 @@ def _settings_state() -> dict:
         }
     return state
 
+
 # ── Singleton classifier (loaded once at startup) ─────────────────────────────
 _classifier = None
 _classifier_lock = threading.Lock()
@@ -125,6 +128,7 @@ _STAGING_TTL_S = 6 * 3600
 def _prune_staging() -> None:
     """Best-effort removal of staged uploads left behind by abandoned confirmations."""
     import time
+
     try:
         for d in _STAGING_DIR.iterdir():
             try:
@@ -149,6 +153,7 @@ def _get_classifier(threshold: float = 0.2):
             if _classifier is None:
                 if getattr(_sys, "frozen", False):
                     from soundtrackID.classifiers import OnnxClassifier
+
                     _classifier = OnnxClassifier(
                         model_dir=str(Path(_sys._MEIPASS) / "ast_model"),
                         music_labels=["Music"],
@@ -159,9 +164,13 @@ def _get_classifier(threshold: float = 0.2):
                     use_hf = os.environ.get("FIWI_HF") or not onnx_model_dir.exists()
                     if use_hf:
                         from soundtrackID.classifiers import HuggingFaceClassifier
-                        _classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
+
+                        _classifier = HuggingFaceClassifier(
+                            music_labels=["Music"], threshold=threshold
+                        )
                     else:
                         from soundtrackID.classifiers import OnnxClassifier
+
                         _classifier = OnnxClassifier(
                             model_dir=str(onnx_model_dir),
                             music_labels=["Music"],
@@ -171,7 +180,14 @@ def _get_classifier(threshold: float = 0.2):
     return _classifier
 
 
-def _build_pipeline(output_dir: Path, chunk_duration: float = 10.0, threshold: float = 0.2, export_csv: bool = False, export_mava: bool = False, api: str = "acrcloud"):
+def _build_pipeline(
+    output_dir: Path,
+    chunk_duration: float = 10.0,
+    threshold: float = 0.2,
+    export_csv: bool = False,
+    export_mava: bool = False,
+    api: str = "acrcloud",
+):
     from soundtrackID.aggregator import ChunkAggregator
     from soundtrackID.chunker import AudioChunker
     from soundtrackID.detection import build_detection_client
@@ -282,6 +298,7 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
     film: dict = {}
     try:
         from soundtrackID.metadata.mp4_tags import read_mp4_tags
+
         film = read_mp4_tags(staged_path) or {}
     except Exception:
         film = {}
@@ -289,7 +306,9 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
     if online == "1":
         try:
             import httpx
+
             from soundtrackID.metadata.film import FilmLookup
+
             client = httpx.Client(timeout=15.0)
             try:
                 lookup = FilmLookup(
@@ -305,7 +324,10 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
                 )
                 # First non-null wins: keep tag values, fill gaps from the lookup.
                 resolved = info.to_dict()
-                film = {k: (film.get(k) if film.get(k) is not None else resolved.get(k)) for k in {*film, *resolved}}
+                film = {
+                    k: (film.get(k) if film.get(k) is not None else resolved.get(k))
+                    for k in {*film, *resolved}
+                }
             finally:
                 client.close()
         except Exception:
@@ -316,9 +338,14 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
 
 @app.post("/film/lookup")
 async def film_lookup(hint: dict = Body(default={})) -> dict:
-    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year). No file needed."""
+    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year).
+
+    No file needed.
+    """
     import httpx
+
     from soundtrackID.metadata.film import FilmLookup
+
     year = hint.get("year")
     try:
         year = int(year) if year not in (None, "") else None
@@ -370,7 +397,9 @@ async def analyze(
         with _staging_lock:
             staged_path = _staging.pop(staging_id, None)
         if not staged_path or not staged_path.exists():
-            raise HTTPException(status_code=400, detail="Staged upload not found or expired")
+            raise HTTPException(
+                status_code=400, detail="Staged upload not found or expired"
+            )
         contents = staged_path.read_bytes()
         original_name = staged_path.name
         shutil.rmtree(staged_path.parent, ignore_errors=True)
@@ -384,7 +413,9 @@ async def analyze(
     if film:
         try:
             parsed = json.loads(film)
-            if isinstance(parsed, dict) and any(v not in (None, "") for v in parsed.values()):
+            if isinstance(parsed, dict) and any(
+                v not in (None, "") for v in parsed.values()
+            ):
                 film_override = {k: v for k, v in parsed.items() if v not in (None, "")}
         except (ValueError, TypeError):
             film_override = None
@@ -449,9 +480,22 @@ async def _run_pipeline_sse(
                 container_tags = film_override
             else:
                 from soundtrackID.metadata.mp4_tags import read_mp4_tags
+
                 container_tags = read_mp4_tags(tmp_path) or None
-            pipeline = _build_pipeline(_OUTPUT_DIR, chunk_duration=chunk_duration, threshold=threshold, export_csv=export_csv, export_mava=export_mava, api=api)
-            results = pipeline.run(tmp_path, on_progress=on_progress, max_segment_duration=max_segment_duration, container_tags=container_tags)
+            pipeline = _build_pipeline(
+                _OUTPUT_DIR,
+                chunk_duration=chunk_duration,
+                threshold=threshold,
+                export_csv=export_csv,
+                export_mava=export_mava,
+                api=api,
+            )
+            results = pipeline.run(
+                tmp_path,
+                on_progress=on_progress,
+                max_segment_duration=max_segment_duration,
+                container_tags=container_tags,
+            )
             result_dict = results.to_dict()
             # Saved so /resume continues with the same providers.
             result_dict["providers"] = [p.strip() for p in api.split(",") if p.strip()]
@@ -460,10 +504,12 @@ async def _run_pipeline_sse(
             # anachronistic top hit, now that the film year is known.
             try:
                 from soundtrackID.temporal import temporal_rerank
+
                 film_year = (result_dict.get("film") or {}).get("year")
                 temporal_rerank(result_dict, film_year)
             except Exception:
                 import traceback as _tb
+
                 print("temporal rerank failed:\n" + _tb.format_exc())
 
             # Automatic composer lookup: join composer / death-year / work directly
@@ -471,15 +517,23 @@ async def _run_pipeline_sse(
             # an ISRC. Best-effort — a network failure must not fail the analysis.
             try:
                 import httpx
+
                 from soundtrackID.metadata.enricher import enrich as _enrich_results
 
                 def _music_cb(step: str, **kw) -> None:
                     if cancel_event.is_set():
                         raise _PipelineCancelled()
                     if step == "music_start":
-                        ev_queue.put({"step": "enriching", "detail": f"0/{kw.get('total', 0)}"})
+                        ev_queue.put(
+                            {"step": "enriching", "detail": f"0/{kw.get('total', 0)}"}
+                        )
                     elif step == "music_cue":
-                        ev_queue.put({"step": "enriching", "detail": f"{kw.get('index')}/{kw.get('total')}"})
+                        ev_queue.put(
+                            {
+                                "step": "enriching",
+                                "detail": f"{kw.get('index')}/{kw.get('total')}",
+                            }
+                        )
 
                 _client = httpx.Client(timeout=15.0)
                 try:
@@ -497,6 +551,7 @@ async def _run_pipeline_sse(
                 raise
             except Exception:
                 import traceback as _tb
+
                 print("automatic composer enrichment failed:\n" + _tb.format_exc())
 
             # Persist the source video + a thumbnail filmstrip so the UI can show a
@@ -507,11 +562,13 @@ async def _run_pipeline_sse(
                 video_dest = run_dir / f"source{ext}"
                 shutil.move(str(tmp_path), str(video_dest))
                 from soundtrackID.thumbnails import extract_filmstrip
+
                 film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
                 result_dict["video"] = {"file": f"source{ext}", "filmstrip": film}
                 _atomic_write_json(run_dir / "results.json", result_dict)
             except Exception:
                 import traceback as _tb
+
                 print("video/filmstrip persist failed:\n" + _tb.format_exc())
             # The waveform (up to ~60k points) is already streamed separately via
             # the "waveform" step and persisted in results.json; omit it from the
@@ -522,7 +579,14 @@ async def _run_pipeline_sse(
             ev_queue.put({"step": "cancelled"})
         except Exception as exc:
             import traceback
-            ev_queue.put({"step": "error", "detail": str(exc), "traceback": traceback.format_exc()})
+
+            ev_queue.put(
+                {
+                    "step": "error",
+                    "detail": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             with _cancel_lock:
@@ -591,13 +655,15 @@ async def history() -> list[dict]:
             try:
                 data = json.loads(results_path.read_text())
                 cues = data.get("cues", [])
-                items.append({
-                    "video_name": run_dir.name,
-                    "timestamp": results_path.stat().st_mtime,
-                    "total": len(cues),
-                    "identified": sum(1 for c in cues if c.get("title")),
-                    "results": data,
-                })
+                items.append(
+                    {
+                        "video_name": run_dir.name,
+                        "timestamp": results_path.stat().st_mtime,
+                        "total": len(cues),
+                        "identified": sum(1 for c in cues if c.get("title")),
+                        "results": data,
+                    }
+                )
             except Exception:
                 pass
             if len(items) >= 10:
@@ -621,14 +687,16 @@ async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
     """
     cues = payload.get("cues")
     if not isinstance(cues, list):
-        raise HTTPException(status_code=422, detail="Body must be {\"cues\": [...]}")
+        raise HTTPException(status_code=422, detail='Body must be {"cues": [...]}')
     results_path = _safe_run_dir(video_name) / "results.json"
     if not results_path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
     try:
         data = json.loads(results_path.read_text())
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read results.json: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read results.json: {exc}"
+        )
     data["cues"] = cues
     _atomic_write_json(results_path, data)
     return {"status": "saved", "cues": len(cues)}
@@ -670,19 +738,24 @@ async def export_mava(video_name: str) -> Response:
     try:
         data = json.loads(results_path.read_text())
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to read results.json: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read results.json: {exc}"
+        )
 
     from soundtrackID.mava_export import build_mava_mapping, build_mava_tsv
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mava_annotations.tsv", build_mava_tsv(data.get("cues", [])))
-        zf.writestr("mava_mapping.json", json.dumps(build_mava_mapping(video_name), indent=2))
+        zf.writestr(
+            "mava_mapping.json", json.dumps(build_mava_mapping(video_name), indent=2)
+        )
 
+    filename = f"{video_name}_mava_export.zip"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{video_name}_mava_export.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -729,7 +802,9 @@ async def enrich_run(
     }
     scope = (payload or {}).get("scope") or "all"
     if scope not in ("film", "music", "all"):
-        raise HTTPException(status_code=400, detail="scope must be 'film', 'music' or 'all'")
+        raise HTTPException(
+            status_code=400, detail="scope must be 'film', 'music' or 'all'"
+        )
     enrich_id = str(uuid.uuid4())
 
     return StreamingResponse(
@@ -772,7 +847,9 @@ async def _run_enrich_sse(
         try:
             results = json.loads(results_path.read_text())
         except Exception as exc:
-            ev_queue.put({"step": "error", "detail": f"Failed to load results.json: {exc}"})
+            ev_queue.put(
+                {"step": "error", "detail": f"Failed to load results.json: {exc}"}
+            )
             return
 
         tmdb_bearer = os.environ.get("FIWI_TMDB_API_TOKEN")
@@ -795,7 +872,14 @@ async def _run_enrich_sse(
             return
         except Exception as exc:
             import traceback
-            ev_queue.put({"step": "error", "detail": str(exc), "traceback": traceback.format_exc()})
+
+            ev_queue.put(
+                {
+                    "step": "error",
+                    "detail": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            )
             return
         finally:
             client.close()
@@ -805,7 +889,9 @@ async def _run_enrich_sse(
         try:
             _atomic_write_json(results_path, enriched)
         except Exception as exc:
-            ev_queue.put({"step": "error", "detail": f"Failed to write results.json: {exc}"})
+            ev_queue.put(
+                {"step": "error", "detail": f"Failed to write results.json: {exc}"}
+            )
             return
 
         ev_queue.put({"step": "done", "results": enriched})
@@ -852,14 +938,26 @@ def _apply_detection_to_cue(cue: dict, det) -> None:
     cue["artist"] = det.artist
     cue["album"] = md.get("album")
     cue["confidence"] = det.confidence
-    for key in ("release_year", "isrc", "genre", "photo_url", "youtube_link",
-                "spotify_url", "apple_music_url", "musicbrainz_recording_id",
-                "musicbrainz_url", "agreement", "votes"):
+    for key in (
+        "release_year",
+        "isrc",
+        "genre",
+        "photo_url",
+        "youtube_link",
+        "spotify_url",
+        "apple_music_url",
+        "musicbrainz_recording_id",
+        "musicbrainz_url",
+        "agreement",
+        "votes",
+    ):
         cue[key] = md.get(key)
 
 
 @app.post("/resume/{video_name}")
-async def resume_run(video_name: str, payload: dict = Body(default_factory=dict)) -> StreamingResponse:
+async def resume_run(
+    video_name: str, payload: dict = Body(default_factory=dict)
+) -> StreamingResponse:
     """Re-run identification on the still-unidentified cues of a rate-limited run,
     reading their saved segment WAVs. Fills gaps without re-analyzing the video."""
     run_dir = _safe_run_dir(video_name)
@@ -874,7 +972,9 @@ async def resume_run(video_name: str, payload: dict = Body(default_factory=dict)
     )
 
 
-async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncGenerator[str, None]:
+async def _run_resume_sse(
+    run_dir: Path, results_path: Path, api: str
+) -> AsyncGenerator[str, None]:
     ev_queue: queue.Queue[dict] = queue.Queue()
 
     def run_sync() -> None:
@@ -887,7 +987,9 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
         try:
             results = json.loads(results_path.read_text())
         except Exception as exc:
-            ev_queue.put({"step": "error", "detail": f"Failed to load results.json: {exc}"})
+            ev_queue.put(
+                {"step": "error", "detail": f"Failed to load results.json: {exc}"}
+            )
             return
 
         cues = results.get("cues") or []
@@ -921,7 +1023,12 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
                     audio = audio.astype(np.float32) / 2147483647.0
                 if audio.ndim > 1:
                     audio = audio.mean(axis=1)
-                seg = MusicSegment(audio=audio, start_time=0.0, end_time=len(audio) / sr, sample_rate=sr)
+                seg = MusicSegment(
+                    audio=audio,
+                    start_time=0.0,
+                    end_time=len(audio) / sr,
+                    sample_rate=sr,
+                )
                 det = client.detect(seg)
             except RateLimitError:
                 still_limited = True
@@ -936,6 +1043,7 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
         # Temporal re-rank the freshly-identified cues before enriching.
         try:
             from soundtrackID.temporal import temporal_rerank
+
             temporal_rerank(results, (results.get("film") or {}).get("year"))
         except Exception:
             pass
@@ -948,22 +1056,38 @@ async def _run_resume_sse(run_dir: Path, results_path: Path, api: str) -> AsyncG
 
             def _cb(step: str, **kw) -> None:
                 if step == "music_start":
-                    ev_queue.put({"step": "enriching", "detail": f"0/{kw.get('total', 0)}"})
+                    ev_queue.put(
+                        {"step": "enriching", "detail": f"0/{kw.get('total', 0)}"}
+                    )
                 elif step == "music_cue":
-                    ev_queue.put({"step": "enriching", "detail": f"{kw.get('index')}/{kw.get('total')}"})
+                    ev_queue.put(
+                        {
+                            "step": "enriching",
+                            "detail": f"{kw.get('index')}/{kw.get('total')}",
+                        }
+                    )
 
             with httpx.Client(timeout=15.0) as _c:
-                _enrich(results=results, film_hint=None, http_client=_c,
-                        scope="music", music_isrc_only=True, progress_cb=_cb)
+                _enrich(
+                    results=results,
+                    film_hint=None,
+                    http_client=_c,
+                    scope="music",
+                    music_isrc_only=True,
+                    progress_cb=_cb,
+                )
         except Exception:
             import traceback
+
             print("resume enrichment failed:\n" + traceback.format_exc())
 
         results["rate_limited"] = still_limited
         try:
             _atomic_write_json(results_path, results)
         except Exception as exc:
-            ev_queue.put({"step": "error", "detail": f"Failed to write results.json: {exc}"})
+            ev_queue.put(
+                {"step": "error", "detail": f"Failed to write results.json: {exc}"}
+            )
             return
         results_lean = {k: v for k, v in results.items() if k != "waveform"}
         ev_queue.put({"step": "done", "results": results_lean})

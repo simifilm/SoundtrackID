@@ -39,8 +39,13 @@ def build_mava_tsv(cues: list[dict[str, Any]]) -> str:
 
 
 def build_mava_mapping(video_name: str | None = None) -> dict[str, Any]:
-    """Build the mapping JSON MAVA expects alongside the TSV (its `mapping_json` form field)."""
-    description = f"SoundtrackID cues — {video_name}" if video_name else "SoundtrackID cues"
+    """Build the mapping JSON MAVA expects alongside the TSV.
+
+    MAVA takes it as its `mapping_json` form field.
+    """
+    description = (
+        f"SoundtrackID cues — {video_name}" if video_name else "SoundtrackID cues"
+    )
     return {
         "series_description": description,
         "value_description": "Identified music cue (title — artist)",
@@ -51,11 +56,15 @@ def build_mava_mapping(video_name: str | None = None) -> dict[str, Any]:
     }
 
 
-def write_mava_export(cues: list[dict[str, Any]], output_dir: Path, video_name: str | None = None) -> tuple[Path, Path]:
+def write_mava_export(
+    cues: list[dict[str, Any]], output_dir: Path, video_name: str | None = None
+) -> tuple[Path, Path]:
     """Write mava_annotations.tsv + mava_mapping.json into output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
     tsv_path = output_dir / "mava_annotations.tsv"
     mapping_path = output_dir / "mava_mapping.json"
     tsv_path.write_text(build_mava_tsv(cues), encoding="utf-8")
-    mapping_path.write_text(json.dumps(build_mava_mapping(video_name), indent=2), encoding="utf-8")
+    mapping_path.write_text(
+        json.dumps(build_mava_mapping(video_name), indent=2), encoding="utf-8"
+    )
     return tsv_path, mapping_path

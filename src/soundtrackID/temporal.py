@@ -11,13 +11,21 @@ from __future__ import annotations
 
 from typing import Any
 
-TOLERANCE = 3        # years of slack for reissues / tagging noise
+TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative
 
 # Fields copied from a chosen candidate onto the cue (cue-shaped keys).
 _APPLY_KEYS = (
-    "title", "artist", "album", "release_year", "isrc", "genre",
-    "spotify_url", "youtube_link", "musicbrainz_recording_id", "musicbrainz_url",
+    "title",
+    "artist",
+    "album",
+    "release_year",
+    "isrc",
+    "genre",
+    "spotify_url",
+    "youtube_link",
+    "musicbrainz_recording_id",
+    "musicbrainz_url",
 )
 
 
@@ -28,7 +36,9 @@ def _apply_candidate(cue: dict[str, Any], cand: dict[str, Any]) -> None:
     cue["temporal_pick"] = True
 
 
-def temporal_rerank(results: dict[str, Any], film_year: int | None, tolerance: int = TOLERANCE) -> int:
+def temporal_rerank(
+    results: dict[str, Any], film_year: int | None, tolerance: int = TOLERANCE
+) -> int:
     """For each cue whose primary match postdates the film, swap in the best
     period-plausible candidate (recording year <= film year + tolerance) that is
     still a confident match. Mutates cues in place; returns how many were changed."""
@@ -44,8 +54,10 @@ def temporal_rerank(results: dict[str, Any], film_year: int | None, tolerance: i
         if not (primary_year and primary_year > film_year + tolerance):
             continue
         alts = [
-            c for c in cands[1:]
-            if c.get("release_year") and c["release_year"] <= film_year + tolerance
+            c
+            for c in cands[1:]
+            if c.get("release_year")
+            and c["release_year"] <= film_year + tolerance
             and (c.get("score") or 0.0) >= MIN_ALT_SCORE
         ]
         if not alts:
