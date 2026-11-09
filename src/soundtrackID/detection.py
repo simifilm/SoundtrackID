@@ -35,7 +35,9 @@ def _find_shazamkit_helper() -> str | None:
         if meipass:
             bases.append(Path(meipass))
         bases.append(Path(sys.executable).parent)
-        candidates += [b / in_bundle for b in bases] + [b / "shazamkit-match" for b in bases]
+        candidates += [b / in_bundle for b in bases] + [
+            b / "shazamkit-match" for b in bases
+        ]
     else:
         shazamkit_dir = Path(__file__).resolve().parents[2] / "shazamkit"
         candidates.append(shazamkit_dir / "build" / in_bundle)
@@ -75,7 +77,8 @@ def _parse_acr_candidate(m: dict) -> dict:
     )
     return {
         "title": m.get("title"),
-        "artist": ", ".join(a["name"] for a in m.get("artists", []) if a.get("name")) or None,
+        "artist": ", ".join(a["name"] for a in m.get("artists", []) if a.get("name"))
+        or None,
         "album": m.get("album", {}).get("name"),
         "release_year": release_year,
         "isrc": m.get("external_ids", {}).get("isrc"),
@@ -83,9 +86,13 @@ def _parse_acr_candidate(m: dict) -> dict:
         "acrcloud_id": m.get("acrid"),
         "score": float(m.get("score", 0.0)),
         "spotify_url": f"https://open.spotify.com/track/{spotify}" if spotify else None,
-        "youtube_link": f"https://www.youtube.com/watch?v={youtube}" if youtube else None,
+        "youtube_link": (
+            f"https://www.youtube.com/watch?v={youtube}" if youtube else None
+        ),
         "musicbrainz_recording_id": mb_id,
-        "musicbrainz_url": f"https://musicbrainz.org/recording/{mb_id}" if mb_id else None,
+        "musicbrainz_url": (
+            f"https://musicbrainz.org/recording/{mb_id}" if mb_id else None
+        ),
     }
 
 
@@ -122,24 +129,28 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
         if self._helper:
             result, available = self._detect_shazamkit(segment)
             if result is not None:
-                return result           # a real match
+                return result  # a real match
             if available:
-                return empty            # ShazamKit worked and said "no match" — trust it
+                return empty  # ShazamKit worked and said "no match" — trust it
             # else: ShazamKit unavailable (202 / broke) -> fall through to shazamio
         # Fallback: shazamio.
         return self._detect_shazamio(segment) or empty
 
     def _detect_shazamkit(self, segment: MusicSegment):
         """Return (DetectionResult|None, available). available=False means ShazamKit
-        couldn't run (missing entitlement/helper error) so the caller should fall back."""
+        couldn't run (missing entitlement/helper error) so the caller should fall back.
+        """
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
             audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
             wavfile.write(temp_path, segment.sample_rate, audio_int16)
 
         import subprocess
+
         try:
-            proc = subprocess.run([self._helper, temp_path], capture_output=True, text=True, timeout=30)
+            proc = subprocess.run(
+                [self._helper, temp_path], capture_output=True, text=True, timeout=30
+            )
         except (subprocess.TimeoutExpired, OSError):
             return None, False
         finally:
@@ -151,25 +162,30 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             return None, False
 
         if data.get("title"):
-            return DetectionResult(
-                segment=segment,
-                title=data.get("title"),
-                artist=data.get("artist"),
-                confidence=1.0,  # ShazamKit gives no score
-                provider="shazam",
-                metadata={
-                    "isrc": data.get("isrc"),
-                    "apple_music_url": data.get("appleMusicURL"),
-                    "shazam_id": data.get("shazamID"),
-                },
-            ), True
+            return (
+                DetectionResult(
+                    segment=segment,
+                    title=data.get("title"),
+                    artist=data.get("artist"),
+                    confidence=1.0,  # ShazamKit gives no score
+                    provider="shazam",
+                    metadata={
+                        "isrc": data.get("isrc"),
+                        "apple_music_url": data.get("appleMusicURL"),
+                        "shazam_id": data.get("shazamID"),
+                    },
+                ),
+                True,
+            )
         # 202 = missing entitlement -> unavailable (fall back). result:null -> a real
         # ShazamKit no-match (available, trust it). Other errors -> unavailable.
         if data.get("code") == 202 or data.get("error"):
             if data.get("code") == 202 and not ShazamDetectionClient._warned:
                 ShazamDetectionClient._warned = True
-                print("[shazam] ShazamKit unavailable (202: no entitlement/profile yet) "
-                      "— falling back to shazamio until it is activated.")
+                print(
+                    "[shazam] ShazamKit unavailable (202: no entitlement/profile yet) "
+                    "— falling back to shazamio until it is activated."
+                )
             return None, False
         return None, True  # {"result": null}: ShazamKit ran, no match
 
@@ -185,7 +201,9 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             shazam = Shazam(language=self._language)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 path = f.name
-                audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
+                audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(
+                    np.int16
+                )
                 wavfile.write(path, segment.sample_rate, audio_int16)
             try:
                 return await shazam.recognize(path)
@@ -199,7 +217,13 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
         track = result.get("track")
         if not track:
-            return DetectionResult(segment=segment, title=None, artist=None, confidence=0.0, provider="shazam")
+            return DetectionResult(
+                segment=segment,
+                title=None,
+                artist=None,
+                confidence=0.0,
+                provider="shazam",
+            )
 
         album = release_year = None
         sections = track.get("sections", [])
@@ -211,12 +235,22 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
                 if str(item.get("title", "")).strip().lower() == "released":
                     release_year = _extract_year(item.get("text"))
                     break
-        youtube_link = next((s.get("youtubeurl") for s in sections if s.get("type") == "VIDEO"), None)
+        youtube_link = next(
+            (s.get("youtubeurl") for s in sections if s.get("type") == "VIDEO"), None
+        )
         hub = track.get("hub", {})
         providers = hub.get("providers", [])
-        spotify_url = providers[0]["actions"][0]["uri"] if providers and providers[0].get("actions") else None
+        spotify_url = (
+            providers[0]["actions"][0]["uri"]
+            if providers and providers[0].get("actions")
+            else None
+        )
         options = hub.get("options", [])
-        apple_music_url = options[0]["actions"][0]["uri"] if options and options[0].get("actions") else None
+        apple_music_url = (
+            options[0]["actions"][0]["uri"]
+            if options and options[0].get("actions")
+            else None
+        )
         return DetectionResult(
             segment=segment,
             title=track.get("title"),
@@ -296,7 +330,11 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
     def detect(self, segment: MusicSegment) -> DetectionResult:
         """Identify music in segment using ACRCloud."""
         empty = DetectionResult(
-            segment=segment, title=None, artist=None, confidence=0.0, provider="acrcloud"
+            segment=segment,
+            title=None,
+            artist=None,
+            confidence=0.0,
+            provider="acrcloud",
         )
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -404,9 +442,7 @@ class AudDDetectionClient(BaseMusicDetectionClient):
             # 900 = no/invalid api_token, 901 = request limit reached. Stop and
             # allow resume (parallels ACRCloud 3xxx).
             if code in (900, 901):
-                raise RateLimitError(
-                    f"AudD error {code}: {err.get('error_message')}"
-                )
+                raise RateLimitError(f"AudD error {code}: {err.get('error_message')}")
             return empty
 
         result = payload.get("result")
@@ -438,7 +474,9 @@ class AudDDetectionClient(BaseMusicDetectionClient):
                 "apple_music_url": apple_music_url,
                 "youtube_link": None,
                 "musicbrainz_recording_id": mb_id,
-                "musicbrainz_url": f"https://musicbrainz.org/recording/{mb_id}" if mb_id else None,
+                "musicbrainz_url": (
+                    f"https://musicbrainz.org/recording/{mb_id}" if mb_id else None
+                ),
             },
         )
 
@@ -452,9 +490,18 @@ _PROVIDER_PRIORITY = ["acrcloud", "shazam", "audd"]
 # Metadata keys merged across a winning cluster (first non-null by priority),
 # so the consensus keeps the best ISRC + platform links any provider supplied.
 _MERGE_KEYS = (
-    "album", "release_year", "isrc", "genre", "photo_url", "youtube_link",
-    "spotify_url", "apple_music_url", "musicbrainz_recording_id",
-    "musicbrainz_url", "song_link", "candidates",
+    "album",
+    "release_year",
+    "isrc",
+    "genre",
+    "photo_url",
+    "youtube_link",
+    "spotify_url",
+    "apple_music_url",
+    "musicbrainz_recording_id",
+    "musicbrainz_url",
+    "song_link",
+    "candidates",
 )
 
 
@@ -464,9 +511,9 @@ def _normalize_title(s: str | None) -> str:
     if not s:
         return ""
     s = s.lower()
-    s = re.sub(r"\([^)]*\)", " ", s)          # (From "Interstellar")
-    s = re.sub(r"\[[^\]]*\]", " ", s)          # [Remastered]
-    s = re.sub(r"\bfeat\.?.*$", " ", s)        # feat. …
+    s = re.sub(r"\([^)]*\)", " ", s)  # (From "Interstellar")
+    s = re.sub(r"\[[^\]]*\]", " ", s)  # [Remastered]
+    s = re.sub(r"\bfeat\.?.*$", " ", s)  # feat. …
     s = re.sub(r"-\s*remaster(ed)?.*$", " ", s)  # - Remastered 2011
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
@@ -582,8 +629,9 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
         # If every provider is rate-limited, the ensemble as a whole is throttled:
         # propagate so the pipeline can save partial results and offer a resume.
         if raw and all(rl for _, _, _, rl in raw):
-            raise RateLimitError("all providers rate-limited: " + "; ".join(
-                e for _, _, e, _ in raw if e))
+            raise RateLimitError(
+                "all providers rate-limited: " + "; ".join(e for _, _, e, _ in raw if e)
+            )
         raw = [(n, r, e) for n, r, e, _ in raw]
 
         # Keep providers in the configured priority order.
@@ -593,23 +641,36 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
         votes: list[dict] = []
         for name, result, error in raw:
             matched = bool(result and result.title)
-            votes.append({
-                "provider": name,
-                "title": result.title if result else None,
-                "artist": result.artist if result else None,
-                "isrc": (result.metadata.get("isrc") if result else None),
-                "confidence": result.confidence if result else 0.0,
-                "matched": matched,
-                "metadata": (result.metadata if result else {}),
-                "error": error,
-            })
+            votes.append(
+                {
+                    "provider": name,
+                    "title": result.title if result else None,
+                    "artist": result.artist if result else None,
+                    "isrc": (result.metadata.get("isrc") if result else None),
+                    "confidence": result.confidence if result else 0.0,
+                    "matched": matched,
+                    "metadata": (result.metadata if result else {}),
+                    "error": error,
+                }
+            )
 
         title, artist, confidence, merged, agreement = _consensus_from_votes(
             votes, total=len(self._clients)
         )
 
         public_votes = [
-            {k: v[k] for k in ("provider", "title", "artist", "isrc", "confidence", "matched", "error")}
+            {
+                k: v[k]
+                for k in (
+                    "provider",
+                    "title",
+                    "artist",
+                    "isrc",
+                    "confidence",
+                    "matched",
+                    "error",
+                )
+            }
             for v in votes
         ]
 
@@ -673,7 +734,7 @@ if __name__ == "__main__":
         "--api",
         default="acrcloud",
         help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-             "list for ensemble majority voting (default: acrcloud)",
+        "list for ensemble majority voting (default: acrcloud)",
     )
     args = parser.parse_args()
 

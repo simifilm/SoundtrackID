@@ -7,10 +7,10 @@ from typing import Any, Callable, Literal
 
 import httpx
 
-Scope = Literal["film", "music", "all"]
-
 from soundtrackID.metadata.film import FilmInfo, FilmLookup
 from soundtrackID.metadata.music import MusicLookup
+
+Scope = Literal["film", "music", "all"]
 
 
 class EnrichmentCancelled(Exception):
@@ -40,7 +40,8 @@ def enrich(
     `film_hint` carries pre-fill data from the modal (imdb_id, tmdb_id, title, year).
     Ignored when scope == "music".
 
-    progress_cb signature: progress_cb(step: str, **kwargs). Steps emitted depend on scope.
+    progress_cb signature: progress_cb(step: str, **kwargs).
+    Steps emitted depend on scope.
     """
     cb = progress_cb or (lambda *_a, **_k: None)
 
@@ -110,8 +111,10 @@ def enrich(
 
 def _identity_key(cue: dict[str, Any]) -> tuple[str, str]:
     """Normalized (title, artist) — cues that share it are the same piece."""
+
     def norm(s: Any) -> str:
         return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (s or "").lower())).strip()
+
     return (norm(cue.get("title")), norm(cue.get("artist")))
 
 

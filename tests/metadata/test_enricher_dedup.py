@@ -19,12 +19,34 @@ def test_recurring_track_enriched_once(monkeypatch):
     counter = _CountingLookup()
     monkeypatch.setattr(enricher, "MusicLookup", lambda *_a, **_k: counter)
 
-    results = {"cues": [
-        {"segment_id": "seg_001", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-        {"segment_id": "seg_002", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-        {"segment_id": "seg_003", "title": "La Cumparsita", "artist": "Matos", "isrc": "Y1"},
-        {"segment_id": "seg_004", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-    ]}
+    results = {
+        "cues": [
+            {
+                "segment_id": "seg_001",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+            {
+                "segment_id": "seg_002",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+            {
+                "segment_id": "seg_003",
+                "title": "La Cumparsita",
+                "artist": "Matos",
+                "isrc": "Y1",
+            },
+            {
+                "segment_id": "seg_004",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+        ]
+    }
 
     enricher.enrich(results=results, film_hint=None, http_client=None, scope="music")
 
@@ -49,12 +71,17 @@ def test_progress_counts_unique_tracks(monkeypatch):
     counter = _CountingLookup()
     monkeypatch.setattr(enricher, "MusicLookup", lambda *_a, **_k: counter)
     events = []
-    results = {"cues": [
-        {"segment_id": "s1", "title": "Diane", "artist": "R", "isrc": "X"},
-        {"segment_id": "s2", "title": "Diane", "artist": "R", "isrc": "X"},
-    ]}
+    results = {
+        "cues": [
+            {"segment_id": "s1", "title": "Diane", "artist": "R", "isrc": "X"},
+            {"segment_id": "s2", "title": "Diane", "artist": "R", "isrc": "X"},
+        ]
+    }
     enricher.enrich(
-        results=results, film_hint=None, http_client=None, scope="music",
+        results=results,
+        film_hint=None,
+        http_client=None,
+        scope="music",
         progress_cb=lambda step, **kw: events.append((step, kw.get("total"))),
     )
     starts = [t for step, t in events if step == "music_start"]

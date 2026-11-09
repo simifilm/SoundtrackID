@@ -203,9 +203,7 @@ def test_grouping_merges_overlapping_anchored_clip():
 
 def test_bridging_counts_non_music_between_the_tracks():
     """A 5 s unidentified clip doesn't bridge X to X when they are 15 s apart."""
-    groups = _group_detections(
-        clips((0, 15, "X"), (25, 30, None), (30, 45, "X")), 10.0
-    )
+    groups = _group_detections(clips((0, 15, "X"), (25, 30, None), (30, 45, "X")), 10.0)
 
     assert spans_of(groups) == [(0, 15, "X"), (25, 30, None), (30, 45, "X")]
 

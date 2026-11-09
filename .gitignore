@@ -228,8 +228,12 @@ node_modules/
 # Downloaded test/sample videos (not part of the repo)
 
 /YTDown_*.mp4
-CLAUDE.md
 test_videos/
 # Compiled ShazamKit helper (build artifact from shazamkit/build.sh)
 shazamkit/shazamkit-match
 shazamkit/build/
+
+
+# Claude specific files
+CLAUDE.md
+.claude/settings.local.json

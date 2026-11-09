@@ -133,7 +133,9 @@ class OutputWriter:
             # clip before it; keep only the part after the previous clip ended.
             parts = [group[0][0].audio]
             for (prev, _), (seg, _) in zip(group, group[1:]):
-                overlap = max(0, round((prev.end_time - seg.start_time) * seg.sample_rate))
+                overlap = max(
+                    0, round((prev.end_time - seg.start_time) * seg.sample_rate)
+                )
                 parts.append(seg.audio[overlap:])
             combined_audio = np.concatenate(parts)
             sample_rate = group[0][0].sample_rate
@@ -142,16 +144,22 @@ class OutputWriter:
 
             first_seg, last_seg = group[0][0], group[-1][0]
             identified = [d for _, d in group if d.title]
-            confidence = sum(d.confidence for d in identified) / len(identified) if identified else 0.5
+            confidence = (
+                sum(d.confidence for d in identified) / len(identified)
+                if identified
+                else 0.5
+            )
 
-            segment_outputs.append(SegmentOutput(
-                id=segment_id,
-                start=first_seg.start_time,
-                duration=last_seg.end_time - first_seg.start_time,
-                conditioning=self.conditioning,
-                audio_file=f"segments/{audio_filename}",
-                confidence=confidence,
-            ))
+            segment_outputs.append(
+                SegmentOutput(
+                    id=segment_id,
+                    start=first_seg.start_time,
+                    duration=last_seg.end_time - first_seg.start_time,
+                    conditioning=self.conditioning,
+                    audio_file=f"segments/{audio_filename}",
+                    confidence=confidence,
+                )
+            )
 
             first_detection = next((d for _, d in group if d.title), None)
             if first_detection:
@@ -164,16 +172,24 @@ class OutputWriter:
                     alb = d.metadata.get("album")
                     if alb:
                         album_counts[alb] = album_counts.get(alb, 0) + 1
-                album = max(album_counts, key=album_counts.get) if album_counts else None
-                identification_outputs.append(IdentificationOutput(
-                    segment_id=segment_id,
-                    provider=first_detection.provider,
-                    title=first_detection.title,
-                    artist=first_detection.artist,
-                    album=album,
-                    confidence=first_detection.confidence,
-                    metadata={k: v for k, v in first_detection.metadata.items() if k != "album" and v is not None},
-                ))
+                album = (
+                    max(album_counts, key=album_counts.get) if album_counts else None
+                )
+                identification_outputs.append(
+                    IdentificationOutput(
+                        segment_id=segment_id,
+                        provider=first_detection.provider,
+                        title=first_detection.title,
+                        artist=first_detection.artist,
+                        album=album,
+                        confidence=first_detection.confidence,
+                        metadata={
+                            k: v
+                            for k, v in first_detection.metadata.items()
+                            if k != "album" and v is not None
+                        },
+                    )
+                )
 
         results_output = ResultsOutput(
             source=video_path.name,
@@ -192,26 +208,48 @@ class OutputWriter:
 
         if self.export_csv:
             import csv
+
             ident_map = {id_.segment_id: id_ for id_ in identification_outputs}
             csv_path = video_output_dir / "results.csv"
             with csv_path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["segment_id", "start", "duration", "conditioning", "confidence", "provider", "title", "artist", "album"])
+                writer.writerow(
+                    [
+                        "segment_id",
+                        "start",
+                        "duration",
+                        "conditioning",
+                        "confidence",
+                        "provider",
+                        "title",
+                        "artist",
+                        "album",
+                    ]
+                )
                 for seg in segment_outputs:
                     ident = ident_map.get(seg.id)
-                    writer.writerow([
-                        seg.id, seg.start, seg.duration, seg.conditioning, seg.confidence,
-                        ident.provider if ident else "",
-                        ident.title if ident else "",
-                        ident.artist if ident else "",
-                        ident.album if ident else "",
-                    ])
+                    writer.writerow(
+                        [
+                            seg.id,
+                            seg.start,
+                            seg.duration,
+                            seg.conditioning,
+                            seg.confidence,
+                            ident.provider if ident else "",
+                            ident.title if ident else "",
+                            ident.artist if ident else "",
+                            ident.album if ident else "",
+                        ]
+                    )
             print(f"  CSV written to: {csv_path}")
 
         if self.export_mava:
             from soundtrackID.mava_export import write_mava_export
+
             tsv_path, mapping_path = write_mava_export(
-                results_output.to_dict()["cues"], video_output_dir, video_name=video_name
+                results_output.to_dict()["cues"],
+                video_output_dir,
+                video_name=video_name,
             )
             print(f"  MAVA export written to: {tsv_path.name} + {mapping_path.name}")
 
@@ -246,7 +284,9 @@ class Pipeline:
         self.detection_concurrency = max(1, detection_concurrency)
 
         # Determine conditioning based on isolator type
-        conditioning = "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
+        conditioning = (
+            "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
+        )
         self.output_writer = OutputWriter(
             self.output_dir,
             conditioning=conditioning,
@@ -255,7 +295,13 @@ class Pipeline:
             bridge_gap=bridge_gap,
         )
 
-    def run(self, video_path: Path, on_progress=None, max_segment_duration: float | None = None, container_tags: dict | None = None) -> ResultsOutput:
+    def run(
+        self,
+        video_path: Path,
+        on_progress=None,
+        max_segment_duration: float | None = None,
+        container_tags: dict | None = None,
+    ) -> ResultsOutput:
         """Run the pipeline on a video file.
 
         Args:
@@ -268,6 +314,7 @@ class Pipeline:
         Returns:
             ResultsOutput containing all detected segments and their metadata.
         """
+
         def progress(step: str, detail: str = "") -> None:
             print(f"[{step}] {detail}" if detail else f"[{step}]")
             if on_progress:
@@ -287,7 +334,9 @@ class Pipeline:
         peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
         max_p = float(peaks.max())
         waveform_data = {
-            "samples": [round(float(x / max_p), 3) for x in peaks] if max_p > 0 else [0.0] * len(peaks),
+            "samples": [round(float(x / max_p), 3) for x in peaks]
+            if max_p > 0
+            else [0.0] * len(peaks),
             "duration": round(float(len(audio) / sample_rate), 2),
         }
         if on_progress:
@@ -331,7 +380,13 @@ class Pipeline:
                 rate_limited = True
                 return empty_result(chunk_seg)
 
-        def emit_reaped(idx: int, chunk_seg: MusicSegment, detection: DetectionResult, *, label: bool) -> None:
+        def emit_reaped(
+            idx: int,
+            chunk_seg: MusicSegment,
+            detection: DetectionResult,
+            *,
+            label: bool,
+        ) -> None:
             # Always emit an "identified" progress event (title=null means the
             # window was processed but not matched). The frontend handles it
             # without touching the step indicator, so it advances the
@@ -342,19 +397,26 @@ class Pipeline:
             nonlocal reaped
             reaped += 1
             detection_results_by_idx[idx] = (chunk_seg, detection)
-            progress("identified", json.dumps({
-                "start": round(chunk_seg.start_time, 3),
-                "end": round(chunk_seg.end_time, 3),
-                "title": detection.title,
-                "artist": detection.artist,
-                "reaped": reaped,
-                "total": total_chunks if classification_done else None,
-            }))
+            progress(
+                "identified",
+                json.dumps(
+                    {
+                        "start": round(chunk_seg.start_time, 3),
+                        "end": round(chunk_seg.end_time, 3),
+                        "title": detection.title,
+                        "artist": detection.artist,
+                        "reaped": reaped,
+                        "total": total_chunks if classification_done else None,
+                    }
+                ),
+            )
             if label:
+                prefix = f"[{reaped}/{total_chunks}]"
                 if detection.title:
-                    det_detail = f"[{reaped}/{total_chunks}] {detection.title} – {detection.artist}"
+                    det_detail = f"{prefix} {detection.title} - {detection.artist}"
                 else:
-                    det_detail = f"[{reaped}/{total_chunks}] {chunk_seg.start_time:.0f}s–{chunk_seg.end_time:.0f}s: no match"
+                    start, end = chunk_seg.start_time, chunk_seg.end_time
+                    det_detail = f"{prefix} {start:.0f}s-{end:.0f}s: no match"
                 print(f"  {det_detail}")
                 progress("detecting", det_detail)
 
@@ -371,13 +433,15 @@ class Pipeline:
         def classified_stream():
             for chunk in self.chunker.chunk(audio, sample_rate):
                 result = self.classifier.classify(chunk)
-                windows.append({
-                    "start": chunk.start_time,
-                    "end": chunk.end_time,
-                    "music": round(result.confidence, 4),
-                    "is_music": result.is_music,
-                    "classes": top_classes(result.probs, self.classifier.labels, 3),
-                })
+                windows.append(
+                    {
+                        "start": chunk.start_time,
+                        "end": chunk.end_time,
+                        "music": round(result.confidence, 4),
+                        "is_music": result.is_music,
+                        "classes": top_classes(result.probs, self.classifier.labels, 3),
+                    }
+                )
                 status = "MUSIC" if result.is_music else "-----"
                 detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
                 print(f"  {detail}")
@@ -429,14 +493,21 @@ class Pipeline:
             waited = 0.0
             remaining = set(pending)
             while remaining:
-                done_set, remaining = wait(remaining, timeout=5.0, return_when=FIRST_COMPLETED)
+                done_set, remaining = wait(
+                    remaining, timeout=5.0, return_when=FIRST_COMPLETED
+                )
                 if not done_set:
                     waited += 5.0
-                    progress("ident_waiting", json.dumps({
-                        "reaped": reaped,
-                        "total": total_chunks,
-                        "seconds": int(waited),
-                    }))
+                    progress(
+                        "ident_waiting",
+                        json.dumps(
+                            {
+                                "reaped": reaped,
+                                "total": total_chunks,
+                                "seconds": int(waited),
+                            }
+                        ),
+                    )
                     continue
                 waited = 0.0
                 for fut in done_set:
@@ -492,7 +563,7 @@ if __name__ == "__main__":
         "--api",
         default="acrcloud",
         help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-             "list for ensemble majority voting (default: acrcloud)",
+        "list for ensemble majority voting (default: acrcloud)",
     )
     parser.add_argument(
         "--classifier",
@@ -515,7 +586,10 @@ if __name__ == "__main__":
         "--hop",
         type=float,
         default=CLASSIFICATION_HOP_S,
-        help=f"Step between overlapping chunks in seconds (default: {CLASSIFICATION_HOP_S})",
+        help=(
+            "Step between overlapping chunks in seconds "
+            f"(default: {CLASSIFICATION_HOP_S})"
+        ),
     )
     parser.add_argument(
         "--max-segment",
@@ -534,16 +608,24 @@ if __name__ == "__main__":
 
     # Create components
     loader = VideoLoader()
-    chunker = AudioChunker(chunk_duration=args.chunk_duration, overlap=args.chunk_duration - args.hop)
+    chunker = AudioChunker(
+        chunk_duration=args.chunk_duration, overlap=args.chunk_duration - args.hop
+    )
 
     if args.classifier == "hf":
         from soundtrackID.classifiers import HuggingFaceClassifier
-        classifier: BaseClassifier = HuggingFaceClassifier(music_labels=["Music"], threshold=args.threshold)
+
+        classifier: BaseClassifier = HuggingFaceClassifier(
+            music_labels=["Music"], threshold=args.threshold
+        )
     else:
         from soundtrackID.classifiers import OnnxClassifier
+
         onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
         classifier = OnnxClassifier(
-            model_dir=str(onnx_model_dir), music_labels=["Music"], threshold=args.threshold
+            model_dir=str(onnx_model_dir),
+            music_labels=["Music"],
+            threshold=args.threshold,
         )
 
     aggregator = ChunkAggregator(gap_tolerance=1.0)
@@ -552,6 +634,7 @@ if __name__ == "__main__":
         isolator: BaseMusicIsolator = DummyIsolator()
     else:
         from soundtrackID.isolators import DemucsIsolator
+
         isolator = DemucsIsolator()
 
     detection_client = build_detection_client(args.api)
@@ -569,7 +652,7 @@ if __name__ == "__main__":
 
     results = pipeline.run(args.video_path, max_segment_duration=args.max_segment)
 
-    print(f"\nPipeline complete!")
+    print("\nPipeline complete!")
     print(f"  Segments: {len(results.segments)}")
     print(f"  Identifications: {len(results.identifications)}")
     print(f"  Output: {args.output_dir / args.video_path.stem}")

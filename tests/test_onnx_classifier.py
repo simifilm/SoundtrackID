@@ -34,10 +34,14 @@ def test_window_duration_gives_exactly_max_length_frames(monkeypatch):
 
 def test_labels_from_config(tmp_path):
     """labels lists the class names in model output order."""
-    (tmp_path / "config.json").write_text(json.dumps({
-        "label2id": {"Speech": 0, "Music": 1},
-        "id2label": {"0": "Speech", "1": "Music"},
-    }))
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "label2id": {"Speech": 0, "Music": 1},
+                "id2label": {"0": "Speech", "1": "Music"},
+            }
+        )
+    )
     with patch("onnxruntime.InferenceSession"):
         classifier = OnnxClassifier(model_dir=str(tmp_path))
 

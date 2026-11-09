@@ -32,7 +32,9 @@ def _vote(provider, title, isrc=None, conf=1.0, matched=True, meta=None):
 
 def test_normalize_strips_parenthetical_and_remaster():
     assert _normalize_title("Cornfield Chase") == "cornfield chase"
-    assert _normalize_title('Cornfield Chase (From "Interstellar")') == "cornfield chase"
+    assert (
+        _normalize_title('Cornfield Chase (From "Interstellar")') == "cornfield chase"
+    )
     assert _normalize_title("No Time To Die - Remastered 2021") == "no time to die"
 
 
@@ -86,8 +88,8 @@ def test_metadata_merge_fills_gaps_by_priority():
         ],
         total=3,
     )
-    assert merged["isrc"] == "USX"        # only audd had it
-    assert merged["spotify_url"] == "s"   # only acrcloud had it
+    assert merged["isrc"] == "USX"  # only audd had it
+    assert merged["spotify_url"] == "s"  # only acrcloud had it
 
 
 def test_single_provider_one_of_three():
@@ -160,7 +162,10 @@ class _FakeClient(BaseMusicDetectionClient):
 
 def _segment():
     return MusicSegment(
-        audio=np.zeros(1000, dtype=np.float32), start_time=0.0, end_time=1.0, sample_rate=1000
+        audio=np.zeros(1000, dtype=np.float32),
+        start_time=0.0,
+        end_time=1.0,
+        sample_rate=1000,
     )
 
 
@@ -216,4 +221,7 @@ def test_build_list_returns_ensemble_in_priority_order(monkeypatch):
     monkeypatch.setattr(det, "_build_single_client", lambda name: _FakeClient(name))
     client = build_detection_client("audd,acrcloud")
     assert isinstance(client, EnsembleDetectionClient)
-    assert [n for n, _ in client._clients] == ["acrcloud", "audd"]  # reordered by priority
+    assert [n for n, _ in client._clients] == [
+        "acrcloud",
+        "audd",
+    ]  # reordered by priority

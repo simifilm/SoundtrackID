@@ -13,7 +13,9 @@ class AudioChunker:
         self.chunk_duration = chunk_duration
         self.overlap = overlap
 
-    def chunk(self, audio: NDArray[np.float32], sample_rate: int) -> Iterator[AudioChunk]:
+    def chunk(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> Iterator[AudioChunk]:
         """Split audio into overlapping chunks.
 
         Yields chunks of chunk_duration seconds, stepping by (chunk_duration - overlap).
