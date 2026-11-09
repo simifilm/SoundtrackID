@@ -25,16 +25,23 @@ def load(name: str) -> dict:
 def test_extract_authors_present():
     work = load("mb_work_with_composer.json")
     authors = _extract_authors(work)
-    assert authors == [("composer", "1f9df192-a621-4f54-8850-2c5373b7eac9", "Ludwig van Beethoven")]
+    assert authors == [
+        ("composer", "1f9df192-a621-4f54-8850-2c5373b7eac9", "Ludwig van Beethoven")
+    ]
 
 
 def test_extract_authors_multiple_roles():
-    work = {"relations": [
-        {"type": "composer", "artist": {"id": "c1", "name": "Erno Rapee"}},
-        {"type": "lyricist", "artist": {"id": "l1", "name": "Lew Pollack"}},
-        {"type": "performer", "artist": {"id": "p1", "name": "An Orchestra"}},  # excluded
-        {"type": "writer", "artist": {"id": "w1", "name": "Someone"}},
-    ]}
+    work = {
+        "relations": [
+            {"type": "composer", "artist": {"id": "c1", "name": "Erno Rapee"}},
+            {"type": "lyricist", "artist": {"id": "l1", "name": "Lew Pollack"}},
+            {
+                "type": "performer",
+                "artist": {"id": "p1", "name": "An Orchestra"},
+            },  # excluded
+            {"type": "writer", "artist": {"id": "w1", "name": "Someone"}},
+        ]
+    }
     authors = _extract_authors(work)
     assert ("composer", "c1", "Erno Rapee") in authors
     assert ("lyricist", "l1", "Lew Pollack") in authors
@@ -83,9 +90,16 @@ def test_parse_wikidata_composer_empty():
 
 def test_parse_life_years():
     assert _parse_life_years(load("wikidata_death_only.json")) == (None, 2020)
-    both = {"results": {"bindings": [
-        {"birth": {"value": "1891-06-04T00:00:00Z"}, "death": {"value": "1945-06-26T00:00:00Z"}},
-    ]}}
+    both = {
+        "results": {
+            "bindings": [
+                {
+                    "birth": {"value": "1891-06-04T00:00:00Z"},
+                    "death": {"value": "1945-06-26T00:00:00Z"},
+                },
+            ]
+        }
+    }
     assert _parse_life_years(both) == (1891, 1945)
     assert _parse_life_years({"results": {"bindings": []}}) == (None, None)
 
@@ -104,7 +118,10 @@ def _author(name, roles, death):
 
 
 def test_pd_all_authors_long_dead_is_public_domain():
-    authors = [_author("Rapee", ["composer"], 1945), _author("Pollack", ["lyricist"], 1946)]
+    authors = [
+        _author("Rapee", ["composer"], 1945),
+        _author("Pollack", ["lyricist"], 1946),
+    ]
     latest, complete, pd = _pd_status(authors, current_year=2026)
     assert (latest, complete, pd) == (1946, True, True)
 
@@ -138,7 +155,12 @@ def test_pd_boundary_exactly_70_years_not_yet_public_domain():
 
 
 def _life(birth, death):
-    return {"name": "X", "roles": ["composer"], "birth_year": birth, "death_year": death}
+    return {
+        "name": "X",
+        "roles": ["composer"],
+        "birth_year": birth,
+        "death_year": death,
+    }
 
 
 def test_presumption_applies_born_more_than_170_years_ago():
@@ -158,16 +180,25 @@ def test_presumption_needs_birth_year():
 
 
 def test_presumption_latest_birth_decides():
-    assert _presumption_applies([_life(1800, None), _life(1900, None)], current_year=2026) is False
+    assert (
+        _presumption_applies([_life(1800, None), _life(1900, None)], current_year=2026)
+        is False
+    )
 
 
 def test_presumption_with_long_dead_coauthor():
-    assert _presumption_applies([_life(1850, 1940), _life(1850, None)], current_year=2026) is True
+    assert (
+        _presumption_applies([_life(1850, 1940), _life(1850, None)], current_year=2026)
+        is True
+    )
 
 
 def test_presumption_blocked_by_recently_dead_coauthor():
     # A co-author who died in 1980 keeps the work protected either way.
-    assert _presumption_applies([_life(1900, 1980), _life(1850, None)], current_year=2026) is None
+    assert (
+        _presumption_applies([_life(1900, 1980), _life(1850, None)], current_year=2026)
+        is None
+    )
 
 
 # ── Birth/death resolution: people only ───────────────────────────────────
@@ -188,7 +219,9 @@ def _lookup_with(artists, wikidata=None):
 
 
 def _work(artist_id):
-    return {"relations": [{"type": "composer", "artist": {"id": artist_id, "name": "X"}}]}
+    return {
+        "relations": [{"type": "composer", "artist": {"id": artist_id, "name": "X"}}]
+    }
 
 
 def _years(authors):
@@ -196,7 +229,14 @@ def _years(authors):
 
 
 def test_person_life_years_from_musicbrainz():
-    lookup, wd_calls = _lookup_with({"p": {"type": "Person", "life-span": {"begin": "1770-12-17", "end": "1827-03-26"}}})
+    lookup, wd_calls = _lookup_with(
+        {
+            "p": {
+                "type": "Person",
+                "life-span": {"begin": "1770-12-17", "end": "1827-03-26"},
+            }
+        }
+    )
     authors, used_wd = lookup._authors_from_work(_work("p"))
     assert _years(authors) == (1770, 1827)
     assert wd_calls == [] and used_wd is False
@@ -213,7 +253,9 @@ def test_person_missing_birth_falls_back_to_wikidata():
 
 
 def test_band_gets_no_life_years():
-    lookup, wd_calls = _lookup_with({"b": {"type": "Group", "life-span": {"begin": "1970", "end": "1991"}}})
+    lookup, wd_calls = _lookup_with(
+        {"b": {"type": "Group", "life-span": {"begin": "1970", "end": "1991"}}}
+    )
     authors, _ = lookup._authors_from_work(_work("b"))
     assert _years(authors) == (None, None)
     assert wd_calls == []
@@ -236,7 +278,10 @@ def test_normalize_name_strips_accents():
 
 
 def test_score_matches_surname():
-    authors = [_author("Ernö Rapée", ["composer"], 1945), _author("Lew Pollack", ["lyricist"], 1946)]
+    authors = [
+        _author("Ernö Rapée", ["composer"], 1945),
+        _author("Lew Pollack", ["lyricist"], 1946),
+    ]
     assert _score_work_authors(authors, "Franz Waxman, Erno Rapee & Lew Pollack") == 2
 
 

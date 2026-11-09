@@ -86,12 +86,14 @@ def merge_spans(slots: list[ClassificationResult], labels: list[str]) -> list[di
             spans[-1]["end"] = slot.chunk.end_time
             spans[-1]["_probs"].append(slot.probs)
         else:
-            spans.append({
-                "start": slot.chunk.start_time,
-                "end": slot.chunk.end_time,
-                "is_music": slot.is_music,
-                "_probs": [slot.probs],
-            })
+            spans.append(
+                {
+                    "start": slot.chunk.start_time,
+                    "end": slot.chunk.end_time,
+                    "is_music": slot.is_music,
+                    "_probs": [slot.probs],
+                }
+            )
     for span in spans:
         span["classes"] = top_classes(np.mean(span.pop("_probs"), axis=0), labels, 5)
     return spans

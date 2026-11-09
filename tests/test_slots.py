@@ -35,9 +35,7 @@ def spans_of(slots):
 def test_isolated_music_window_makes_no_music():
     """At a 5 s hop both windows covering a slot must say music."""
     p_no, p_music = [0.9, 0.05, 0.05], [0.4, 0.5, 0.1]
-    audio, results = classify_windows(
-        20, [False, True, False], [p_no, p_music, p_no]
-    )
+    audio, results = classify_windows(20, [False, True, False], [p_no, p_music, p_no])
 
     slots = list(stream_slots(results, audio, SR, hop=5.0))
 
@@ -79,8 +77,13 @@ def test_no_music_slot_averages_all_covering_windows():
 
 def test_three_of_four_is_music_and_averages_only_agreeing_windows():
     """At a 2.5 s hop 3 of 4 music windows suffice; the no-music one is ignored."""
-    p = [[0.3, 0.6, 0.1], [0.4, 0.5, 0.1], [0.9, 0.05, 0.05], [0.2, 0.7, 0.1],
-         [0.9, 0.05, 0.05]]
+    p = [
+        [0.3, 0.6, 0.1],
+        [0.4, 0.5, 0.1],
+        [0.9, 0.05, 0.05],
+        [0.2, 0.7, 0.1],
+        [0.9, 0.05, 0.05],
+    ]
     audio, results = classify_windows(20, [True, True, False, True, False], p, hop=2.5)
 
     slots = list(stream_slots(results, audio, SR, hop=2.5))
@@ -99,7 +102,14 @@ def test_edge_slots_need_all_their_windows_at_hop_2_5():
 
     # Windows covering each slot: 1, 2, 3, 4, 4, 3, 2, 1 (the third has the miss).
     assert [s.is_music for s in slots] == [
-        True, True, False, True, True, False, True, True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        False,
+        True,
+        True,
     ]
 
 
@@ -145,8 +155,13 @@ def test_audio_shorter_than_window_gives_no_slots():
 
 def test_hop_2_5_uses_four_windows_per_slot():
     """With a 2.5 s hop each slot lies inside four windows."""
-    probs = [[0.9, 0.1, 0.0], [0.8, 0.1, 0.1], [0.7, 0.1, 0.2], [0.6, 0.1, 0.3],
-             [0.5, 0.1, 0.4]]
+    probs = [
+        [0.9, 0.1, 0.0],
+        [0.8, 0.1, 0.1],
+        [0.7, 0.1, 0.2],
+        [0.6, 0.1, 0.3],
+        [0.5, 0.1, 0.4],
+    ]
     audio, results = classify_windows(20, [False] * 5, probs, hop=2.5)
 
     slots = list(stream_slots(results, audio, SR, hop=2.5))

@@ -17,7 +17,7 @@ class FilmInfo:
     director_death_year: int | None = None
     imdb_id: str | None = None
     tmdb_id: int | None = None
-    music_composer: str | None = None   # credited "Original Music Composer" (TMDb)
+    music_composer: str | None = None  # credited "Original Music Composer" (TMDb)
     sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,7 +38,15 @@ class FilmInfo:
     def merge(self, other: FilmInfo, source_tag: str) -> None:
         """Fill in missing fields from `other`. First non-null wins."""
         changed = False
-        for fname in ("title", "year", "director", "director_death_year", "imdb_id", "tmdb_id", "music_composer"):
+        for fname in (
+            "title",
+            "year",
+            "director",
+            "director_death_year",
+            "imdb_id",
+            "tmdb_id",
+            "music_composer",
+        ):
             if getattr(self, fname) is None and getattr(other, fname) is not None:
                 setattr(self, fname, getattr(other, fname))
                 changed = True
@@ -60,7 +68,10 @@ class FilmLookup:
     @property
     def _tmdb_headers(self) -> dict[str, str]:
         if self._tmdb_bearer:
-            return {"Authorization": f"Bearer {self._tmdb_bearer}", "accept": "application/json"}
+            return {
+                "Authorization": f"Bearer {self._tmdb_bearer}",
+                "accept": "application/json",
+            }
         return {"accept": "application/json"}
 
     def _tmdb_auth_params(self) -> dict[str, str]:
@@ -84,7 +95,9 @@ class FilmLookup:
 
         if self._has_tmdb_creds() and (tmdb_id or imdb_id or title):
             try:
-                tmdb = self._lookup_tmdb(tmdb_id=tmdb_id, imdb_id=imdb_id, title=title, year=year)
+                tmdb = self._lookup_tmdb(
+                    tmdb_id=tmdb_id, imdb_id=imdb_id, title=title, year=year
+                )
                 if tmdb:
                     info.merge(tmdb, "tmdb")
             except (httpx.HTTPError, ValueError):
@@ -92,7 +105,11 @@ class FilmLookup:
 
         if not info.is_complete():
             try:
-                wd = self._lookup_wikidata(imdb_id=info.imdb_id or imdb_id, title=info.title or title, year=info.year or year)
+                wd = self._lookup_wikidata(
+                    imdb_id=info.imdb_id or imdb_id,
+                    title=info.title or title,
+                    year=info.year or year,
+                )
                 if wd:
                     info.merge(wd, "wikidata")
             except (httpx.HTTPError, ValueError):
@@ -152,7 +169,9 @@ class FilmLookup:
         return r.json()
 
     def _tmdb_find_by_imdb(self, imdb_id: str) -> int | None:
-        data = self._tmdb_get(f"/3/find/{imdb_id}", params={"external_source": "imdb_id"})
+        data = self._tmdb_get(
+            f"/3/find/{imdb_id}", params={"external_source": "imdb_id"}
+        )
         if not data:
             return None
         results = data.get("movie_results") or []
@@ -188,7 +207,10 @@ class FilmLookup:
         r = self._client.get(
             "https://query.wikidata.org/sparql",
             params={"query": sparql, "format": "json"},
-            headers={"accept": "application/sparql-results+json", "user-agent": "SoundtrackID/0.1 (simon@simifilm.ch)"},
+            headers={
+                "accept": "application/sparql-results+json",
+                "user-agent": "SoundtrackID/0.1 (simon@simifilm.ch)",
+            },
         )
         if r.status_code != 200:
             return None
@@ -198,7 +220,9 @@ class FilmLookup:
 
     def _lookup_imdbapi(self, imdb_id: str) -> FilmInfo | None:
         try:
-            r = self._client.get(f"https://api.imdbapi.dev/titles/{imdb_id}", timeout=8.0)
+            r = self._client.get(
+                f"https://api.imdbapi.dev/titles/{imdb_id}", timeout=8.0
+            )
         except httpx.HTTPError:
             return None
         if r.status_code != 200:
@@ -218,7 +242,11 @@ def _parse_tmdb_movie(movie: dict, credits: dict) -> FilmInfo:
     director = next((c for c in crew if c.get("job") == "Director"), None)
     if director:
         info.director = director.get("name")
-    composers = [c.get("name") for c in crew if c.get("job") == "Original Music Composer" and c.get("name")]
+    composers = [
+        c.get("name")
+        for c in crew
+        if c.get("job") == "Original Music Composer" and c.get("name")
+    ]
     if composers:
         info.music_composer = ", ".join(dict.fromkeys(composers))
     return info

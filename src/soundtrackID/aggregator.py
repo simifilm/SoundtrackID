@@ -50,8 +50,14 @@ class ChunkAggregator:
                 sample_rate=sample_rate,
             )
 
-        def build_trailing(run_start: float, run_end: float, emitted_until: float) -> MusicSegment:
-            start = max(run_start, run_end - window_duration) if window_duration else emitted_until
+        def build_trailing(
+            run_start: float, run_end: float, emitted_until: float
+        ) -> MusicSegment:
+            start = (
+                max(run_start, run_end - window_duration)
+                if window_duration
+                else emitted_until
+            )
             return build(start, run_end)
 
         for result in results:
@@ -59,14 +65,22 @@ class ChunkAggregator:
                 continue
             chunk = result.chunk
             if run_start is None:
-                run_start, run_end, emitted_until = chunk.start_time, chunk.end_time, chunk.start_time
+                run_start, run_end, emitted_until = (
+                    chunk.start_time,
+                    chunk.end_time,
+                    chunk.start_time,
+                )
             elif chunk.start_time - run_end <= self.gap_tolerance:
                 run_end = chunk.end_time
             else:
                 # Run closed by a gap: emit its trailing window, start a new run.
                 if run_end > emitted_until:
                     yield build_trailing(run_start, run_end, emitted_until)
-                run_start, run_end, emitted_until = chunk.start_time, chunk.end_time, chunk.start_time
+                run_start, run_end, emitted_until = (
+                    chunk.start_time,
+                    chunk.end_time,
+                    chunk.start_time,
+                )
 
             if window_duration:
                 while run_end - emitted_until >= window_duration:
@@ -84,7 +98,9 @@ class ChunkAggregator:
     ) -> Iterator[MusicSegment]:
         """Merge consecutive music chunks into whole segments, yielding each as it
         finalizes (a gap larger than ``gap_tolerance``, or end of input)."""
-        yield from self.stream_windows(results, full_audio, sample_rate, window_duration=None)
+        yield from self.stream_windows(
+            results, full_audio, sample_rate, window_duration=None
+        )
 
     def aggregate(
         self,
@@ -185,7 +201,10 @@ if __name__ == "__main__":
     for chunk in chunker.chunk(audio, sample_rate):
         result = classifier.classify(chunk)
         status = "MUSIC" if result.is_music else "-----"
-        print(f"  {chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status} ({result.confidence*100:.1f}%)")
+        print(
+            f"  {chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: "
+            f"{status} ({result.confidence * 100:.1f}%)"
+        )
         results.append(result)
 
     print("Aggregating segments...")
@@ -193,7 +212,10 @@ if __name__ == "__main__":
 
     print(f"\nFound {len(segments)} music segment(s):")
     for seg in segments:
-        print(f"  {seg.start_time:.1f}s - {seg.end_time:.1f}s ({seg.end_time - seg.start_time:.1f}s)")
+        print(
+            f"  {seg.start_time:.1f}s - {seg.end_time:.1f}s "
+            f"({seg.end_time - seg.start_time:.1f}s)"
+        )
 
     output_dir = Path("output/segments")
     exported = export_segments(segments, output_dir)
@@ -203,6 +225,8 @@ if __name__ == "__main__":
 
     non_music_dir = Path("output/non_music")
     non_music_exported = export_non_music_chunks(results, non_music_dir)
-    print(f"\nExported {len(non_music_exported)} non-music chunk(s) to {non_music_dir}/")
+    print(
+        f"\nExported {len(non_music_exported)} non-music chunk(s) to {non_music_dir}/"
+    )
     for filepath in non_music_exported:
         print(f"  {filepath.name}")

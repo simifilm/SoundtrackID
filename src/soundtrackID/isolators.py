@@ -9,13 +9,17 @@ from numpy.typing import NDArray
 
 class BaseMusicIsolator(ABC):
     @abstractmethod
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         """Isolate music from audio."""
         ...
 
 
 class DummyIsolator(BaseMusicIsolator):
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         return audio
 
 
@@ -49,7 +53,9 @@ class DemucsIsolator(BaseMusicIsolator):
         self.model_name = model_name
         print(f"Demucs ready on {self.device}")
 
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         """Isolate music from audio using Demucs.
 
         Separates audio into stems and returns the sum of non-vocal stems.
@@ -100,7 +106,9 @@ class DemucsIsolator(BaseMusicIsolator):
 
         if vocal_idx >= 0:
             # Sum all stems except vocals
-            music = torch.sum(sources[[i for i in range(len(stem_names)) if i != vocal_idx]], dim=0)
+            music = torch.sum(
+                sources[[i for i in range(len(stem_names)) if i != vocal_idx]], dim=0
+            )
         else:
             # No vocals stem, sum all
             music = torch.sum(sources, dim=0)
@@ -120,6 +128,7 @@ class DemucsIsolator(BaseMusicIsolator):
 
 if __name__ == "__main__":
     import sys
+
     from scipy.io import wavfile
 
     input_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("output/segments")
