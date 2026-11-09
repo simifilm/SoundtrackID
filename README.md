@@ -221,6 +221,24 @@ Further reading:
 
 ## Building a release
 
+Releases are now built automatically by GitHub Actions
+([.github/workflows/build.yml](.github/workflows/build.yml); the secrets it needs are
+listed at the top of that file). To release a new version, run the following on the
+`dev` branch before creating the pull request from `dev` to `main`, with the new
+version number in place of `v0.3.0`:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+The workflow builds the signed macOS DMG and the Windows installer and attaches them to
+a draft release `v0.3.0`; it stops if that release already exists. Review the draft on
+the [releases page](https://github.com/simifilm/SoundtrackID/releases) and publish it.
+
+> **Note:** the rest of this chapter describes what needs to be done to build a release
+> manually.
+
 Builds must run on the target OS — cross-compilation is supported by neither PyInstaller
 nor Tauri.
 

@@ -4,7 +4,7 @@
 # the Python tests pass.
 #
 # Pull requests to main and manual runs (Actions -> Build -> Run workflow) are
-# test builds. Pushing a tag on main releases that version:
+# test builds. Pushing a tag releases that version (see README, "Building a release"):
 #   git tag v0.3.0 && git push origin v0.3.0
 # builds version 0.3.0 and creates a draft release v0.3.0 with the DMG and the
 # Windows installer. The workflow fails if that release already exists.
