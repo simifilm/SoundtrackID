@@ -29,6 +29,7 @@ def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
 
     r = client.post("/rerun/myrun", data={
         "api": "shazam", "threshold": "0.3", "bridge_gap": "2", "max_segment": "30",
+        "hop": "2.5",
     })
 
     assert r.status_code == 200
@@ -39,6 +40,7 @@ def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
     assert kwargs["threshold"] == 0.3
     assert kwargs["bridge_gap"] == 2.0
     assert kwargs["max_segment_duration"] == 30.0
+    assert kwargs["hop"] == 2.5
 
 
 def test_rerun_without_stored_video_is_404(tmp_path, monkeypatch):

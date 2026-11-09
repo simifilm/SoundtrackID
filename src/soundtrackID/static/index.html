@@ -935,7 +935,7 @@
   .settings-grid {
     padding: 0.75rem 1.25rem 1rem;
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0 1.5rem;
     border-top: 1px solid #ede9fe;
   }
@@ -1076,6 +1076,15 @@
           <option value="15">15 seconds</option>
           <option value="20">20 seconds</option>
           <option value="30" selected>30 seconds</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label for="opt-hop" title="Step between the overlapping 10.23 s classification windows">Hop Size</label>
+        <select id="opt-hop">
+          <option value="2.5">2.5 seconds</option>
+          <option value="5" selected>5 seconds</option>
+          <option value="10">10 seconds</option>
         </select>
       </div>
 
@@ -1855,6 +1864,7 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
   formData.append('api', selectedProviders().join(','));
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
   formData.append('bridge_gap', document.getElementById('opt-bridge').value);
+  formData.append('hop', document.getElementById('opt-hop').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
   formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
 

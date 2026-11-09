@@ -111,6 +111,23 @@ def test_hop_2_5_uses_four_windows_per_slot():
     np.testing.assert_allclose(slots[3].probs, np.mean(probs[:4], axis=0))
 
 
+def test_hop_10_uses_one_window_per_slot_including_the_tail():
+    """With 10.23 s windows and a 10 s hop each slot lies inside exactly one window."""
+    probs = [[0.9, 0.1, 0.0], [0.6, 0.1, 0.3], [0.5, 0.1, 0.4]]
+    audio, results = classify_windows(23, [False] * 3, probs, window=10.23, hop=10.0)
+
+    slots = list(stream_slots(results, audio, SR, hop=10.0))
+
+    assert [(s.chunk.start_time, s.chunk.end_time) for s in slots] == [
+        (0.0, 10.0),
+        (10.0, 20.0),
+        (20.0, 23.0),
+    ]
+    # Windows: 0-10.23, 10-20.23 and the end-anchored tail 12.77-23.
+    for slot, p in zip(slots, probs, strict=True):
+        np.testing.assert_allclose(slot.probs, p)
+
+
 def test_merge_spans_joins_same_verdict_slots_with_all_classes():
     """Neighbouring slots with the same verdict merge; every class is kept."""
     p_no, p_music = [0.9, 0.05, 0.05], [0.4, 0.5, 0.1]

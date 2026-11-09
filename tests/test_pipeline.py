@@ -210,8 +210,8 @@ def test_bridging_counts_non_music_between_the_tracks():
     assert spans_of(groups) == [(0, 15, "X"), (25, 30, None), (30, 45, "X")]
 
 
-def test_build_pipeline_passes_bridge_gap(monkeypatch):
-    """The bridge gap from the UI reaches the output writer."""
+def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
+    """The bridge gap and hop from the UI reach the writer and the chunker."""
     from soundtrackID import app
 
     monkeypatch.setattr(app, "_get_classifier", lambda threshold: FakeClassifier())
@@ -219,6 +219,8 @@ def test_build_pipeline_passes_bridge_gap(monkeypatch):
         "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
     )
 
-    pipeline = app._build_pipeline(Path("."), bridge_gap=7.0)
+    pipeline = app._build_pipeline(Path("."), bridge_gap=7.0, hop=2.5)
 
     assert pipeline.output_writer.bridge_gap == 7.0
+    assert pipeline.chunker.chunk_duration == FakeClassifier.window_duration
+    assert pipeline.chunker.chunk_duration - pipeline.chunker.overlap == 2.5
