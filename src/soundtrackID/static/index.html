@@ -989,7 +989,7 @@
     accent-color: #7c3aed;
   }
 
-  #opt-threshold-val, #opt-bridge-val {
+  #opt-threshold-val {
     font-size: 0.82rem;
     color: #6b7280;
     min-width: 2.5rem;
@@ -1097,11 +1097,13 @@
       </div>
 
       <div class="setting-group">
-        <label for="opt-bridge">Bridge Gaps</label>
-        <div class="range-row">
-          <input type="range" id="opt-bridge" min="0" max="30" value="2">
-          <span id="opt-bridge-val">2 s</span>
-        </div>
+        <label for="opt-bridge" title="Join clips of the same track across up to this many non-music hops">Bridge Gaps</label>
+        <select id="opt-bridge">
+          <option value="0" selected>0 hops</option>
+          <option value="1">1 hop</option>
+          <option value="2">2 hops</option>
+          <option value="3">3 hops</option>
+        </select>
       </div>
 
       <div class="setting-group">
@@ -1514,9 +1516,6 @@ document.getElementById('fc-start').addEventListener('click', () => {
 document.getElementById('opt-threshold').addEventListener('input', function() {
   document.getElementById('opt-threshold-val').textContent = this.value + '%';
 });
-document.getElementById('opt-bridge').addEventListener('input', function() {
-  document.getElementById('opt-bridge-val').textContent = this.value + ' s';
-});
 document.getElementById('opt-csv').addEventListener('change', function() {
   document.getElementById('json-label').style.color = this.checked ? '#c4b5fd' : '#6b7280';
   document.getElementById('csv-label').style.color  = this.checked ? '#6b7280' : '#c4b5fd';
@@ -1863,7 +1862,8 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
   }
   formData.append('api', selectedProviders().join(','));
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
-  formData.append('bridge_gap', document.getElementById('opt-bridge').value);
+  // The bridge gap is chosen in hops; the backend takes seconds.
+  formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
   formData.append('hop', document.getElementById('opt-hop').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
   formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
