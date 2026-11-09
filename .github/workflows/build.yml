@@ -1,7 +1,7 @@
 # Builds the desktop app for macOS and Windows, as described in README.md
 # ("Building a release"). The macOS app is signed, notarized and stapled
 # (Option A); the Windows installer stays unsigned. The builds only start once
-# the Python tests pass.
+# ruff and the Python tests pass.
 #
 # Pull requests to main and manual runs (Actions -> Build -> Run workflow) are
 # test builds. Pushing a tag releases that version (see README, "Building a release"):
@@ -42,6 +42,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
+      - name: Lint
+        run: uv run --group dev ruff check
+      - name: Check formatting
+        run: uv run --group dev ruff format --check
       - name: Run tests
         run: uv run --extra app --group dev pytest
 
