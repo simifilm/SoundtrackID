@@ -1,6 +1,7 @@
 """Tests for the pipeline's classification output."""
 
 import json
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -360,7 +361,8 @@ def test_each_analysis_gets_its_own_run(tmp_path, monkeypatch):
 
 
 def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
-    """Named after the film's file, not after the run it re-analyzes."""
+    """Named after the film's file, not after the run it re-analyzes, and sharing
+    that run's video on disk (a hard link, not a second copy)."""
     from fastapi.testclient import TestClient
 
     from soundtrackID import app
@@ -368,14 +370,19 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
     monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda: next(times)))
     _analyze(tmp_path, monkeypatch, video=b"film")
+    client = TestClient(app.app)
 
-    r = TestClient(app.app).post("/rerun/film_2026-11-10_15-23-01", data={"hop": 10})
+    r = client.post("/rerun/film_2026-11-10_15-23-01", data={"hop": 10})
 
     events = [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
     assert events[-1]["results"]["video_name"] == "film_2026-11-10_15-40-00"
-    cache = tmp_path / "cache"
-    assert (cache / "film_2026-11-10_15-23-01" / "results.json").exists()
-    assert (cache / "film_2026-11-10_15-40-00" / "source.mp4").read_bytes() == b"film"
+    first = tmp_path / "cache" / "film_2026-11-10_15-23-01"
+    second = tmp_path / "cache" / "film_2026-11-10_15-40-00"
+    assert (first / "results.json").exists()
+    assert os.path.samefile(first / "source.mp4", second / "source.mp4")
+    # Deleting the earlier run keeps the video of the re-run.
+    client.delete("/history/film_2026-11-10_15-23-01")
+    assert (second / "source.mp4").read_bytes() == b"film"
 
 
 def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):

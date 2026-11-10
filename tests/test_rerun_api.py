@@ -1,6 +1,7 @@
 """Tests for re-running a stored video: POST /rerun/{video_name}."""
 
 import json
+import shutil
 
 from fastapi.testclient import TestClient
 
@@ -25,8 +26,9 @@ def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
     )
     calls = []
 
-    async def fake_pipeline_sse(video_bytes, original_name, **kwargs):
-        calls.append((video_bytes, original_name, kwargs))
+    async def fake_pipeline_sse(video, **kwargs):
+        calls.append((video.read_bytes(), video.name, kwargs))
+        shutil.rmtree(video.parent)  # its temporary folder, as the real run does
         yield "data: {}\n\n"
 
     monkeypatch.setattr(app_module, "_run_pipeline_sse", fake_pipeline_sse)

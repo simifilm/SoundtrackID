@@ -278,14 +278,16 @@ async def identify(file: UploadFile) -> dict:
     returned `staging_id` is passed to /analyze so the file is not re-uploaded.
     """
     _prune_staging()
-    contents = await file.read()
     # Base name only: the client-supplied name must not escape the staging folder.
     original_name = Path(file.filename).name or "video.mp4"
     staging_id = str(uuid.uuid4())
     staging_dir = _STAGING_DIR / staging_id
     staging_dir.mkdir(parents=True, exist_ok=True)
     staged_path = staging_dir / original_name
-    staged_path.write_bytes(contents)
+    # In chunks, not read whole: a film can be several GB.
+    with staged_path.open("wb") as f:
+        while chunk := await file.read(1 << 20):
+            f.write(chunk)
     with _staging_lock:
         _staging[staging_id] = staged_path
 
@@ -362,8 +364,9 @@ async def analyze(
         raise HTTPException(
             status_code=400, detail="Staged upload not found or expired"
         )
-    contents = staged_path.read_bytes()
-    original_name = staged_path.name
+    # The run takes the staged file over, moved rather than read.
+    video = Path(tempfile.mkdtemp()) / staged_path.name
+    shutil.move(staged_path, video)
     shutil.rmtree(staged_path.parent, ignore_errors=True)
 
     film_override = None
@@ -381,8 +384,7 @@ async def analyze(
 
     return StreamingResponse(
         _run_pipeline_sse(
-            contents,
-            original_name,
+            video,
             run_id=run_id,
             threshold=threshold,
             bridge_gap=bridge_gap,
@@ -422,11 +424,17 @@ async def rerun(
     results = json.loads(results_path.read_text()) if results_path.exists() else {}
     # The new run is named after the film's file, not after this run.
     file_name = Path(results.get("source") or video_name).stem + sources[0].suffix
+    # Hard-linked, so both runs share the video on disk; copied where the drive
+    # has no hard links.
+    video = Path(tempfile.mkdtemp()) / file_name
+    try:
+        os.link(sources[0], video)
+    except OSError:
+        shutil.copy2(sources[0], video)
 
     return StreamingResponse(
         _run_pipeline_sse(
-            sources[0].read_bytes(),
-            file_name,
+            video,
             run_id=str(uuid.uuid4()),
             threshold=threshold,
             bridge_gap=bridge_gap,
@@ -445,8 +453,7 @@ async def rerun(
 
 
 async def _run_pipeline_sse(
-    video_bytes: bytes,
-    original_name: str,
+    video: Path,
     run_id: str,
     threshold: float = 0.2,
     bridge_gap: float = 2.0,
@@ -456,10 +463,14 @@ async def _run_pipeline_sse(
     api: str = "acrcloud",
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Run the pipeline in a thread and yield SSE events."""
+    """Run the pipeline in a thread and yield SSE events.
+
+    `video`, named like the film's file, lies in a temporary folder of its own:
+    the run moves it into its run folder and removes the temporary one.
+    """
     # Each analysis gets its own run folder, also the same film again (e.g. a
     # re-run with other settings), so it is named after the file and the time.
-    run_name = f"{Path(original_name).stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
+    run_name = f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
     cancel_event = threading.Event()
     with _cancel_lock:
         _cancel_events[run_id] = cancel_event
@@ -472,17 +483,14 @@ async def _run_pipeline_sse(
         ev_queue.put({"step": step, **fields})
 
     def run_sync() -> None:
-        tmp_dir = Path(tempfile.mkdtemp())
-        tmp_path = tmp_dir / original_name
         try:
-            tmp_path.write_bytes(video_bytes)
             if film_override:
                 # User-confirmed metadata from the pre-analysis step wins.
                 container_tags = film_override
             else:
                 from soundtrackID.metadata.mp4_tags import read_mp4_tags
 
-                container_tags = read_mp4_tags(tmp_path) or None
+                container_tags = read_mp4_tags(video) or None
             pipeline = _build_pipeline(
                 _OUTPUT_DIR,
                 threshold=threshold,
@@ -492,7 +500,7 @@ async def _run_pipeline_sse(
                 hop=hop,
             )
             results = pipeline.run(
-                tmp_path,
+                video,
                 on_progress=on_progress,
                 max_segment_duration=max_segment_duration,
                 container_tags=container_tags,
@@ -564,9 +572,9 @@ async def _run_pipeline_sse(
             # video preview synced to the timeline (also for history/reopened runs).
             try:
                 run_dir = _OUTPUT_DIR / run_name
-                ext = Path(original_name).suffix or ".mp4"
+                ext = video.suffix or ".mp4"
                 video_dest = run_dir / f"source{ext}"
-                shutil.move(str(tmp_path), str(video_dest))
+                shutil.move(str(video), str(video_dest))
                 from soundtrackID.thumbnails import extract_filmstrip
 
                 film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
@@ -594,7 +602,7 @@ async def _run_pipeline_sse(
                 }
             )
         finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            shutil.rmtree(video.parent, ignore_errors=True)
             with _cancel_lock:
                 _cancel_events.pop(run_id, None)
 
