@@ -152,6 +152,23 @@ def test_classification_windows_list_top_three_classes(tmp_path):
     assert saved["classification_windows"] == windows
 
 
+def test_unidentified_cue_has_no_confidence(tmp_path):
+    """Not a made-up value that would show up in the CSV export."""
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(5.0, 10.0, 15.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=NoMatchClient(),
+        output_dir=tmp_path,
+    )
+
+    results = pipeline.run(Path("film.mp4"))
+
+    assert [c["confidence"] for c in results.to_dict()["cues"]] == [None]
+
+
 def test_cue_audio_skips_overlap_of_anchored_clip(tmp_path):
     """Clips 0-15 s and 5-20 s of one cue give 20 s of audio, not 30 s."""
     pipeline = Pipeline(
@@ -488,3 +505,16 @@ def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
     assert pipeline.output_writer.bridge_gap == 7.0
     assert pipeline.chunker.chunk_duration == FakeClassifier.window_duration
     assert pipeline.chunker.chunk_duration - pipeline.chunker.overlap == 2.5
+
+
+def test_each_run_classifies_with_its_own_threshold(monkeypatch):
+    """Two analyses at the same time share the loaded model, not the threshold."""
+    from soundtrackID import app
+
+    monkeypatch.setattr(app, "_classifier", FakeClassifier())
+
+    first = app._get_classifier(threshold=0.2)
+    second = app._get_classifier(threshold=0.8)  # starts while the first runs
+
+    assert (first.threshold, second.threshold) == (0.2, 0.8)
+    assert first.music_starts is second.music_starts  # the same model underneath

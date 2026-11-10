@@ -52,7 +52,7 @@ class SegmentOutput:
     duration: float
     conditioning: str
     audio_file: str
-    confidence: float
+    confidence: float | None  # None: nothing identified
     pending: bool = False  # skipped at a rate limit; a resume identifies it
 
     def to_dict(self) -> dict[str, Any]:

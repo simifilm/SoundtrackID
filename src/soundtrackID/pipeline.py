@@ -150,7 +150,7 @@ class OutputWriter:
             confidence = (
                 sum(d.confidence for d in identified) / len(identified)
                 if identified
-                else 0.5
+                else None
             )
 
             segment_outputs.append(

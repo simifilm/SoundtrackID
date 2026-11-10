@@ -1,6 +1,7 @@
 """FastAPI web application for the SoundtrackID pipeline."""
 
 import asyncio
+import copy
 import io
 import json
 import mimetypes
@@ -173,8 +174,11 @@ def _get_classifier(threshold: float = 0.2):
                             music_labels=["Music"],
                             threshold=threshold,
                         )
-    _classifier.threshold = threshold
-    return _classifier
+    # A copy per run sharing the loaded model: setting the threshold on the
+    # shared classifier changed it for analyses already running, too.
+    run_classifier = copy.copy(_classifier)
+    run_classifier.threshold = threshold
+    return run_classifier
 
 
 def _build_pipeline(
