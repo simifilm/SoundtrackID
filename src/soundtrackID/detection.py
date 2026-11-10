@@ -666,11 +666,14 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
         with ThreadPoolExecutor(max_workers=len(self._clients)) as ex:
             raw = [f.result() for f in [ex.submit(run, n, c) for n, c in self._clients]]
 
-        # If every provider is rate-limited, the ensemble as a whole is throttled:
-        # propagate so the pipeline can save partial results and offer a resume.
-        if raw and all(rl for _, _, _, rl in raw):
+        # If no provider answered and at least one was rate-limited (the others
+        # failed otherwise), nobody listened to this window, so the ensemble is
+        # throttled: propagate so the pipeline can save partial results and offer
+        # a resume, instead of recording the window as "no match".
+        answered = any(r is not None for _, r, _, _ in raw)
+        if not answered and any(rl for _, _, _, rl in raw):
             raise RateLimitError(
-                "all providers rate-limited: " + "; ".join(e for _, _, e, _ in raw if e)
+                "no provider answered: " + "; ".join(e for _, _, e, _ in raw if e)
             )
         raw = [(n, r, e) for n, r, e, _ in raw]
 

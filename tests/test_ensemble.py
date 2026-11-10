@@ -1,10 +1,12 @@
 """Tests for the multi-provider ensemble (majority voting)."""
 
 import numpy as np
+import pytest
 
 from soundtrackID.detection import (
     BaseMusicDetectionClient,
     EnsembleDetectionClient,
+    RateLimitError,
     _consensus_from_votes,
     _normalize_title,
     build_detection_client,
@@ -142,12 +144,15 @@ def test_disagreement_ignores_incomparable_confidence():
 
 
 class _FakeClient(BaseMusicDetectionClient):
-    def __init__(self, title, *, isrc=None, raises=False):
+    def __init__(self, title, *, isrc=None, raises=False, rate_limited=False):
         self._title = title
         self._isrc = isrc
         self._raises = raises
+        self._rate_limited = rate_limited
 
     def detect(self, segment):
+        if self._rate_limited:
+            raise RateLimitError("limit reached")
         if self._raises:
             raise RuntimeError("provider quota exceeded")
         meta = {"isrc": self._isrc} if self._isrc else {}
@@ -201,6 +206,36 @@ def test_ensemble_survives_a_raising_provider():
     audd_vote = next(v for v in res.metadata["votes"] if v["provider"] == "audd")
     assert audd_vote["matched"] is False
     assert "quota" in (audd_vote["error"] or "")
+
+
+@pytest.mark.parametrize(
+    "other",
+    [_FakeClient(None, rate_limited=True), _FakeClient(None, raises=True)],
+    ids=["other-rate-limited", "other-failed"],
+)
+def test_ensemble_is_rate_limited_when_no_provider_answered(other):
+    # Nobody listened to the window, so it must stay pending for a resume
+    # instead of reading as "no match".
+    ens = EnsembleDetectionClient(
+        [("acrcloud", _FakeClient(None, rate_limited=True)), ("audd", other)]
+    )
+    with pytest.raises(RateLimitError):
+        ens.detect(_segment())
+
+
+@pytest.mark.parametrize("answer", ["Abyss", None], ids=["match", "no-match"])
+def test_ensemble_carries_on_when_another_provider_answers(answer):
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient(None, rate_limited=True)),
+            ("audd", _FakeClient(answer)),
+        ]
+    )
+    res = ens.detect(_segment())
+    assert res.title == answer
+    acr_vote = next(v for v in res.metadata["votes"] if v["provider"] == "acrcloud")
+    assert acr_vote["matched"] is False
+    assert "limit reached" in acr_vote["error"]
 
 
 # ── factory ───────────────────────────────────────────────────────────────
