@@ -1,12 +1,10 @@
 """Tests for video/audio loaders."""
 
-from fractions import Fraction
-
-import av
 import numpy as np
 import pytest
 
 from soundtrackID.loaders import VideoLoader
+from tests.media import write_video
 
 VIDEO_SECONDS = 10
 TONE_HZ = 440
@@ -14,37 +12,9 @@ TONE_HZ = 440
 
 @pytest.fixture(scope="module")
 def test_video_path(tmp_path_factory):
-    """A small MP4: tiny video plus a 440 Hz stereo tone at 48 kHz.
-
-    Generated instead of checked in, so the tests need no film footage.
-    """
+    """A small generated MP4 with a 440 Hz stereo tone at 48 kHz."""
     path = tmp_path_factory.mktemp("video") / "tone.mp4"
-    sr = 48000
-    with av.open(str(path), "w") as container:
-        video = container.add_stream("mpeg4", rate=10)
-        video.width, video.height, video.pix_fmt = 64, 48, "yuv420p"
-        audio = container.add_stream("aac", rate=sr)
-        audio.layout = "stereo"
-
-        for i in range(VIDEO_SECONDS * 10):
-            pixels = np.full((48, 64, 3), i, np.uint8)
-            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
-            container.mux(video.encode(frame))
-
-        t = np.arange(VIDEO_SECONDS * sr) / sr
-        tone = (0.5 * np.sin(2 * np.pi * TONE_HZ * t)).astype(np.float32)
-        stereo = np.stack([tone, tone])
-        for start in range(0, stereo.shape[1], 1024):
-            chunk = np.ascontiguousarray(stereo[:, start : start + 1024])
-            frame = av.AudioFrame.from_ndarray(chunk, format="fltp", layout="stereo")
-            frame.sample_rate = sr
-            frame.pts = start
-            frame.time_base = Fraction(1, sr)
-            container.mux(audio.encode(frame))
-
-        container.mux(video.encode())
-        container.mux(audio.encode())
-    return path
+    return write_video(path, VIDEO_SECONDS, TONE_HZ)
 
 
 def test_loader_returns_audio_and_sample_rate(test_video_path):
