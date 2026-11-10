@@ -81,11 +81,18 @@ def test_bad_body_is_422(tmp_path, monkeypatch):
     assert r.status_code == 422
 
 
-@pytest.mark.parametrize("name", ["..%2f..%2fevil", "%2e%2e%2fetc"])
+@pytest.mark.parametrize("name", ["%2e", "%2e%2e"])
 def test_path_traversal_rejected(tmp_path, monkeypatch, name):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    # "." and ".." would reach these results files without the check
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for folder in (cache, tmp_path):
+        (folder / "results.json").write_text('{"cues": ["keep"]}')
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
     r = client.post(f"/results/{name}", json={"cues": []})
-    assert r.status_code in (400, 404)
+    assert r.status_code == 400
+    for folder in (cache, tmp_path):
+        assert json.loads((folder / "results.json").read_text()) == {"cues": ["keep"]}
 
 
 # ── Resume endpoint ────────────────────────────────────────────────────────

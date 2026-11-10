@@ -138,7 +138,6 @@ class TestHuggingFaceClassifier:
 class TestHuggingFaceClassifierIntegration:
     """Integration tests that require actual HF dependencies."""
 
-    @pytest.mark.slow
     def test_real_model_loading(self):
         """Test loading real model (skipped in CI)."""
         from soundtrackID.classifiers import HuggingFaceClassifier
@@ -148,7 +147,6 @@ class TestHuggingFaceClassifierIntegration:
         assert len(classifier.label2id) > 0
         assert "Music" in classifier.label2id
 
-    @pytest.mark.slow
     def test_classify_real_audio(self):
         """Test classification of 10 s of audio with the real model."""
         from soundtrackID.classifiers import HuggingFaceClassifier
