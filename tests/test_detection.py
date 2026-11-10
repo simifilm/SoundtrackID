@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import socket
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -130,6 +132,7 @@ def test_garbage_output_falls_back():
 # ── shazamio against a stand-in for Shazam's API ───────────────────────────
 
 THROTTLED = (429, {"error": "Too Many Requests"})
+SERVER_ERROR = (503, {"error": "Service Unavailable"})
 NO_MATCH = (200, {"matches": []})
 MATCH = (200, {"matches": [{}], "track": {"title": "Song", "subtitle": "Band"}})
 
@@ -172,15 +175,40 @@ def _music():
     return MusicSegment(audio.astype(np.float32), 0.0, 5.0, 16000)
 
 
-def test_shazamio_still_throttled_after_retries_is_a_rate_limit(shazam_api):
+@pytest.mark.parametrize(
+    "answer", [THROTTLED, SERVER_ERROR], ids=["throttled", "server error"]
+)
+def test_shazamio_still_refusing_after_retries_is_a_rate_limit(shazam_api, answer):
     """Not a "no match": the run stops identifying and offers to resume."""
     responses, sent = shazam_api
-    responses.append(THROTTLED)
+    responses.append(answer)
 
     with pytest.raises(RateLimitError):
         ShazamDetectionClient().detect(_music())
 
     assert len(sent) == 20  # shazamio's retries
+
+
+def test_shazam_unreachable_is_a_rate_limit(shazam_api, monkeypatch):
+    """Offline, nobody listened to the segment: it stays pending for a resume
+    instead of counting as "no match"."""
+    with socket.socket() as s:  # a port that nothing listens on
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    url = f"http://127.0.0.1:{port}/?{{language}}"
+    monkeypatch.setattr("shazamio.misc.ShazamUrl.SEARCH_FROM_FILE", url)
+
+    with pytest.raises(RateLimitError, match="Shazam unreachable"):
+        ShazamDetectionClient().detect(_music())
+
+
+def test_shazam_without_shazamkit_or_shazamio_fails_at_start(monkeypatch):
+    """Rather than reporting "no match" for every segment."""
+    monkeypatch.setattr("soundtrackID.detection._find_shazamkit_helper", lambda: None)
+    monkeypatch.setitem(sys.modules, "shazamio", None)  # not installed
+
+    with pytest.raises(ImportError, match=r"soundtrackID\[shazam\]"):
+        ShazamDetectionClient()
 
 
 @pytest.mark.parametrize(

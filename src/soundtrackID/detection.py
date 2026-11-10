@@ -98,24 +98,33 @@ def _parse_acr_candidate(m: dict) -> dict:
 
 
 def _shazamio_http_client():
-    """shazamio's default HTTP client, except that a request still throttled
-    (HTTP 429) after all its retries raises RateLimitError: shazamio returns the
-    throttled response instead, which reads as "no match"."""
+    """shazamio's default HTTP client, except that Shazam still throttling (HTTP
+    429) or failing (5xx) after all its retries, or not reachable, raises
+    RateLimitError: shazamio returns such a response, or raises, and either
+    reads as "no match"."""
+    import asyncio
+
+    import aiohttp
     from aiohttp_retry import ExponentialRetry, RetryClient
     from shazamio.client import HTTPClient
     from shazamio.utils import validate_json
 
     class Client(HTTPClient):
         async def request(self, method, url, *args, **kwargs):
-            async with RetryClient(
-                retry_options=self.retry_options,
-                raise_for_status=False,
-                trace_configs=[self.trace_config],
-            ) as client:
-                async with client.request(method, url, **kwargs) as resp:
-                    if resp.status == 429:
-                        raise RateLimitError("Shazam rate limit (HTTP 429)")
-                    return await validate_json(resp, *args)
+            try:
+                async with RetryClient(
+                    retry_options=self.retry_options,
+                    raise_for_status=False,
+                    trace_configs=[self.trace_config],
+                ) as client:
+                    async with client.request(method, url, **kwargs) as resp:
+                        if resp.status == 429:
+                            raise RateLimitError("Shazam rate limit (HTTP 429)")
+                        if resp.status >= 500:
+                            raise RateLimitError(f"Shazam error: HTTP {resp.status}")
+                        return await validate_json(resp, *args)
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+                raise RateLimitError(f"Shazam unreachable: {exc!r}") from exc
 
     # The retries of shazamio's default client: about 12 minutes on a 429.
     return Client(
@@ -149,6 +158,16 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
     def __init__(self, helper_path: str | None = None, language: str = "en-US"):
         self._helper = helper_path or _find_shazamkit_helper()
         self._language = language
+        if not self._helper:
+            # Then shazamio is the only way to ask Shazam: fail here rather than
+            # with a "no match" for every segment.
+            try:
+                import shazamio  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "Shazam without the ShazamKit helper requires the 'shazam' "
+                    "extras. Install with: pip install soundtrackID[shazam]"
+                ) from exc
 
     def detect(self, segment: MusicSegment) -> DetectionResult:
         empty = DetectionResult(
