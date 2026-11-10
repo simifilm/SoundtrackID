@@ -2,7 +2,9 @@
 
 import json
 import threading
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -290,8 +292,8 @@ def test_progress_events_carry_their_data_as_fields(tmp_path):
     ]
 
 
-def _analyze(tmp_path, monkeypatch, **form):
-    """POST /analyze with the fake pipeline; returns the SSE events."""
+def _analyze(tmp_path, monkeypatch, video=b"video", **form):
+    """POST /analyze for film.mp4 with the fake pipeline; returns the SSE events."""
     from fastapi.testclient import TestClient
 
     from soundtrackID import app
@@ -314,7 +316,7 @@ def _analyze(tmp_path, monkeypatch, **form):
     )
 
     client = TestClient(app.app)
-    staged = client.post("/identify", files={"file": ("film.mp4", b"video")}).json()
+    staged = client.post("/identify", files={"file": ("film.mp4", video)}).json()
     r = client.post(
         "/analyze",
         data={"staging_id": staged["staging_id"], "film": '{"title": "F"}', **form},
@@ -333,6 +335,47 @@ def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
         "bridge_gap": 5.0,
         "max_segment_duration": 10.0,
     }
+
+
+def test_each_analysis_gets_its_own_run(tmp_path, monkeypatch):
+    """Also of a film with the same file name, e.g. the same one again with
+    other settings: the run folder carries the time of the analysis."""
+    from soundtrackID import app
+
+    times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
+    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda: next(times)))
+
+    _analyze(tmp_path, monkeypatch, video=b"first film")
+    events = _analyze(tmp_path, monkeypatch, video=b"second film")
+
+    assert events[-1]["results"]["video_name"] == "film_2026-11-10_15-40-00"
+    assert events[-1]["results"]["source"] == "film.mp4"
+    cache = tmp_path / "cache"
+    assert (cache / "film_2026-11-10_15-23-01" / "source.mp4").read_bytes() == (
+        b"first film"
+    )
+    assert (cache / "film_2026-11-10_15-40-00" / "source.mp4").read_bytes() == (
+        b"second film"
+    )
+
+
+def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
+    """Named after the film's file, not after the run it re-analyzes."""
+    from fastapi.testclient import TestClient
+
+    from soundtrackID import app
+
+    times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
+    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda: next(times)))
+    _analyze(tmp_path, monkeypatch, video=b"film")
+
+    r = TestClient(app.app).post("/rerun/film_2026-11-10_15-23-01", data={"hop": 10})
+
+    events = [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
+    assert events[-1]["results"]["video_name"] == "film_2026-11-10_15-40-00"
+    cache = tmp_path / "cache"
+    assert (cache / "film_2026-11-10_15-23-01" / "results.json").exists()
+    assert (cache / "film_2026-11-10_15-40-00" / "source.mp4").read_bytes() == b"film"
 
 
 def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):

@@ -107,6 +107,7 @@ class OutputWriter:
         film: dict | None = None,
         classification: list[dict] | None = None,
         classification_windows: list[dict] | None = None,
+        run_name: str | None = None,
     ) -> ResultsOutput:
         """Write detection results to disk.
 
@@ -114,8 +115,9 @@ class OutputWriter:
         into a single WAV file. Creates:
         - output_dir/<video_name>/results.json
         - output_dir/<video_name>/segments/seg_001.wav
+        where video_name is `run_name`, by default the video's file name.
         """
-        video_name = video_path.stem
+        video_name = run_name or video_path.stem
         video_output_dir = self.output_dir / video_name
         segments_dir = video_output_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
@@ -291,11 +293,14 @@ class Pipeline:
         on_progress=None,
         max_segment_duration: float | None = None,
         container_tags: dict | None = None,
+        run_name: str | None = None,
     ) -> ResultsOutput:
         """Run the pipeline on a video file.
 
         Args:
             video_path: Path to the video file.
+            run_name: Name of the run's output folder; by default the video's
+                file name.
             on_progress: Optional callable(step: str, **fields) for progress updates.
                 Steps: "loading", "waveform", "classifying", "identified", "detecting",
                 "writing" (identification overlaps classification, so "classifying" and
@@ -546,6 +551,7 @@ class Pipeline:
             film=container_tags or None,
             classification=merge_spans(slots, self.classifier.labels),
             classification_windows=windows,
+            run_name=run_name,
         )
         output.rate_limited = rate_limited
         return output

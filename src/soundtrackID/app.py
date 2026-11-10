@@ -13,6 +13,7 @@ import threading
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -409,7 +410,7 @@ async def rerun(
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
 ) -> StreamingResponse:
-    """Analyze a run's stored source video again with new settings.
+    """Analyze a run's stored source video again with new settings, as a new run.
 
     Keeps the run's film metadata, so the video needn't be uploaded again.
     """
@@ -418,16 +419,14 @@ async def rerun(
     if not sources:
         raise HTTPException(status_code=404, detail="No stored video for this run")
     results_path = run_dir / "results.json"
-    film = (
-        json.loads(results_path.read_text()).get("film")
-        if results_path.exists()
-        else None
-    )
+    results = json.loads(results_path.read_text()) if results_path.exists() else {}
+    # The new run is named after the film's file, not after this run.
+    file_name = Path(results.get("source") or video_name).stem + sources[0].suffix
 
     return StreamingResponse(
         _run_pipeline_sse(
             sources[0].read_bytes(),
-            f"{video_name}{sources[0].suffix}",
+            file_name,
             run_id=str(uuid.uuid4()),
             threshold=threshold,
             bridge_gap=bridge_gap,
@@ -435,7 +434,7 @@ async def rerun(
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
             api=api,
-            film_override=film,
+            film_override=results.get("film"),
         ),
         media_type="text/event-stream",
         headers={
@@ -458,6 +457,9 @@ async def _run_pipeline_sse(
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the pipeline in a thread and yield SSE events."""
+    # Each analysis gets its own run folder, also the same film again (e.g. a
+    # re-run with other settings), so it is named after the file and the time.
+    run_name = f"{Path(original_name).stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
     cancel_event = threading.Event()
     with _cancel_lock:
         _cancel_events[run_id] = cancel_event
@@ -494,6 +496,7 @@ async def _run_pipeline_sse(
                 on_progress=on_progress,
                 max_segment_duration=max_segment_duration,
                 container_tags=container_tags,
+                run_name=run_name,
             )
             result_dict = results.to_dict()
             # Saved so /resume continues with the same providers.
@@ -560,7 +563,7 @@ async def _run_pipeline_sse(
             # Persist the source video + a thumbnail filmstrip so the UI can show a
             # video preview synced to the timeline (also for history/reopened runs).
             try:
-                run_dir = _OUTPUT_DIR / Path(original_name).stem
+                run_dir = _OUTPUT_DIR / run_name
                 ext = Path(original_name).suffix or ".mp4"
                 video_dest = run_dir / f"source{ext}"
                 shutil.move(str(tmp_path), str(video_dest))
