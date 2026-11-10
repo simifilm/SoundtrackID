@@ -89,13 +89,11 @@ class OutputWriter:
         output_dir: Path,
         conditioning: str = "original",
         export_csv: bool = False,
-        export_mava: bool = False,
         bridge_gap: float = 2.0,
     ) -> None:
         self.output_dir = output_dir
         self.conditioning = conditioning
         self.export_csv = export_csv
-        self.export_mava = export_mava
         self.bridge_gap = bridge_gap
 
     def write(
@@ -243,16 +241,6 @@ class OutputWriter:
                     )
             print(f"  CSV written to: {csv_path}")
 
-        if self.export_mava:
-            from soundtrackID.mava_export import write_mava_export
-
-            tsv_path, mapping_path = write_mava_export(
-                results_output.to_dict()["cues"],
-                video_output_dir,
-                video_name=video_name,
-            )
-            print(f"  MAVA export written to: {tsv_path.name} + {mapping_path.name}")
-
         return results_output
 
 
@@ -267,7 +255,6 @@ class Pipeline:
         detection_client: BaseMusicDetectionClient,
         output_dir: Path | None = None,
         export_csv: bool = False,
-        export_mava: bool = False,
         detection_concurrency: int = 4,
         bridge_gap: float = 2.0,
     ) -> None:
@@ -291,7 +278,6 @@ class Pipeline:
             self.output_dir,
             conditioning=conditioning,
             export_csv=export_csv,
-            export_mava=export_mava,
             bridge_gap=bridge_gap,
         )
 
@@ -306,19 +292,28 @@ class Pipeline:
 
         Args:
             video_path: Path to the video file.
-            on_progress: Optional callable(step: str, detail: str) for progress updates.
+            on_progress: Optional callable(step: str, **fields) for progress updates.
                 Steps: "loading", "waveform", "classifying", "identified", "detecting",
                 "writing" (identification overlaps classification, so "classifying" and
                 "identified" events interleave). "done" is emitted by the caller.
+                Every step except "waveform" passes `detail`, a message for people.
+                Data comes as fields, never inside `detail`:
+                  waveform:        samples, duration
+                  classifying:     start, end, is_music (once per window)
+                  identified:      start, end, title, artist, reaped, total
+                  ident_waiting:   reaped, total, seconds
+                  detecting:       total, title, artist (per window, once
+                                   classification is done)
 
         Returns:
             ResultsOutput containing all detected segments and their metadata.
         """
 
-        def progress(step: str, detail: str = "") -> None:
-            print(f"[{step}] {detail}" if detail else f"[{step}]")
+        def progress(step: str, detail: str = "", **fields) -> None:
+            text = detail or (json.dumps(fields) if fields else "")
+            print(f"[{step}] {text}" if text else f"[{step}]")
             if on_progress:
-                on_progress(step, detail)
+                on_progress(step, detail=detail, **fields)
 
         progress("loading", f"Loading audio from: {video_path}")
         audio, sample_rate = self.loader.load(video_path)
@@ -340,7 +335,7 @@ class Pipeline:
             "duration": round(float(len(audio) / sample_rate), 2),
         }
         if on_progress:
-            on_progress("waveform", json.dumps(waveform_data))
+            on_progress("waveform", **waveform_data)
 
         progress("classifying", "Starting chunk classification...")
 
@@ -399,16 +394,12 @@ class Pipeline:
             detection_results_by_idx[idx] = (chunk_seg, detection)
             progress(
                 "identified",
-                json.dumps(
-                    {
-                        "start": round(chunk_seg.start_time, 3),
-                        "end": round(chunk_seg.end_time, 3),
-                        "title": detection.title,
-                        "artist": detection.artist,
-                        "reaped": reaped,
-                        "total": total_chunks if classification_done else None,
-                    }
-                ),
+                start=round(chunk_seg.start_time, 3),
+                end=round(chunk_seg.end_time, 3),
+                title=detection.title,
+                artist=detection.artist,
+                reaped=reaped,
+                total=total_chunks if classification_done else None,
             )
             if label:
                 prefix = f"[{reaped}/{total_chunks}]"
@@ -418,7 +409,13 @@ class Pipeline:
                     start, end = chunk_seg.start_time, chunk_seg.end_time
                     det_detail = f"{prefix} {start:.0f}s-{end:.0f}s: no match"
                 print(f"  {det_detail}")
-                progress("detecting", det_detail)
+                progress(
+                    "detecting",
+                    det_detail,
+                    total=total_chunks,
+                    title=detection.title,
+                    artist=detection.artist,
+                )
 
         def drain_finished() -> None:
             # Reap already-completed futures without blocking, so identification
@@ -445,7 +442,13 @@ class Pipeline:
                 status = "MUSIC" if result.is_music else "-----"
                 detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
                 print(f"  {detail}")
-                progress("classifying", detail)
+                progress(
+                    "classifying",
+                    detail,
+                    start=chunk.start_time,
+                    end=chunk.end_time,
+                    is_music=result.is_music,
+                )
                 yield result
 
         # The aggregator gets gap-free hop-sized slots instead of the overlapping
@@ -500,13 +503,9 @@ class Pipeline:
                     waited += 5.0
                     progress(
                         "ident_waiting",
-                        json.dumps(
-                            {
-                                "reaped": reaped,
-                                "total": total_chunks,
-                                "seconds": int(waited),
-                            }
-                        ),
+                        reaped=reaped,
+                        total=total_chunks,
+                        seconds=int(waited),
                     )
                     continue
                 waited = 0.0

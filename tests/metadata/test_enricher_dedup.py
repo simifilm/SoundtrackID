@@ -48,7 +48,7 @@ def test_recurring_track_enriched_once(monkeypatch):
         ]
     }
 
-    enricher.enrich(results=results, film_hint=None, http_client=None, scope="music")
+    enricher.enrich(results=results, http_client=None)
 
     # One lookup per unique (title, artist), not per cue.
     assert len(counter.calls) == 2
@@ -79,9 +79,7 @@ def test_progress_counts_unique_tracks(monkeypatch):
     }
     enricher.enrich(
         results=results,
-        film_hint=None,
         http_client=None,
-        scope="music",
         progress_cb=lambda step, **kw: events.append((step, kw.get("total"))),
     )
     starts = [t for step, t in events if step == "music_start"]

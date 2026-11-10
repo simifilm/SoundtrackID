@@ -1,6 +1,7 @@
 """Tests for the pipeline's classification output."""
 
 import json
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +65,18 @@ class TitleByStartClient:
         return DetectionResult(
             segment=segment, title=title, artist=None, confidence=1.0
         )
+
+
+class ReleasedClient:
+    """Answers only once released, e.g. after classification has finished."""
+
+    def __init__(self, client):
+        self.client = client
+        self.released = threading.Event()
+
+    def detect(self, segment):
+        self.released.wait(timeout=10)
+        return self.client.detect(segment)
 
 
 def test_classification_spans_cover_whole_audio(tmp_path):
@@ -158,6 +171,96 @@ def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cu
     results = pipeline.run(Path("film.mp4"), max_segment_duration=10.0)
 
     assert len(results.segments) == n_cues
+
+
+def test_progress_events_carry_their_data_as_fields(tmp_path):
+    """The UI reads the fields; `detail` is only a message and is never parsed."""
+    client = ReleasedClient(TitleByStartClient(starts=(10.0,)))
+    events = []
+
+    def on_progress(step, **fields):
+        events.append((step, fields))
+        if step == "detecting" and "title" not in fields:  # classification is done
+            client.released.set()
+
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(5.0, 10.0, 15.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=client,
+        output_dir=tmp_path,
+    )
+
+    pipeline.run(Path("film.mp4"), on_progress=on_progress, max_segment_duration=5.0)
+
+    def values(step, *keys):
+        """`keys` of every `step` event that has the first key."""
+        return [
+            tuple(f[k] for k in keys) for s, f in events if s == step and keys[0] in f
+        ]
+
+    assert values("waveform", "duration") == [(30.0,)]
+    assert values("classifying", "start", "end", "is_music") == [
+        (0.0, 10.0, False),
+        (5.0, 15.0, True),
+        (10.0, 20.0, True),
+        (15.0, 25.0, True),
+        (20.0, 30.0, False),
+    ]
+    assert sorted(values("identified", "start", "end", "title", "artist", "total")) == [
+        (10.0, 15.0, "X", None, 2),
+        (15.0, 20.0, None, None, 2),
+    ]
+    # Labels for the step indicator: a no-match window still has a `title` field.
+    assert sorted(values("detecting", "title", "artist", "total"), key=str) == [
+        ("X", None, 2),
+        (None, None, 2),
+    ]
+
+
+def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):
+    """The SSE events carry the pipeline's fields at their top level."""
+    from fastapi.testclient import TestClient
+
+    from soundtrackID import app
+
+    monkeypatch.setattr(app, "_OUTPUT_DIR", tmp_path / "cache")
+    monkeypatch.setattr(app, "_STAGING_DIR", tmp_path / "staging")
+    monkeypatch.setattr(app, "_staging", {})
+    monkeypatch.setattr(
+        app,
+        "_build_pipeline",
+        lambda output_dir, **kwargs: Pipeline(
+            loader=FakeLoader(),
+            chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+            classifier=FakeClassifier(),
+            aggregator=ChunkAggregator(gap_tolerance=1.0),
+            isolator=DummyIsolator(),
+            detection_client=NoMatchClient(),
+            output_dir=output_dir,
+        ),
+    )
+
+    client = TestClient(app.app)
+    staged = client.post("/identify", files={"file": ("film.mp4", b"video")}).json()
+    r = client.post(
+        "/analyze",
+        data={"staging_id": staged["staging_id"], "film": json.dumps({"title": "F"})},
+    )
+
+    events = [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
+    assert events[-1]["step"] == "done"
+    assert [e["duration"] for e in events if e["step"] == "waveform"] == [30.0]
+    windows = [e for e in events if e["step"] == "classifying" and "start" in e]
+    assert [(e["start"], e["end"], e["is_music"]) for e in windows] == [
+        (0.0, 10.0, False),
+        (5.0, 15.0, False),
+        (10.0, 20.0, True),
+        (15.0, 25.0, False),
+        (20.0, 30.0, False),
+    ]
 
 
 def clips(*specs):

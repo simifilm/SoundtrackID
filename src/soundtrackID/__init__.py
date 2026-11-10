@@ -6,10 +6,8 @@ from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.classifiers import (
     BaseClassifier,
-    DummyClassifier,
     HuggingFaceClassifier,
 )
-from soundtrackID.config import Config, load_config
 from soundtrackID.detection import (
     BaseMusicDetectionClient,
     ShazamDetectionClient,
@@ -25,8 +23,6 @@ from soundtrackID.models import (
 from soundtrackID.pipeline import Pipeline
 
 __all__ = [
-    "Config",
-    "load_config",
     "AudioChunk",
     "ClassificationResult",
     "MusicSegment",
@@ -34,7 +30,6 @@ __all__ = [
     "VideoLoader",
     "AudioChunker",
     "BaseClassifier",
-    "DummyClassifier",
     "HuggingFaceClassifier",
     "BaseMusicIsolator",
     "DummyIsolator",

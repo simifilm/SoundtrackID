@@ -12,7 +12,6 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "pyacrcloud>=1.0",
-    "pyyaml>=6.0",
     "av>=10.0",
     "scipy>=1.10",
     "librosa>=0.10",

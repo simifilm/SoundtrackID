@@ -11,8 +11,6 @@ into VIAN.
 
 import csv
 import io
-import json
-from pathlib import Path
 from typing import Any
 
 MAVA_TIME_COLUMN = "start_in_seconds"
@@ -54,17 +52,3 @@ def build_mava_mapping(video_name: str | None = None) -> dict[str, Any]:
         "value_column": MAVA_VALUE_COLUMN,
         "duration_column": MAVA_DURATION_COLUMN,
     }
-
-
-def write_mava_export(
-    cues: list[dict[str, Any]], output_dir: Path, video_name: str | None = None
-) -> tuple[Path, Path]:
-    """Write mava_annotations.tsv + mava_mapping.json into output_dir."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tsv_path = output_dir / "mava_annotations.tsv"
-    mapping_path = output_dir / "mava_mapping.json"
-    tsv_path.write_text(build_mava_tsv(cues), encoding="utf-8")
-    mapping_path.write_text(
-        json.dumps(build_mava_mapping(video_name), indent=2), encoding="utf-8"
-    )
-    return tsv_path, mapping_path

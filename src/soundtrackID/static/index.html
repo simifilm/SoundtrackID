@@ -807,87 +807,6 @@
     color: #9ca3af;
   }
 
-  #enrich-modal {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, 0.42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-  }
-  .enrich-modal-card {
-    background: #ffffff;
-    border: 1px solid #7c3aed;
-    border-radius: 12px;
-    padding: 1.5rem 1.75rem;
-    width: 420px;
-    max-width: 92vw;
-    box-shadow: 0 14px 40px rgba(60, 30, 120, 0.18);
-  }
-  .enrich-modal-card h3 {
-    margin: 0 0 0.3rem 0;
-    color: #4c1d95;
-    font-size: 1.05rem;
-  }
-  .enrich-modal-hint {
-    margin: 0 0 1rem 0;
-    color: #6b7280;
-    font-size: 0.78rem;
-  }
-  .enrich-modal-card label {
-    display: block;
-    margin-bottom: 0.55rem;
-    color: #6b7280;
-    font-size: 0.78rem;
-  }
-  .enrich-modal-card input {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 0.2rem;
-    padding: 0.4rem 0.55rem;
-    border: 1px solid #ddd6fe;
-    border-radius: 6px;
-    font-size: 0.88rem;
-    color: #3b0764;
-  }
-  .enrich-modal-card input:focus { outline: none; border-color: #7c3aed; }
-  .enrich-modal-actions {
-    display: flex;
-    gap: 0.6rem;
-    justify-content: flex-end;
-    margin-top: 1rem;
-  }
-  #enrich-progress { margin-top: 0.8rem; }
-  .enrich-progress-bar {
-    height: 6px;
-    background: #f0ebff;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .enrich-progress-fill {
-    height: 100%;
-    background: #7c3aed;
-    width: 0%;
-    transition: width 0.2s ease;
-  }
-  #enrich-progress-text {
-    display: block;
-    margin-top: 0.4rem;
-    color: #6b7280;
-    font-size: 0.76rem;
-  }
-  #enrich-error {
-    margin-top: 0.8rem;
-    padding: 0.55rem 0.7rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 6px;
-    color: #b91c1c;
-    font-size: 0.8rem;
-  }
-
   .empty-note {
     color: #a09cb8;
     font-size: 0.85rem;
@@ -1870,7 +1789,16 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
 
   const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
   fetch(url, { method: 'POST', body: formData })
-    .then(res => {
+    .then(async res => {
+      if (!res.ok) {
+        // Refused before the run started (e.g. an expired staged upload): the
+        // body is a JSON error, not an event stream.
+        const { detail } = await res.json().catch(() => ({}));
+        finishRun();
+        errorArea.textContent = 'ERROR: ' + (typeof detail === 'string' ? detail : `HTTP ${res.status}`);
+        errorArea.style.display = 'block';
+        return;
+      }
       const reader = res.body.getReader();
       activeReader = reader;
       const decoder = new TextDecoder();
@@ -1892,11 +1820,16 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
           const parts = buf.split('\n\n');
           buf = parts.pop();
           parts.forEach(part => {
-            if (part.startsWith('data: ')) {
-              try {
-                const ev = JSON.parse(part.slice(6));
-                handleEvent(ev);
-              } catch (_) {}
+            if (!part.startsWith('data: ')) return;
+            try {
+              handleEvent(JSON.parse(part.slice(6)));
+            } catch (err) {
+              // A bug handling one event: keep reading the stream, but show it
+              // (also after "done", which hides the progress view).
+              console.error('Could not handle server event', part, err);
+              errorArea.textContent = 'Could not display an update from the server: ' + err.message;
+              errorArea.style.display = 'block';
+              progressView.style.display = 'block';
             }
           });
           pump();
@@ -1912,10 +1845,8 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
       }
       pump();
     })
-    .catch(err => { errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
+    .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
 }
-
-const CHUNK_RE = /(\d+\.?\d*)s\s*-\s*(\d+\.?\d*)s:\s*(MUSIC|-+)/;
 
 const STALL_WARN_MS = 12000;   // no SSE event for this long during a run → warn
 const STALL_HARD_MS = 40000;   // still nothing → stronger warning
@@ -1992,14 +1923,13 @@ function handleEvent(ev) {
     // Emitted once per processed identification window (title === null means the
     // window was checked but not matched). Drives the identification bar per
     // window and the live green bands / tooltips for matches.
-    const d = JSON.parse(detail);
-    identReaped = d.reaped || identReaped + 1;
-    if (d.total) identTotal = d.total;
-    identFarthestEnd = Math.max(identFarthestEnd, d.end);
-    if (d.title) {
+    identReaped = ev.reaped || identReaped + 1;
+    if (ev.total) identTotal = ev.total;
+    identFarthestEnd = Math.max(identFarthestEnd, ev.end);
+    if (ev.title) {
       // Concurrent identification can arrive out of order: push then coalesce
       // the whole array (sort + merge same-title neighbours).
-      wfIdentified.push({ start: d.start, end: d.end, title: d.title, artist: d.artist || null });
+      wfIdentified.push({ start: ev.start, end: ev.end, title: ev.title, artist: ev.artist || null });
       wfIdentified = coalesceIdentified(wfIdentified);
     }
     // Identification bar: exact reaped/total once the total is known (after
@@ -2023,10 +1953,9 @@ function handleEvent(ev) {
   if (step === 'ident_waiting') {
     // Server is blocked waiting on the identification provider (e.g. Shazam
     // rate-limiting). Explicit heartbeat - show it rather than sit silent.
-    const d = JSON.parse(detail);
     identFill.classList.add('waiting');
-    const done = d.total ? ` (${d.reaped}/${d.total})` : '';
-    stallNotice.textContent = `Waiting for the identification service…${done} ${d.seconds}s`;
+    const done = ev.total ? ` (${ev.reaped}/${ev.total})` : '';
+    stallNotice.textContent = `Waiting for the identification service…${done} ${ev.seconds}s`;
     stallNotice.style.display = 'block';
     return;
   }
@@ -2069,32 +1998,23 @@ function handleEvent(ev) {
     // "identified" events, so here we only update the step label (and capture
     // the now-known window total for an exact identification-bar fraction).
     detectingInitialized = true;
-    if (detail) {
-      const m = detail.match(/^\[(\d+)\/(\d+)\]\s*(.*)/);
-      if (m) {
-        identTotal = parseInt(m[2]);
-        const label = m[3].includes('no match') ? 'No match' : m[3].replace(/\s*–\s*/, ' – ');
-        updateStepDetail(step, label);
-      } else {
-        updateStepDetail(step, detail.trim());
-      }
+    if ('title' in ev) {
+      // One identification window's result.
+      identTotal = ev.total;
+      updateStepDetail(step, ev.title ? [ev.title, ev.artist].filter(Boolean).join(' – ') : 'No match');
+    } else if (detail) {
+      updateStepDetail(step, detail.trim());
     }
   } else if (step !== 'classifying') {
     updateStepDetail(step, detail ? detail.trim() : '');
   }
 
-  if (step === 'classifying' && detail) {
-    const m = detail.match(CHUNK_RE);
-    if (m) {
-      const start = parseFloat(m[1]);
-      const end = parseFloat(m[2]);
-      const isMusic = m[3] === 'MUSIC';
-      wfChunks.push({ start, end, isMusic });
-      updateStepDetail(step, isMusic ? 'Music' : 'No music');
-      if (wfSamples) redrawAll();
-      // Classification bar tracks how far through the audio classification has run.
-      if (wfDuration > 0) classFill.style.width = (end / wfDuration * 100) + '%';
-    }
+  if (step === 'classifying' && 'start' in ev) {
+    wfChunks.push({ start: ev.start, end: ev.end, isMusic: ev.is_music });
+    updateStepDetail(step, ev.is_music ? 'Music' : 'No music');
+    if (wfSamples) redrawAll();
+    // Classification bar tracks how far through the audio classification has run.
+    if (wfDuration > 0) classFill.style.width = (ev.end / wfDuration * 100) + '%';
   }
 }
 
@@ -2152,7 +2072,11 @@ function buildCSV(results) {
 }
 
 // Results
-function fmt(s) { return s == null ? '' : s; }
+// Results hold text from providers, MusicBrainz/Wikidata (publicly editable),
+// file tags and file names: escape it before it goes into HTML.
+function fmt(s) { return s == null ? '' : String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`); }
+// Only web pages become links, never e.g. a supplied "javascript:" URL.
+function isWebUrl(url) { return /^https?:\/\//i.test(url || ''); }
 
 const PLATFORM_ICONS = {
   youtube: {
@@ -2186,10 +2110,10 @@ function platformLinkIcons(cue) {
     { url: cue.youtube_link, platform: 'youtube' },
     { url: cue.spotify_url,  platform: 'spotify' },
     { url: cleanAppleMusicUrl(cue.apple_music_url), platform: 'apple' },
-  ].filter(l => l.url);
+  ].filter(l => isWebUrl(l.url));
   return links.map(({ url, platform }) => {
     const { color, title, path } = PLATFORM_ICONS[platform];
-    return `<a class="track-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
+    return `<a class="track-link" href="${fmt(url)}" target="_blank" rel="noopener noreferrer" title="${title}"><svg viewBox="0 0 24 24" fill="${color}">${path}</svg></a>`;
   }).join('');
 }
 
@@ -2207,12 +2131,12 @@ function renderFilmHeader(film) {
     el.innerHTML = '';
     return;
   }
-  const yearPart = film.year ? ` (${film.year})` : '';
+  const yearPart = film.year ? ` (${fmt(film.year)})` : '';
   // The director's death year is not shown - PD status depends on the composer, not the director.
   const parts = [];
   if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" target="_blank" rel="noopener noreferrer">${fmt(film.director)}</a>`);
-  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${film.imdb_id}/" target="_blank" rel="noopener noreferrer">${film.imdb_id}</a>`);
-  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${film.tmdb_id}" target="_blank" rel="noopener noreferrer">${film.tmdb_id}</a>`);
+  if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${fmt(film.imdb_id)}/" target="_blank" rel="noopener noreferrer">${fmt(film.imdb_id)}</a>`);
+  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${fmt(film.tmdb_id)}" target="_blank" rel="noopener noreferrer">${fmt(film.tmdb_id)}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
     <div class="film-title">${fmt(film.title || '')}${yearPart}</div>
@@ -2322,8 +2246,8 @@ function detailPanelHTML(cue) {
       const dead = a.death_year ? `d. ${a.death_year}` : 'death unknown';
       const clock = enr.latest_author_death_year && a.death_year === enr.latest_author_death_year;
       // Linked to their Wikidata entity when MusicBrainz knows one; plain text otherwise.
-      const name = a.wikidata_url
-        ? `<a href="${a.wikidata_url}" target="_blank" rel="noopener noreferrer" title="View on Wikidata">${fmt(a.name)}</a>`
+      const name = isWebUrl(a.wikidata_url)
+        ? `<a href="${fmt(a.wikidata_url)}" target="_blank" rel="noopener noreferrer" title="View on Wikidata">${fmt(a.name)}</a>`
         : fmt(a.name);
       return `<div class="author-line${clock ? ' author-clock' : ''}">`
            + `<span class="author-name">${name}</span>`
@@ -2385,7 +2309,7 @@ function groupCues(cues) {
 function buildTrackRowHTML(group) {
   const cue = group.rep;
   const enr = cue.enrichment || {};
-  const cover = cue.photo_url ? `<img class="cover-thumb" src="${cue.photo_url}" alt="">` : '';
+  const cover = cue.photo_url ? `<img class="cover-thumb" src="${fmt(cue.photo_url)}" alt="">` : '';
   const uncertain = enr.composer_match && enr.composer_match !== 'isrc';
   const cls = uncertain ? ' class="composer-uncertain"' : '';
   // Date column: the work's real original year (Wikidata) when known, else the
@@ -2618,7 +2542,7 @@ function renderClasses(windows) {
       <td>${fmtTime(w.start)}</td>
       <td>${fmtTime(w.end)}</td>
       <td>${w.is_music ? `<span class="badge music">${pct(w.music)}</span>` : pct(w.music)}</td>
-      <td>${Object.entries(w.classes).map(([name, p]) => `${name} ${pct(p)}`).join(' · ')}</td>`;
+      <td>${Object.entries(w.classes).map(([name, p]) => `${fmt(name)} ${pct(p)}`).join(' · ')}</td>`;
     // Like a timeline row: show the window on the timeline and play it.
     tr.addEventListener('click', () => {
       const span = { start: w.start, end: w.end, duration: w.end - w.start };
@@ -2781,13 +2705,27 @@ function resumeDetection() {
   fetch(`/resume/${encodeURIComponent(currentVideoName)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api: providers.join(',') || 'acrcloud' }),
-  }).then(res => {
+  }).then(async res => {
+    if (!res.ok) {
+      // E.g. the run was deleted: a JSON error, not an event stream.
+      const { detail } = await res.json().catch(() => ({}));
+      text.textContent = 'Resume failed: ' + (typeof detail === 'string' ? detail : `HTTP ${res.status}`);
+      btn.disabled = false;
+      return;
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buf = '';
+    let buf = '', finished = false;
     (function pump() {
       reader.read().then(({ done, value }) => {
-        if (done) return;
+        if (done) {
+          // Ended without "done"/"error": the server dropped the connection.
+          if (!finished) {
+            text.textContent = 'Resume failed: the server closed the connection before finishing.';
+            btn.disabled = false;
+          }
+          return;
+        }
         buf += decoder.decode(value, { stream: true });
         const parts = buf.split('\n\n'); buf = parts.pop();
         parts.forEach(part => {
@@ -2796,9 +2734,11 @@ function resumeDetection() {
           if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
           else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
           else if (ev.step === 'done') {
+            finished = true;
             currentResults = ev.results;
             showResults(ev.results);   // re-renders + refreshes the banner
           } else if (ev.step === 'error') {
+            finished = true;
             text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
             btn.disabled = false;
           }
@@ -2893,7 +2833,7 @@ async function loadHistory() {
       const div = document.createElement('div');
       div.className = 'history-item';
       div.innerHTML = `
-        <span class="history-name">${item.video_name}</span>
+        <span class="history-name">${fmt(item.video_name)}</span>
         <span class="history-meta">${meta}</span>
         <button class="history-delete-btn" title="Delete run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg></button>
         <span class="history-chevron">›</span>`;

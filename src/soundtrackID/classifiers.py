@@ -14,11 +14,6 @@ class BaseClassifier(ABC):
         ...
 
 
-class DummyClassifier(BaseClassifier):
-    def classify(self, chunk: AudioChunk) -> ClassificationResult:
-        return ClassificationResult(chunk=chunk, is_music=True, confidence=1.0)
-
-
 class OnnxClassifier(BaseClassifier):
     """Audio classifier using a pre-exported ONNX model (no PyTorch required)."""
 

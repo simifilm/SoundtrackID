@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -111,10 +111,6 @@ _classifier_lock = threading.Lock()
 _cancel_events: dict[str, threading.Event] = {}
 _cancel_lock = threading.Lock()
 
-# ── Per-enrich cancellation registry ──────────────────────────────────────────
-_enrich_cancel_events: dict[str, threading.Event] = {}
-_enrich_cancel_lock = threading.Lock()
-
 # ── Pre-analysis upload staging ───────────────────────────────────────────────
 # /identify stores the uploaded file here and returns a staging_id; /analyze then
 # consumes it by id, so a large film is uploaded only once even though the user
@@ -184,7 +180,6 @@ def _build_pipeline(
     output_dir: Path,
     threshold: float = 0.2,
     export_csv: bool = False,
-    export_mava: bool = False,
     api: str = "acrcloud",
     bridge_gap: float = 2.0,
     hop: float = 5.0,
@@ -207,7 +202,6 @@ def _build_pipeline(
         detection_client=build_detection_client(api),
         output_dir=output_dir,
         export_csv=export_csv,
-        export_mava=export_mava,
         bridge_gap=bridge_gap,
     )
 
@@ -223,11 +217,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SoundtrackID", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-
-
-@app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
 
 
 @app.get("/settings")
@@ -281,16 +270,16 @@ async def cancel_run(run_id: str) -> dict:
 
 
 @app.post("/identify")
-async def identify(file: UploadFile, online: str = Form("0")) -> dict:
+async def identify(file: UploadFile) -> dict:
     """Stage an uploaded video and return prefilled film metadata for confirmation.
 
-    Reads MP4 container tags immediately; if `online=1`, additionally resolves the
-    film via TMDb/Wikidata/imdbapi. The returned `staging_id` is passed to /analyze
-    so the file is not re-uploaded.
+    Reads MP4 container tags; /film/lookup fills the gaps online on request. The
+    returned `staging_id` is passed to /analyze so the file is not re-uploaded.
     """
     _prune_staging()
     contents = await file.read()
-    original_name = file.filename or "video.mp4"
+    # Base name only: the client-supplied name must not escape the staging folder.
+    original_name = Path(file.filename).name or "video.mp4"
     staging_id = str(uuid.uuid4())
     staging_dir = _STAGING_DIR / staging_id
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -306,36 +295,6 @@ async def identify(file: UploadFile, online: str = Form("0")) -> dict:
         film = read_mp4_tags(staged_path) or {}
     except Exception:
         film = {}
-
-    if online == "1":
-        try:
-            import httpx
-
-            from soundtrackID.metadata.film import FilmLookup
-
-            client = httpx.Client(timeout=15.0)
-            try:
-                lookup = FilmLookup(
-                    client,
-                    tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
-                    tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
-                )
-                info = lookup.lookup(
-                    imdb_id=film.get("imdb_id"),
-                    tmdb_id=film.get("tmdb_id"),
-                    title=film.get("title"),
-                    year=film.get("year"),
-                )
-                # First non-null wins: keep tag values, fill gaps from the lookup.
-                resolved = info.to_dict()
-                film = {
-                    k: (film.get(k) if film.get(k) is not None else resolved.get(k))
-                    for k in {*film, *resolved}
-                }
-            finally:
-                client.close()
-        except Exception:
-            pass
 
     return {"staging_id": staging_id, "original_name": original_name, "film": film}
 
@@ -382,7 +341,6 @@ async def film_lookup(hint: dict = Body(default={})) -> dict:
 
 @app.post("/analyze")
 async def analyze(
-    file: UploadFile | None = File(None),
     staging_id: str = Form(""),
     film: str = Form(""),
     api: str = Form("acrcloud"),
@@ -391,28 +349,21 @@ async def analyze(
     hop: float = Form(5.0),
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
-    export_mava: str = Form("0"),
 ) -> StreamingResponse:
-    """Accept a video file (or a staged upload) and stream SSE progress events.
+    """Analyze a staged upload and stream SSE progress events.
 
-    Either `file` is uploaded directly, or `staging_id` references a file already
-    staged by /identify (in which case `film` carries the user-confirmed metadata).
+    `staging_id` references a file staged by /identify; `film` carries the
+    user-confirmed metadata.
     """
-    if staging_id:
-        with _staging_lock:
-            staged_path = _staging.pop(staging_id, None)
-        if not staged_path or not staged_path.exists():
-            raise HTTPException(
-                status_code=400, detail="Staged upload not found or expired"
-            )
-        contents = staged_path.read_bytes()
-        original_name = staged_path.name
-        shutil.rmtree(staged_path.parent, ignore_errors=True)
-    elif file is not None:
-        contents = await file.read()
-        original_name = file.filename or "video.mp4"
-    else:
-        raise HTTPException(status_code=400, detail="No file or staging_id provided")
+    with _staging_lock:
+        staged_path = _staging.pop(staging_id, None)
+    if not staged_path or not staged_path.exists():
+        raise HTTPException(
+            status_code=400, detail="Staged upload not found or expired"
+        )
+    contents = staged_path.read_bytes()
+    original_name = staged_path.name
+    shutil.rmtree(staged_path.parent, ignore_errors=True)
 
     film_override = None
     if film:
@@ -437,7 +388,6 @@ async def analyze(
             hop=hop,
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
-            export_mava=export_mava == "1",
             api=api,
             film_override=film_override,
         ),
@@ -458,7 +408,6 @@ async def rerun(
     hop: float = Form(5.0),
     max_segment: float = Form(0.0),
     export_csv: str = Form("0"),
-    export_mava: str = Form("0"),
 ) -> StreamingResponse:
     """Analyze a run's stored source video again with new settings.
 
@@ -485,7 +434,6 @@ async def rerun(
             hop=hop,
             max_segment_duration=max_segment or None,
             export_csv=export_csv == "1",
-            export_mava=export_mava == "1",
             api=api,
             film_override=film,
         ),
@@ -506,7 +454,6 @@ async def _run_pipeline_sse(
     hop: float = 5.0,
     max_segment_duration: float | None = None,
     export_csv: bool = False,
-    export_mava: bool = False,
     api: str = "acrcloud",
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -517,13 +464,10 @@ async def _run_pipeline_sse(
 
     ev_queue: queue.Queue[dict] = queue.Queue()
 
-    def on_progress(step: str, detail: str) -> None:
+    def on_progress(step: str, **fields) -> None:
         if cancel_event.is_set():
             raise _PipelineCancelled()
-        if step == "waveform":
-            ev_queue.put({"step": "waveform", **json.loads(detail)})
-        else:
-            ev_queue.put({"step": step, "detail": detail})
+        ev_queue.put({"step": step, **fields})
 
     def run_sync() -> None:
         tmp_dir = Path(tempfile.mkdtemp())
@@ -541,7 +485,6 @@ async def _run_pipeline_sse(
                 _OUTPUT_DIR,
                 threshold=threshold,
                 export_csv=export_csv,
-                export_mava=export_mava,
                 api=api,
                 bridge_gap=bridge_gap,
                 hop=hop,
@@ -595,10 +538,7 @@ async def _run_pipeline_sse(
                 try:
                     _enrich_results(
                         results=result_dict,
-                        film_hint=None,
                         http_client=_client,
-                        scope="music",
-                        music_isrc_only=True,
                         progress_cb=_music_cb,
                     )
                 finally:
@@ -685,9 +625,7 @@ async def _run_pipeline_sse(
 @app.delete("/history/{video_name}")
 async def delete_history_item(video_name: str) -> dict:
     """Delete a run directory from the cache."""
-    run_dir = (_OUTPUT_DIR / video_name).resolve()
-    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid path")
+    run_dir = _safe_run_dir(video_name)
     if not run_dir.exists() or not run_dir.is_dir():
         raise HTTPException(status_code=404, detail="Run not found")
     shutil.rmtree(run_dir)
@@ -728,9 +666,14 @@ async def history() -> list[dict]:
 
 
 def _safe_run_dir(video_name: str) -> Path:
-    """Resolve a run directory, guarding against path traversal via video_name."""
-    run_dir = (_OUTPUT_DIR / video_name).resolve()
-    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
+    """Resolve a run directory, guarding against path traversal via video_name.
+
+    Runs are direct children of the cache, so anything else (the cache itself
+    via ".", a sibling such as "../cache2") is rejected.
+    """
+    cache = _OUTPUT_DIR.resolve()
+    run_dir = (cache / video_name).resolve()
+    if run_dir.parent != cache:
         raise HTTPException(status_code=400, detail="Invalid path")
     return run_dir
 
@@ -756,15 +699,6 @@ async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
     data["cues"] = cues
     _atomic_write_json(results_path, data)
     return {"status": "saved", "cues": len(cues)}
-
-
-@app.get("/output/{video_name}/segments/{filename}")
-async def serve_segment(video_name: str, filename: str) -> FileResponse:
-    """Serve a WAV segment file."""
-    seg_path = _safe_run_dir(video_name) / "segments" / Path(filename).name
-    if not seg_path.exists() or not seg_path.is_file():
-        raise HTTPException(status_code=404, detail="Segment not found")
-    return FileResponse(seg_path, media_type="audio/wav")
 
 
 @app.get("/output/{video_name}/video")
@@ -822,165 +756,6 @@ async def serve_filmstrip(video_name: str) -> FileResponse:
     if not strip_path.exists() or not strip_path.is_file():
         raise HTTPException(status_code=404, detail="Filmstrip not found")
     return FileResponse(strip_path, media_type="image/jpeg")
-
-
-# ── Enrichment ────────────────────────────────────────────────────────────────
-
-
-@app.post("/enrich/cancel/{enrich_id}")
-async def cancel_enrich(enrich_id: str) -> dict:
-    with _enrich_cancel_lock:
-        ev = _enrich_cancel_events.get(enrich_id)
-    if ev:
-        ev.set()
-        return {"status": "cancelled"}
-    raise HTTPException(status_code=404, detail="Enrich run not found")
-
-
-@app.post("/enrich/{video_name}")
-async def enrich_run(
-    video_name: str,
-    payload: dict = Body(default_factory=dict),
-) -> StreamingResponse:
-    """Enrich an existing results.json with film + composer metadata."""
-    run_dir = (_OUTPUT_DIR / video_name).resolve()
-    if not str(run_dir).startswith(str(_OUTPUT_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    results_path = run_dir / "results.json"
-    if not results_path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    film_hint = {
-        "imdb_id": (payload or {}).get("imdb_id") or None,
-        "tmdb_id": (payload or {}).get("tmdb_id") or None,
-        "title": (payload or {}).get("title") or None,
-        "year": (payload or {}).get("year") or None,
-    }
-    scope = (payload or {}).get("scope") or "all"
-    if scope not in ("film", "music", "all"):
-        raise HTTPException(
-            status_code=400, detail="scope must be 'film', 'music' or 'all'"
-        )
-    enrich_id = str(uuid.uuid4())
-
-    return StreamingResponse(
-        _run_enrich_sse(results_path, film_hint, enrich_id, scope=scope),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-async def _run_enrich_sse(
-    results_path: Path,
-    film_hint: dict,
-    enrich_id: str,
-    scope: str = "all",
-) -> AsyncGenerator[str, None]:
-    """Run enrichment in a thread and yield SSE events."""
-    cancel_event = threading.Event()
-    with _enrich_cancel_lock:
-        _enrich_cancel_events[enrich_id] = cancel_event
-
-    ev_queue: queue.Queue[dict] = queue.Queue()
-
-    from soundtrackID.metadata.enricher import EnrichmentCancelled, enrich
-
-    def progress_cb(step: str, **kwargs) -> None:
-        if cancel_event.is_set():
-            raise EnrichmentCancelled()
-        ev_queue.put({"step": step, **kwargs})
-
-    def run_sync() -> None:
-        try:
-            import httpx
-        except ImportError as exc:
-            ev_queue.put({"step": "error", "detail": f"httpx not installed: {exc}"})
-            return
-
-        try:
-            results = json.loads(results_path.read_text())
-        except Exception as exc:
-            ev_queue.put(
-                {"step": "error", "detail": f"Failed to load results.json: {exc}"}
-            )
-            return
-
-        tmdb_bearer = os.environ.get("FIWI_TMDB_API_TOKEN")
-        tmdb_key = os.environ.get("FIWI_TMDB_KEY")
-
-        client = httpx.Client(timeout=15.0)
-        try:
-            enriched = enrich(
-                results=results,
-                film_hint=film_hint,
-                http_client=client,
-                tmdb_bearer_token=tmdb_bearer,
-                tmdb_api_key=tmdb_key,
-                progress_cb=progress_cb,
-            )
-        except EnrichmentCancelled:
-            # Persist whatever we have so far
-            _atomic_write_json(results_path, results)
-            ev_queue.put({"step": "cancelled"})
-            return
-        except Exception as exc:
-            import traceback
-
-            ev_queue.put(
-                {
-                    "step": "error",
-                    "detail": str(exc),
-                    "traceback": traceback.format_exc(),
-                }
-            )
-            return
-        finally:
-            client.close()
-            with _enrich_cancel_lock:
-                _enrich_cancel_events.pop(enrich_id, None)
-
-        try:
-            _atomic_write_json(results_path, enriched)
-        except Exception as exc:
-            ev_queue.put(
-                {"step": "error", "detail": f"Failed to write results.json: {exc}"}
-            )
-            return
-
-        ev_queue.put({"step": "done", "results": enriched})
-
-    task = asyncio.create_task(asyncio.to_thread(run_sync))
-
-    def encode(ev: dict) -> str:
-        return f"data: {json.dumps(ev)}\n\n"
-
-    yield encode({"step": "enrich_id", "enrich_id": enrich_id})
-
-    while True:
-        while True:
-            try:
-                ev = ev_queue.get_nowait()
-                yield encode(ev)
-                if ev.get("step") in ("done", "error", "cancelled"):
-                    return
-            except queue.Empty:
-                break
-
-        if task.done():
-            while not ev_queue.empty():
-                ev = ev_queue.get_nowait()
-                yield encode(ev)
-                if ev.get("step") in ("done", "error", "cancelled"):
-                    return
-            exc = task.exception()
-            if exc:
-                yield encode({"step": "error", "detail": str(exc)})
-            return
-
-        await asyncio.sleep(0.05)
 
 
 # ── Resume detection after a rate limit ───────────────────────────────────────
@@ -1126,10 +901,7 @@ async def _run_resume_sse(
             with httpx.Client(timeout=15.0) as _c:
                 _enrich(
                     results=results,
-                    film_hint=None,
                     http_client=_c,
-                    scope="music",
-                    music_isrc_only=True,
                     progress_cb=_cb,
                 )
         except Exception:

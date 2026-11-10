@@ -1,5 +1,6 @@
 """Tests for classifiers."""
 
+import importlib.util
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -132,21 +133,10 @@ class TestHuggingFaceClassifier:
 
 
 @pytest.mark.skipif(
-    not pytest.importorskip("torch", reason="torch not installed"),
-    reason="HF dependencies not installed",
+    importlib.util.find_spec("torch") is None, reason="torch not installed"
 )
 class TestHuggingFaceClassifierIntegration:
     """Integration tests that require actual HF dependencies."""
-
-    @pytest.fixture
-    def test_video_path(self):
-        """Path to test video file."""
-        import pathlib
-
-        path = pathlib.Path(__file__).parent / "test_video.mp4"
-        if not path.exists():
-            pytest.skip("test_video.mp4 not found")
-        return path
 
     @pytest.mark.slow
     def test_real_model_loading(self):
@@ -159,14 +149,14 @@ class TestHuggingFaceClassifierIntegration:
         assert "Music" in classifier.label2id
 
     @pytest.mark.slow
-    def test_classify_real_audio(self, test_video_path):
-        """Test classification with real audio from test video."""
-        import librosa
-
+    def test_classify_real_audio(self):
+        """Test classification of 10 s of audio with the real model."""
         from soundtrackID.classifiers import HuggingFaceClassifier
 
-        # Load 10 seconds of audio starting at 60s (music section)
-        audio, sr = librosa.load(test_video_path, sr=16000, duration=10.0, offset=60.0)
+        # A 440 Hz tone; the checks below don't depend on what the audio is
+        sr = 16000
+        t = np.arange(10 * sr) / sr
+        audio = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
 
         classifier = HuggingFaceClassifier(
             music_labels=["Music", "Musical instrument", "Singing", "Background music"],
@@ -182,7 +172,6 @@ class TestHuggingFaceClassifierIntegration:
 
         result = classifier.classify(chunk)
 
-        # The test video contains music, so we expect detection
         assert result.confidence > 0.0
         assert result.chunk is chunk
         assert isinstance(result.is_music, bool)

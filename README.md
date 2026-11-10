@@ -26,8 +26,8 @@ don't have to install anything else.
    short gaps are bridged.
 4. **Identify** — each cue is matched against a music database, the same way a phone
    recognises a song playing in the room.
-5. **Enrich** *(optional)* — film and composer details are looked up and added to the
-   results.
+5. **Look up composers** — for every identified cue with an ISRC, the composer and their
+   year of death are looked up automatically.
 
 ---
 
@@ -85,17 +85,15 @@ listed under **Recent runs** and can be downloaded again at any time.
 
 ### Metadata enrichment
 
-After an analysis, click **Metadaten anreichern** to add information about the film and
-the composer:
+Before the analysis starts, a **Confirm film** panel shows the details read from the video
+file's own tags. Correct or complete them, or click **Look up online** to fill the empty
+fields. The year matters: it is used to flag music that was released after the film.
+The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.
 - **Composer** — composer name, title of the work, and the composer's year of death.
   Results found through a reliable match are shown as-is; uncertain matches are marked
-  with a `?` badge.
-
-The dialog fills itself in from the video file's own tags when the file carries them.
-For older runs without that information, type the film title, year or IMDb/TMDb ID
-yourself.
+  with a `?` badge. Only cues with an ISRC are looked up.
 
 > **Note:** whether the music is in the public domain depends on the **composer's** year
 > of death, not the director's. The film header shows the director's year of death only
@@ -138,6 +136,13 @@ uv run --extra app python -m soundtrackID
 ```
 
 Then open [http://localhost:8000](http://localhost:8000).
+
+#### Optional: HuggingFace classifier (PyTorch)
+The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
+
+```bash
+FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
+```
 
 ### CLI
 
@@ -185,10 +190,9 @@ uv run pytest
 ├── src/soundtrackID/           Python package: pipeline, web server and UI
 │   ├── __main__.py             Entry point for `python -m soundtrackID`
 │   ├── main.py                 Starts the web server
-│   ├── app.py                  FastAPI endpoints: upload, analysis, enrichment, history
+│   ├── app.py                  FastAPI endpoints: upload, film lookup, analysis, history
 │   ├── pipeline.py             Runs the full pipeline; also the CLI entry point
 │   ├── models.py               Data models and the results.json output format
-│   ├── config.py               Config dataclass and config.yaml loader
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks
 │   ├── classifiers.py          Scores each chunk for music (ONNX or HuggingFace)
@@ -197,7 +201,7 @@ uv run pytest
 │   ├── detection.py            Identification clients: ACRCloud, Shazam, AcoustID
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
 │   ├── metadata/               Film and composer enrichment
-│   │   ├── enricher.py         Orchestrates enrichment of a results file
+│   │   ├── enricher.py         Looks up the composers of a run's cues
 │   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
 │   │   ├── music.py            Composer lookup: MusicBrainz → Wikidata
 │   │   └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
@@ -207,7 +211,6 @@ uv run pytest
 ├── scripts/                    macOS signing script and entitlements
 ├── tests/                      pytest suite
 ├── docs/                       Detailed documentation
-├── config.yaml                 Default pipeline settings
 ├── fiwi-server.spec            PyInstaller spec for bundling the server
 └── pyproject.toml              Python dependencies and optional extras
 ```
