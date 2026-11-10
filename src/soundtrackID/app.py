@@ -570,8 +570,8 @@ async def _run_pipeline_sse(
 
             # Persist the source video + a thumbnail filmstrip so the UI can show a
             # video preview synced to the timeline (also for history/reopened runs).
+            run_dir = _OUTPUT_DIR / run_name
             try:
-                run_dir = _OUTPUT_DIR / run_name
                 ext = video.suffix or ".mp4"
                 video_dest = run_dir / f"source{ext}"
                 shutil.move(str(video), str(video_dest))
@@ -579,11 +579,13 @@ async def _run_pipeline_sse(
 
                 film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
                 result_dict["video"] = {"file": f"source{ext}", "filmstrip": film}
-                _atomic_write_json(run_dir / "results.json", result_dict)
             except Exception:
                 import traceback as _tb
 
                 print("video/filmstrip persist failed:\n" + _tb.format_exc())
+            # Saved also without the video: the pipeline's own results.json lacks
+            # what was added since (rate limit, settings, re-ranking, composers).
+            _atomic_write_json(run_dir / "results.json", result_dict)
             # The waveform (up to ~60k points) is already streamed separately via
             # the "waveform" step and persisted in results.json; omit it from the
             # done event so the streamed payload stays small on long films.

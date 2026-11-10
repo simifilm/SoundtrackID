@@ -73,13 +73,18 @@ def _acr_detect(monkeypatch, response: str, **client_kwargs):
     return client.detect(_segment()), calls
 
 
-def _audd_detect(monkeypatch, response: dict):
-    """Run AudD detection against a mock api.audd.io that returns `response`."""
+def _audd_detect(monkeypatch, response):
+    """Run AudD detection against a mock api.audd.io: `response` is a JSON body,
+    an httpx.Response, or an exception to raise."""
     requests = []
 
     def handler(request):
         request.read()
         requests.append(request)
+        if isinstance(response, Exception):
+            raise response
+        if isinstance(response, httpx.Response):
+            return response
         return httpx.Response(200, json=response)
 
     monkeypatch.setattr(
@@ -265,6 +270,22 @@ def test_audd_no_match_is_empty(monkeypatch, fixture):
 )
 def test_audd_token_and_limit_errors_stop_the_run(monkeypatch, response, code):
     with pytest.raises(RateLimitError, match=f"AudD error {code}"):
+        _audd_detect(monkeypatch, response)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.ConnectError("network down"),
+        httpx.ReadTimeout("timed out"),
+        httpx.Response(502, text="<html>Bad Gateway</html>"),
+    ],
+    ids=["network-down", "timeout", "server-error-page"],
+)
+def test_audd_unreachable_stops_the_run(monkeypatch, response):
+    # Nobody listened to the segment, so it must stay pending for a resume
+    # instead of failing the analysis.
+    with pytest.raises(RateLimitError, match="AudD"):
         _audd_detect(monkeypatch, response)
 
 

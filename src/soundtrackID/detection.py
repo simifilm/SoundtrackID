@@ -49,7 +49,8 @@ def _find_shazamkit_helper() -> str | None:
 
 
 class RateLimitError(RuntimeError):
-    """A provider refused the request due to a quota / rate limit / auth problem.
+    """A provider refused the request due to a quota / rate limit / auth problem,
+    or couldn't be reached.
 
     Raised so the pipeline can stop calling that provider, keep whatever it has
     already identified, and offer a resume rather than losing the whole run.
@@ -463,10 +464,18 @@ class AudDDetectionClient(BaseMusicDetectionClient):
                         },
                         files={"file": fh},
                     )
+        except httpx.HTTPError as exc:
+            # Nobody listened to this segment: stop and allow resume, as
+            # ACRCloud does with its code 3000, instead of failing the run.
+            raise RateLimitError(f"AudD unreachable: {exc}") from exc
         finally:
             os.unlink(temp_path)
 
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            # A server error page instead of an answer: also try again later.
+            raise RateLimitError(f"AudD error: HTTP {resp.status_code}") from exc
         status = payload.get("status")
         if status == "error":
             err = payload.get("error", {}) or {}

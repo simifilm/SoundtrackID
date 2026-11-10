@@ -338,6 +338,31 @@ def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
     }
 
 
+def test_results_are_saved_in_full_when_the_video_cannot_be_stored(
+    tmp_path, monkeypatch
+):
+    """The pipeline's own results.json lacks what is added after it, e.g. the
+    rate-limit flag (Resume), settings, re-ranking and composers."""
+    import shutil
+
+    real_move = shutil.move
+
+    def move(src, dst):
+        if Path(dst).name.startswith("source"):  # the video into its run folder
+            raise OSError(28, "No space left on device")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(shutil, "move", move)
+
+    events = _analyze(tmp_path, monkeypatch)
+
+    run_dir = tmp_path / "cache" / events[-1]["results"]["video_name"]
+    saved = json.loads((run_dir / "results.json").read_text())
+    assert saved["settings"]["hop"] == 5.0
+    assert saved["providers"] == ["acrcloud"]
+    assert "video" not in saved
+
+
 def test_each_analysis_gets_its_own_run(tmp_path, monkeypatch):
     """Also of a film with the same file name, e.g. the same one again with
     other settings: the run folder carries the time of the analysis."""
