@@ -66,9 +66,11 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 
 | Setting | Default | What it does |
 |---|---|---|
-| Detection API | ACRCloud | Which music database is used to identify the cues |
-| Chunk Duration | 15 s | How finely the audio is sliced — shorter finds shorter cues |
+| Detection providers | Shazam | Which music services identify the cues; tick two or more to let them vote (see [Detection providers](#detection-providers)) |
+| Chunk Duration | 30 s | Longest piece of a cue sent for identification — long cues are split, so a change of track inside a cue is caught; shorter means more requests |
+| Hop Size | 5 s | Step between the overlapping windows scored for music — smaller places cue boundaries more precisely but takes longer |
 | Sensitivity | 20 % | Lower values catch more music, but also more false positives |
+| Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 | Export | JSON | Switch to CSV to get a spreadsheet file alongside the results |
 
 Long films take a while: every cue has to be looked up individually, and the music
@@ -91,9 +93,10 @@ fields. The year matters: it is used to flag music that was released after the f
 The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.
-- **Composer** — composer name, title of the work, and the composer's year of death.
-  Results found through a reliable match are shown as-is; uncertain matches are marked
-  with a `?` badge. Only cues with an ISRC are looked up.
+- **Composer** — the work's authors (composer, lyricist), its title and their years of
+  death, and from those whether the work is in the public domain (the **Rights**
+  column). Results found through a reliable match are shown as-is; uncertain matches
+  are shown in grey italics. Only cues with an ISRC are looked up.
 
 > **Note:** whether the music is in the public domain depends on the **composer's** year
 > of death, not the director's. The film header shows the director's year of death only
@@ -104,16 +107,21 @@ Details of where each field comes from are in
 
 ### Detection providers
 
-Two music services can identify the cues. Both cope with short, quiet, film-mixed audio,
-which is what makes them usable on film soundtracks at all.
+Three music services can identify the cues. All cope with short, quiet, film-mixed
+audio, which is what makes them usable on film soundtracks at all.
 
 | Provider | Notes |
 |---|---|
-| **ACRCloud** (default) | Finds the most music. Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
-| **Shazam** | A solid fallback, and needs no account. |
+| **ACRCloud** | Finds the most music (and is the CLI default). Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
+| **Shazam** | Preselected in the app, and needs no account. |
+| **AudD** | Needs an API token. Matches come with a MusicBrainz link and usually an ISRC, which the composer lookup needs. |
 
-[docs/detection-providers.md](docs/detection-providers.md) compares both against
-AcoustID and records the tests behind this recommendation.
+Tick two or more and they vote: each cue gets the answer most of them agree on, with a
+badge showing how many agreed. Keys for ACRCloud and AudD are entered under
+**Settings → API keys**.
+
+[docs/detection-providers.md](docs/detection-providers.md) compares ACRCloud and Shazam
+against AcoustID and records the tests behind this recommendation.
 
 ---
 
@@ -152,8 +160,8 @@ uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolat
 
 ```
 --output-dir DIR      Output directory (default: ./output)
---api {shazam,acrcloud}
-                      Detection provider (default: acrcloud)
+--api API             Detection provider(s): acrcloud, shazam, audd — or a
+                      comma-separated list for ensemble voting (default: acrcloud)
 --classifier {onnx,hf}
                       Music classifier backend (default: onnx)
 --no-isolation        Skip vocal isolation (faster)
@@ -162,6 +170,9 @@ uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolat
 --max-segment SEC     Split segments into chunks of at most N seconds before detection
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
 ```
+
+ACRCloud and AudD read their keys from the environment or a `.env` file:
+`ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`.
 
 ## Output
 
@@ -180,8 +191,11 @@ output/
 ## Tests
 
 ```bash
-uv run pytest
+uv run --extra app pytest
 ```
+
+The tests need no network and no API keys: the music services and lookup APIs are
+replaced by recorded or canned responses, and test videos are generated on the fly.
 
 ## Project structure
 
@@ -198,7 +212,7 @@ uv run pytest
 │   ├── classifiers.py          Scores each chunk for music (ONNX or HuggingFace)
 │   ├── aggregator.py           Merges music chunks into cues, writes segment .wav files
 │   ├── isolators.py            Optional Demucs vocal isolation
-│   ├── detection.py            Identification clients: ACRCloud, Shazam, AcoustID
+│   ├── detection.py            Identification clients (ACRCloud, Shazam, AudD) and ensemble voting
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
 │   ├── metadata/               Film and composer enrichment
 │   │   ├── enricher.py         Looks up the composers of a run's cues

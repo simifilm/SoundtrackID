@@ -41,22 +41,54 @@ operative PD date is the composer's death year, not the director's.
 ```json
 {
   "composer": "Freddie Mercury",
+  "composer_birth_year": 1946,
   "composer_death_year": 1991,
   "work_title": "Bohemian Rhapsody",
+  "original_year": 1975,
   "composer_match": "isrc",
-  "sources": ["musicbrainz"]
+  "authors": [
+    {
+      "name": "Freddie Mercury",
+      "roles": ["composer", "lyricist"],
+      "birth_year": 1946,
+      "death_year": 1991,
+      "wikidata_url": null
+    }
+  ],
+  "latest_author_death_year": 1991,
+  "authors_complete": true,
+  "authors_partial": false,
+  "public_domain": false,
+  "pd_presumption": null,
+  "sources": ["musicbrainz", "wikidata"]
 }
 ```
 
-Surfaces as three extra columns in the results table:
-**Komponist · † · Werk**.
+- `authors` — every composer, lyricist and writer of the work, with their life
+  years. Performers are left out: their related right is shorter than the
+  70-year term on the authors.
+- `public_domain` — `true` only when every author died more than 70 years ago
+  and the author list is complete; `false` as soon as one known author died
+  within 70 years; `null` when neither can be said.
+- `pd_presumption` — for authors without a death year: `true` when the youngest
+  of them was born more than 170 years ago (100-year lifespan + 70 years).
+- `authors_partial` — the author list may be incomplete (the Wikidata search
+  only finds the composer).
+- `original_year` — the work's first publication year (Wikidata), used to flag
+  music that postdates the film.
+
+In the results table this fills the **Composer** column (with `+N` when the work
+has co-authors), the **Date** column (`original_year`, else the provider's
+release year in grey) and the **Rights** column: *Public domain*, *Protected* or
+*Unverified*, which opens the authors and a one-sentence explanation.
 
 `composer_match` distinguishes confidence:
 
 | Value | Confidence | Provenance | UI |
 |---|---|---|---|
 | `"isrc"` | High | MusicBrainz ISRC chain | Normal styling |
-| `"search"` | Low | Wikidata title+artist search | Italic + dimmed + `?` badge with tooltip |
+| `"work"` | Medium | MusicBrainz work found by title, matched against the artist | Grey italics |
+| `"search"` | Low | Wikidata title+artist search | Grey italics |
 | `null` | None | No source had a hit | Empty cell |
 
 ---
@@ -114,9 +146,11 @@ TMDb chain for a film:
 
 | Source | Role | When |
 |---|---|---|
-| **MusicBrainz (ISRC chain)** | Primary, high confidence | When cue has an ISRC |
-| **Wikidata (P434 cross-ref)** | Death-year top-up | When MB found composer but lacks `life-span.end` — looked up by **MusicBrainz artist ID** via Wikidata's P434 property, *not* by name (avoids name collisions like multiple "Hans Zimmer") |
-| **Wikidata (title+artist search)** | Last-resort fallback, low confidence | When any MB chain hop misses; tagged `composer_match: "search"` |
+| **MusicBrainz (ISRC chain)** | Primary, high confidence | The cue has an ISRC; tagged `composer_match: "isrc"` |
+| **MusicBrainz (work by title)** | Fallback, medium confidence | The ISRC chain finds no composer (common for reissues missing from MusicBrainz). Searches works by the cue's title and keeps the one whose authors best match the identified artist (up to 4 candidates; at least one name must match); tagged `"work"` |
+| **Wikidata (title+artist search)** | Last resort, low confidence | Both MusicBrainz routes miss. Finds only the composer, so the author list is flagged partial; tagged `"search"` |
+| **Wikidata (P434 cross-ref)** | Life-year top-up | MusicBrainz lacks an author's birth or death year — looked up by **MusicBrainz artist ID** via Wikidata's P434 property, *not* by name (avoids name collisions like multiple "Hans Zimmer"). Not for bands: their dates are founding and break-up |
+| **Wikidata (work date)** | `original_year` | Earliest publication or inception date of a work with this title by the composer or the identified artist |
 
 Only cues with an ISRC are looked up; cues without one keep no composer unless
 it is entered by hand.
@@ -124,22 +158,25 @@ it is entered by hand.
 MusicBrainz ISRC chain:
 1. `GET /ws/2/isrc/{isrc}` → recordings (note: no `inc` param — recordings nest directly)
 2. `GET /ws/2/recording/{rec_id}?inc=work-rels` → linked work
-3. `GET /ws/2/work/{work_id}?inc=artist-rels` → composer relation → artist MBID + work title
-4. `GET /ws/2/artist/{artist_id}` → `life-span.end`
+3. `GET /ws/2/work/{work_id}?inc=artist-rels` → author relations (composer, lyricist, writer) → artist MBIDs + work title
+4. `GET /ws/2/artist/{artist_id}?inc=url-rels` → `life-span` and the Wikidata link, per author
 
 MusicBrainz is rate-limited to **1 req/sec** with a polite User-Agent header.
-Sleep is enforced class-level by the last-call timestamp; cache hits skip the
-sleep.
+Each lookup instance waits out the second since its last call; cache hits skip
+the wait. A 503 (MusicBrainz throttling) or a network error is retried once.
 
 ### Intra-run caching
 
-`MusicLookup` keeps four per-instance dicts that survive one run's composer
-lookup:
+`MusicLookup` keeps per-instance dicts that survive one run's composer lookup:
 
-- `recording_id → work_data`
-- `work_id → composer_relations`
-- `artist_id → life_span`
-- `wikidata_name → death_year`
+- `isrc → recording`
+- `recording_id / work_id → work`
+- `artist_id → artist`
+- `artist MBID → (birth, death)` from Wikidata
+- `(title, names) → original_year`
+
+The enricher also looks up each piece only once: cues with the same title and
+artist share one result.
 
 A film with 30 cues built around 5 unique composers issues roughly **20 API
 calls instead of ~150**.
@@ -156,6 +193,10 @@ FIWI_TMDB_KEY=xxxxxxxxxxxxxx         # v3 hex (fallback — query param)
 Loaded by `python-dotenv` at server startup. `.env` is gitignored. For the
 bundled `.app`, the PyInstaller spec bundles `.env` next to the binary so
 production builds pick up the same credentials.
+
+The keys can also be entered in the app under **Settings → API keys**. They are
+saved in `settings.json` next to the cache folder and override the `.env`
+values.
 
 When the Bearer token is present, the v3 query param is never used — keys do
 not leak into HTTP access logs or proxy traces.
@@ -215,7 +256,7 @@ The analysis progress shows this as the **Identifying composers** step with a
 - **Wikidata title+artist search is unreliable.** Classical works in
   particular rarely have a label match for the form Shazam returns
   ("Symphony No. 9" vs the canonical Wikidata label). Any result from this
-  fallback is rendered as low-confidence (italic + `?`), never as fact.
+  fallback is rendered as low-confidence (grey italics), never as fact.
 - **imdbapi.dev is unofficial.** No SLA, has already migrated v1 → v2.
   Treated as tertiary fallback only; failures are swallowed silently. If it
   goes dark permanently, TMDb + Wikidata still carry the feature.
@@ -236,18 +277,18 @@ src/soundtrackID/metadata/
   enricher.py      # Pure orchestrator: composer lookup for a results dict
 
 tests/metadata/
-  test_film_parse.py    # Parser tests with checked-in JSON fixtures (no network)
-  test_music_parse.py
-  fixtures/             # API response samples
+  test_film_parse.py         # Parser tests with checked-in JSON fixtures
+  test_music_parse.py        # … plus the public-domain rules
+  test_film_lookup.py        # The film chain over a fake API
+  test_music_lookup.py       # The composer chain over a fake API
+  test_mp4_tags.py           # Tags written into a generated video
+  test_enricher_dedup.py     # One lookup per unique piece
+  mock_http.py               # The fake API (httpx.MockTransport)
+  fixtures/                  # API response samples
 ```
 
 The parsers are pure functions (`_parse_tmdb_movie`, `_parse_wikidata_film`,
-`_parse_imdbapi_title`, `_extract_composer`, `_artist_death`,
+`_parse_imdbapi_title`, `_extract_authors`, `_artist_death`,
 `_parse_wikidata_composer`, …) and are unit-tested directly against checked-in
-JSON fixtures. No vcrpy, no integration tests, no network in CI.
-
----
-
-## Verification status
-
-- 17/17 parser tests pass (`pytest tests/metadata/`)
+JSON fixtures. The lookup chains run against canned responses, so the tests
+need no network and no API keys (`uv run pytest tests/metadata/`).
