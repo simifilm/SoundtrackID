@@ -1,0 +1,283 @@
+{
+  "status": "success",
+  "result": {
+    "artist": "Robbie Williams",
+    "title": "It's De-Lovely (Album Version)",
+    "album": "De-Lovely Music From The Motion Picture",
+    "release_date": "2004-06-15",
+    "label": "Columbia/Sony Music Soundtrax",
+    "timecode": "01:53",
+    "song_link": "https://lis.tn/qvpMy",
+    "musicbrainz": [
+      {
+        "id": "dffa2836-6df8-4dbd-bbd7-c2632d89dde6",
+        "score": 100,
+        "title": "It’s De‐Lovely",
+        "length": 280786,
+        "disambiguation": "",
+        "video": null,
+        "artist-credit": [
+          {
+            "name": "Robbie Williams",
+            "artist": {
+              "id": "db4624cf-0e44-481e-a9dc-2142b833ec2f",
+              "name": "Robbie Williams",
+              "sort-name": "Williams, Robbie"
+            }
+          }
+        ],
+        "releases": [
+          {
+            "id": "8ae5456c-ab0d-4bc3-af7f-0577305b87d0",
+            "count": 1,
+            "title": "De‐Lovely Music From The Motion Picture",
+            "status": "Official",
+            "date": "2004-06-15",
+            "country": "XW",
+            "release-events": [
+              {
+                "date": "2004-06-15",
+                "area": {
+                  "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+                  "name": "[Worldwide]",
+                  "sort-name": "[Worldwide]",
+                  "iso-3166-1-codes": [
+                    "XW"
+                  ]
+                }
+              }
+            ],
+            "track-count": 19,
+            "media": [
+              {
+                "position": 1,
+                "format": "CD",
+                "track": [
+                  {
+                    "id": "4abb6932-e0ea-424b-a313-e0cdee93b4b9",
+                    "number": "1",
+                    "title": "It’s De‐Lovely",
+                    "length": 281000
+                  }
+                ],
+                "track-count": 19,
+                "track-offset": 0
+              }
+            ],
+            "artist-credit": [
+              {
+                "name": "Cole Porter",
+                "artist": {
+                  "id": "4a94a6cb-e70a-418b-bb53-a37897b950ce",
+                  "name": "Cole Porter",
+                  "sort-name": "Porter, Cole",
+                  "disambiguation": "composer"
+                }
+              }
+            ],
+            "release-group": {
+              "id": "e6ef59ff-e01e-3aca-9a3c-763b853accf3",
+              "type-id": "22a628ad-c082-3c4f-b1b6-d41665107b88",
+              "title": "De‐Lovely",
+              "primary-type": "Album",
+              "secondary-types": [
+                "Soundtrack"
+              ]
+            }
+          },
+          {
+            "id": "7fa9136c-e5f4-4060-870d-3fbf0de8318b",
+            "count": 1,
+            "title": "B-Sides & Rarities, Vol. 3",
+            "status": "Bootleg",
+            "date": "",
+            "country": "",
+            "release-events": null,
+            "track-count": 18,
+            "media": [
+              {
+                "position": 1,
+                "format": "CD-R",
+                "track": [
+                  {
+                    "id": "dd7b0637-c51a-4995-b0cd-ff204fe5bc39",
+                    "number": "1",
+                    "title": "It's De-Lovely",
+                    "length": 280967
+                  }
+                ],
+                "track-count": 18,
+                "track-offset": 0
+              }
+            ],
+            "artist-credit": [
+              {
+                "name": "Robbie Williams",
+                "artist": {
+                  "id": "db4624cf-0e44-481e-a9dc-2142b833ec2f",
+                  "name": "Robbie Williams",
+                  "sort-name": "Williams, Robbie",
+                  "disambiguation": ""
+                }
+              }
+            ],
+            "release-group": {
+              "id": "c0800a5d-1949-421e-85cc-98ba46dd34fa",
+              "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+              "title": "B-Sides & Rarities, Vol. 3",
+              "primary-type": "Album",
+              "secondary-types": [
+                "Compilation"
+              ]
+            }
+          },
+          {
+            "id": "6cae8d2f-33c0-4931-9f38-99f72d70f2b0",
+            "count": 1,
+            "title": "De-Lovely",
+            "status": "Official",
+            "date": "2004",
+            "country": "XE",
+            "release-events": [
+              {
+                "date": "2004",
+                "area": {
+                  "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+                  "name": "Europe",
+                  "sort-name": "Europe",
+                  "iso-3166-1-codes": [
+                    "XE"
+                  ]
+                }
+              }
+            ],
+            "track-count": 19,
+            "media": [
+              {
+                "position": 1,
+                "format": "CD",
+                "track": [
+                  {
+                    "id": "d3738f8e-7b63-37f2-a548-8baa6aa27894",
+                    "number": "1",
+                    "title": "It's De-Lovely",
+                    "length": 280786
+                  }
+                ],
+                "track-count": 19,
+                "track-offset": 0
+              }
+            ],
+            "artist-credit": [
+              {
+                "name": "Various Artists",
+                "artist": {
+                  "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+                  "name": "Various Artists",
+                  "sort-name": "Various Artists",
+                  "disambiguation": "add compilations to this artist"
+                }
+              }
+            ],
+            "release-group": {
+              "id": "e6ef59ff-e01e-3aca-9a3c-763b853accf3",
+              "type-id": "22a628ad-c082-3c4f-b1b6-d41665107b88",
+              "title": "De‐Lovely",
+              "primary-type": "Album",
+              "secondary-types": [
+                "Soundtrack"
+              ]
+            }
+          },
+          {
+            "id": "8e0edd78-6f44-4f78-9482-508df9ba24b0",
+            "count": 1,
+            "title": "De‐Lovely",
+            "status": "Official",
+            "date": "2004-06-15",
+            "country": "US",
+            "release-events": [
+              {
+                "date": "2004-06-15",
+                "area": {
+                  "id": "489ce91b-6658-3307-9877-795b68554c98",
+                  "name": "United States",
+                  "sort-name": "United States",
+                  "iso-3166-1-codes": [
+                    "US"
+                  ]
+                }
+              }
+            ],
+            "track-count": 18,
+            "media": [
+              {
+                "position": 1,
+                "format": "CD",
+                "track": [
+                  {
+                    "id": "2a227920-3885-37f6-ad9b-fa48e68bf8ac",
+                    "number": "1",
+                    "title": "It’s De‐Lovely",
+                    "length": 280786
+                  }
+                ],
+                "track-count": 18,
+                "track-offset": 0
+              }
+            ],
+            "artist-credit": [
+              {
+                "name": "Various Artists",
+                "artist": {
+                  "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+                  "name": "Various Artists",
+                  "sort-name": "Various Artists",
+                  "disambiguation": "add compilations to this artist"
+                }
+              }
+            ],
+            "release-group": {
+              "id": "e6ef59ff-e01e-3aca-9a3c-763b853accf3",
+              "type-id": "22a628ad-c082-3c4f-b1b6-d41665107b88",
+              "title": "De‐Lovely",
+              "primary-type": "Album",
+              "secondary-types": [
+                "Soundtrack"
+              ]
+            }
+          }
+        ],
+        "isrcs": [
+          "USSM10403979"
+        ],
+        "tags": [
+          {
+            "count": 1,
+            "name": "soundtrack"
+          },
+          {
+            "count": 1,
+            "name": "jazz"
+          },
+          {
+            "count": 1,
+            "name": "swing"
+          },
+          {
+            "count": 1,
+            "name": "vocal jazz"
+          },
+          {
+            "count": 1,
+            "name": "musical"
+          },
+          {
+            "count": 1,
+            "name": "movie soundtrack"
+          }
+        ]
+      }
+    ]
+  }
+}

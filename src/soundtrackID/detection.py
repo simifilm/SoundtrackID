@@ -453,10 +453,18 @@ class AudDDetectionClient(BaseMusicDetectionClient):
         spotify = result.get("spotify") or {}
         mb = result.get("musicbrainz") or []
 
-        isrc = apple.get("isrc") or (spotify.get("external_ids") or {}).get("isrc")
+        mb_first = mb[0] if isinstance(mb, list) and mb else {}
+        # Apple Music / Spotify blocks can be missing even when requested; the
+        # MusicBrainz recording usually carries the ISRC too.
+        mb_isrcs = mb_first.get("isrcs") or []
+        isrc = (
+            apple.get("isrc")
+            or (spotify.get("external_ids") or {}).get("isrc")
+            or (mb_isrcs[0] if mb_isrcs else None)
+        )
         spotify_url = (spotify.get("external_urls") or {}).get("spotify")
         apple_music_url = apple.get("url")
-        mb_id = mb[0].get("id") if isinstance(mb, list) and mb else None
+        mb_id = mb_first.get("id")
 
         return DetectionResult(
             segment=segment,

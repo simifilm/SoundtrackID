@@ -1,0 +1,7 @@
+{
+  "status": {
+    "msg": "invalid signature",
+    "code": 3014,
+    "version": "1.0"
+  }
+}
