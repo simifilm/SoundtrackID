@@ -11,21 +11,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from soundtrackID.models import CUE_METADATA_KEYS
+
 TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative
 
-# Fields copied from a chosen candidate onto the cue (cue-shaped keys).
-_APPLY_KEYS = (
-    "title",
-    "artist",
-    "album",
-    "release_year",
-    "isrc",
-    "genre",
-    "spotify_url",
-    "youtube_link",
-    "musicbrainz_recording_id",
-    "musicbrainz_url",
+# Cue fields describing the match, all taken from a chosen candidate: those it
+# lacks (cover, Apple Music link, provider agreement) belonged to the replaced
+# match and are cleared. The candidates and each provider's own answer (votes)
+# still hold for the segment.
+_APPLY_KEYS = ("title", "artist", "album") + tuple(
+    key for key in CUE_METADATA_KEYS if key not in ("candidates", "votes")
 )
 
 

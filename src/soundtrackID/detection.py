@@ -96,6 +96,34 @@ def _parse_acr_candidate(m: dict) -> dict:
     }
 
 
+def _shazamio_http_client():
+    """shazamio's default HTTP client, except that a request still throttled
+    (HTTP 429) after all its retries raises RateLimitError: shazamio returns the
+    throttled response instead, which reads as "no match"."""
+    from aiohttp_retry import ExponentialRetry, RetryClient
+    from shazamio.client import HTTPClient
+    from shazamio.utils import validate_json
+
+    class Client(HTTPClient):
+        async def request(self, method, url, *args, **kwargs):
+            async with RetryClient(
+                retry_options=self.retry_options,
+                raise_for_status=False,
+                trace_configs=[self.trace_config],
+            ) as client:
+                async with client.request(method, url, **kwargs) as resp:
+                    if resp.status == 429:
+                        raise RateLimitError("Shazam rate limit (HTTP 429)")
+                    return await validate_json(resp, *args)
+
+    # The retries of shazamio's default client: about 12 minutes on a 429.
+    return Client(
+        retry_options=ExponentialRetry(
+            attempts=20, max_timeout=60, statuses={500, 502, 503, 504, 429}
+        )
+    )
+
+
 class BaseMusicDetectionClient(ABC):
     @abstractmethod
     def detect(self, segment: MusicSegment) -> DetectionResult:
@@ -198,7 +226,9 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             return None
 
         async def _run() -> dict:
-            shazam = Shazam(language=self._language)
+            shazam = Shazam(
+                language=self._language, http_client=_shazamio_http_client()
+            )
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 path = f.name
                 audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(
@@ -212,6 +242,8 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
         try:
             result = asyncio.run(_run())
+        except RateLimitError:
+            raise
         except Exception:
             return None
 

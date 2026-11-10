@@ -44,6 +44,7 @@ def _group_detections(
 
     Pass 1: consecutive same-key runs (None==None so unidentified also merge),
     as long as a clip starts <= gap_tolerance_s after the previous one ended.
+    Clips skipped at a rate limit stay alone, so a resume identifies each one.
     Pass 2: bridge unidentified groups between identical tracks when the later
     track starts <= gap_tolerance_s after the earlier one ended.
     """
@@ -55,6 +56,8 @@ def _group_detections(
             groups
             and key == _det_key(groups[-1][-1][1])
             and item[0].start_time - groups[-1][-1][0].end_time <= gap_tolerance_s
+            and not item[1].skipped
+            and not groups[-1][-1][1].skipped
         ):
             groups[-1].append(item)
         else:
@@ -156,6 +159,7 @@ class OutputWriter:
                     conditioning=self.conditioning,
                     audio_file=f"segments/{audio_filename}",
                     confidence=confidence,
+                    pending=all(d.skipped for _, d in group),
                 )
             )
 
@@ -358,22 +362,33 @@ class Pipeline:
         rate_limited = False
 
         def detect_one(seg: MusicSegment) -> DetectionResult:
+            # Once the provider throttles, windows already queued skip their call
+            # too (they stay unidentified for a resume); calls under way finish.
+            nonlocal rate_limited
+            if rate_limited:
+                return skipped_result(seg)
             if debug_sleep:
                 time.sleep(debug_sleep)
-            return self.detection_client.detect(seg)
+            try:
+                return self.detection_client.detect(seg)
+            except RateLimitError:
+                rate_limited = True
+                raise
 
-        def empty_result(seg: MusicSegment) -> DetectionResult:
-            return DetectionResult(segment=seg, title=None, artist=None, confidence=0.0)
+        def skipped_result(seg: MusicSegment) -> DetectionResult:
+            return DetectionResult(
+                segment=seg, title=None, artist=None, confidence=0.0, skipped=True
+            )
 
         def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
             """Return a detection, converting a provider rate-limit into a
-            no-match (and flagging the run) instead of aborting everything."""
+            skipped window (and flagging the run) instead of aborting everything."""
             nonlocal rate_limited
             try:
                 return fut.result()
             except RateLimitError:
                 rate_limited = True
-                return empty_result(chunk_seg)
+                return skipped_result(chunk_seg)
 
         def emit_reaped(
             idx: int,
@@ -480,8 +495,8 @@ class Pipeline:
                 total_chunks += 1
                 if rate_limited:
                     # Provider is throttled; don't burn more calls. Record the
-                    # remaining windows as unidentified so they can be resumed.
-                    emit_reaped(idx, chunk_seg, empty_result(chunk_seg), label=False)
+                    # remaining windows as skipped so they can be resumed.
+                    emit_reaped(idx, chunk_seg, skipped_result(chunk_seg), label=False)
                 else:
                     pending[executor.submit(detect_one, chunk_seg)] = (idx, chunk_seg)
                 drain_finished()

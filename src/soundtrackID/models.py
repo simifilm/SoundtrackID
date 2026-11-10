@@ -40,6 +40,7 @@ class DetectionResult:
     confidence: float
     provider: str = "shazam"
     metadata: dict[str, Any] = field(default_factory=dict)
+    skipped: bool = False  # not identified: the provider was rate-limiting
 
 
 @dataclass
@@ -52,6 +53,7 @@ class SegmentOutput:
     conditioning: str
     audio_file: str
     confidence: float
+    pending: bool = False  # skipped at a rate limit; a resume identifies it
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +64,25 @@ class SegmentOutput:
             "audio_file": self.audio_file,
             "confidence": self.confidence,
         }
+
+
+# Detection metadata copied onto every cue, besides provider/title/artist/album.
+# Both new runs (ResultsOutput) and resumed ones (app._apply_detection_to_cue)
+# build cues from this list, so a resumed cue gets the same fields.
+CUE_METADATA_KEYS = (
+    "release_year",
+    "isrc",
+    "agreement",
+    "votes",
+    "candidates",
+    "genre",
+    "photo_url",
+    "youtube_link",
+    "spotify_url",
+    "apple_music_url",
+    "musicbrainz_recording_id",
+    "musicbrainz_url",
+)
 
 
 @dataclass
@@ -111,6 +132,7 @@ class ResultsOutput:
         cues = []
         for seg in self.segments:
             ident = ident_map.get(seg.id)
+            metadata = ident.metadata if ident else {}
             cues.append(
                 {
                     "segment_id": seg.id,
@@ -119,34 +141,12 @@ class ResultsOutput:
                     "conditioning": seg.conditioning,
                     "audio_file": seg.audio_file,
                     "confidence": seg.confidence,
+                    "pending": seg.pending,
                     "provider": ident.provider if ident else None,
                     "title": ident.title if ident else None,
                     "artist": ident.artist if ident else None,
                     "album": ident.album if ident else None,
-                    "release_year": ident.metadata.get("release_year")
-                    if ident
-                    else None,
-                    "isrc": ident.metadata.get("isrc") if ident else None,
-                    "agreement": ident.metadata.get("agreement") if ident else None,
-                    "votes": ident.metadata.get("votes") if ident else None,
-                    "candidates": ident.metadata.get("candidates") if ident else None,
-                    "genre": ident.metadata.get("genre") if ident else None,
-                    "photo_url": ident.metadata.get("photo_url") if ident else None,
-                    "youtube_link": ident.metadata.get("youtube_link")
-                    if ident
-                    else None,
-                    "spotify_url": ident.metadata.get("spotify_url") if ident else None,
-                    "apple_music_url": ident.metadata.get("apple_music_url")
-                    if ident
-                    else None,
-                    "musicbrainz_recording_id": ident.metadata.get(
-                        "musicbrainz_recording_id"
-                    )
-                    if ident
-                    else None,
-                    "musicbrainz_url": ident.metadata.get("musicbrainz_url")
-                    if ident
-                    else None,
+                    **{key: metadata.get(key) for key in CUE_METADATA_KEYS},
                     "enrichment": ident.enrichment if ident else None,
                 }
             )

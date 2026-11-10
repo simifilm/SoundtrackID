@@ -10,6 +10,7 @@ from scipy.io import wavfile
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
+from soundtrackID.detection import RateLimitError
 from soundtrackID.isolators import DummyIsolator
 from soundtrackID.models import ClassificationResult, DetectionResult, MusicSegment
 from soundtrackID.pipeline import Pipeline, _group_detections
@@ -77,6 +78,21 @@ class ReleasedClient:
     def detect(self, segment):
         self.released.wait(timeout=10)
         return self.client.detect(segment)
+
+
+class ThrottledClient:
+    """Answers "no match" to the first `answers` calls, then refuses every call
+    as rate-limited; counts the calls."""
+
+    def __init__(self, answers=0):
+        self.answers = answers
+        self.calls = 0
+
+    def detect(self, segment):
+        self.calls += 1
+        if self.calls > self.answers:
+            raise RateLimitError("quota exceeded")
+        return DetectionResult(segment=segment, title=None, artist=None, confidence=0)
 
 
 def test_classification_spans_cover_whole_audio(tmp_path):
@@ -173,6 +189,60 @@ def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cu
     assert len(results.segments) == n_cues
 
 
+def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
+    """They would be refused too, Shazam only after ~12 minutes of retries."""
+    throttled = ThrottledClient()
+    client = ReleasedClient(throttled)
+
+    def on_progress(step, **fields):
+        if step == "detecting" and "title" not in fields:  # classification is done
+            client.released.set()
+
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=client,
+        output_dir=tmp_path,
+        detection_concurrency=1,  # the other windows wait in the queue
+    )
+
+    results = pipeline.run(
+        Path("film.mp4"), on_progress=on_progress, max_segment_duration=5.0
+    )
+
+    assert results.rate_limited
+    assert throttled.calls == 1
+    assert not any(i.title for i in results.identifications)
+
+
+def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
+    """So a resume identifies each one; windows answered before still merge."""
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=ThrottledClient(answers=2),
+        output_dir=tmp_path,
+        detection_concurrency=1,  # windows are asked in order
+    )
+
+    results = pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
+
+    cues = results.to_dict()["cues"]
+    assert [(c["start"], c["duration"], c["pending"]) for c in cues] == [
+        (0.0, 10.0, False),  # the two "no match" answers, merged as before
+        (10.0, 5.0, True),
+        (15.0, 5.0, True),
+        (20.0, 5.0, True),
+        (25.0, 5.0, True),
+    ]
+
+
 def test_progress_events_carry_their_data_as_fields(tmp_path):
     """The UI reads the fields; `detail` is only a message and is never parsed."""
     client = ReleasedClient(TitleByStartClient(starts=(10.0,)))
@@ -220,8 +290,8 @@ def test_progress_events_carry_their_data_as_fields(tmp_path):
     ]
 
 
-def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):
-    """The SSE events carry the pipeline's fields at their top level."""
+def _analyze(tmp_path, monkeypatch, **form):
+    """POST /analyze with the fake pipeline; returns the SSE events."""
     from fastapi.testclient import TestClient
 
     from soundtrackID import app
@@ -247,10 +317,28 @@ def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):
     staged = client.post("/identify", files={"file": ("film.mp4", b"video")}).json()
     r = client.post(
         "/analyze",
-        data={"staging_id": staged["staging_id"], "film": json.dumps({"title": "F"})},
+        data={"staging_id": staged["staging_id"], "film": '{"title": "F"}', **form},
     )
+    return [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
 
-    events = [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
+
+def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
+    form = {"threshold": "0.3", "hop": "2.5", "bridge_gap": "5", "max_segment": "10"}
+
+    events = _analyze(tmp_path, monkeypatch, **form)
+
+    assert events[-1]["results"]["settings"] == {
+        "threshold": 0.3,
+        "hop": 2.5,
+        "bridge_gap": 5.0,
+        "max_segment_duration": 10.0,
+    }
+
+
+def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):
+    """The SSE events carry the pipeline's fields at their top level."""
+    events = _analyze(tmp_path, monkeypatch)
+
     assert events[-1]["step"] == "done"
     assert [e["duration"] for e in events if e["step"] == "waveform"] == [30.0]
     windows = [e for e in events if e["step"] == "classifying" and "start" in e]

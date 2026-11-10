@@ -498,6 +498,13 @@ async def _run_pipeline_sse(
             result_dict = results.to_dict()
             # Saved so /resume continues with the same providers.
             result_dict["providers"] = [p.strip() for p in api.split(",") if p.strip()]
+            # The analysis settings, so a run can be repeated exactly.
+            result_dict["settings"] = {
+                "threshold": threshold,
+                "hop": hop,
+                "bridge_gap": bridge_gap,
+                "max_segment_duration": max_segment_duration,
+            }
 
             # Temporal re-rank: prefer a period-plausible candidate over an
             # anachronistic top hit, now that the film year is known.
@@ -763,25 +770,15 @@ async def serve_filmstrip(video_name: str) -> FileResponse:
 
 def _apply_detection_to_cue(cue: dict, det) -> None:
     """Copy a DetectionResult onto an existing cue (same keys as models._build_cues)."""
+    from soundtrackID.models import CUE_METADATA_KEYS
+
     md = det.metadata or {}
     cue["provider"] = det.provider
     cue["title"] = det.title
     cue["artist"] = det.artist
     cue["album"] = md.get("album")
     cue["confidence"] = det.confidence
-    for key in (
-        "release_year",
-        "isrc",
-        "genre",
-        "photo_url",
-        "youtube_link",
-        "spotify_url",
-        "apple_music_url",
-        "musicbrainz_recording_id",
-        "musicbrainz_url",
-        "agreement",
-        "votes",
-    ):
+    for key in CUE_METADATA_KEYS:
         cue[key] = md.get(key)
 
 
@@ -824,7 +821,12 @@ async def _run_resume_sse(
             return
 
         cues = results.get("cues") or []
-        todo = [c for c in cues if not c.get("title") and c.get("audio_file")]
+        if not any("pending" in c for c in cues):
+            # Saved before skipped cues were marked: they can't be told apart
+            # from "no match", so every unidentified cue is retried.
+            for c in cues:
+                c["pending"] = not c.get("title")
+        todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
         total = len(todo)
         if total == 0:
             results["rate_limited"] = False
@@ -868,6 +870,7 @@ async def _run_resume_sse(
                 continue
             if det.title:
                 _apply_detection_to_cue(cue, det)
+            cue["pending"] = False  # answered, a match or not
             done_n += 1
             ev_queue.put({"step": "resuming", "detail": f"{done_n}/{total}"})
 

@@ -1,12 +1,16 @@
 """Tests for ShazamDetectionClient: native ShazamKit helper + shazamio fallback."""
 
+import asyncio
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
-from soundtrackID.detection import ShazamDetectionClient
+from soundtrackID.detection import RateLimitError, ShazamDetectionClient
 from soundtrackID.models import MusicSegment
 
 
@@ -121,3 +125,72 @@ def test_garbage_output_falls_back():
         r = _client().detect(_segment())
     assert r.title is None
     m.assert_called_once()
+
+
+# ── shazamio against a stand-in for Shazam's API ───────────────────────────
+
+THROTTLED = (429, {"error": "Too Many Requests"})
+NO_MATCH = (200, {"matches": []})
+MATCH = (200, {"matches": [{}], "track": {"title": "Song", "subtitle": "Band"}})
+
+
+@pytest.fixture
+def shazam_api(monkeypatch):
+    """Answers with the given (status, body) responses in turn, repeating the
+    last one; returns them and the statuses sent. Retry backoff is skipped."""
+    shazamio_misc = pytest.importorskip("shazamio.misc")
+    responses, sent = [], []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            status, body = responses[min(len(sent), len(responses) - 1)]
+            sent.append(status)
+            data = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/?{{language}}"
+    monkeypatch.setattr(shazamio_misc.ShazamUrl, "SEARCH_FROM_FILE", url)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda delay, *a: real_sleep(0, *a))
+    monkeypatch.setattr("soundtrackID.detection._find_shazamkit_helper", lambda: None)
+    yield responses, sent
+    server.shutdown()
+
+
+def _music():
+    audio = np.random.default_rng(0).uniform(-0.5, 0.5, 16000 * 5)
+    return MusicSegment(audio.astype(np.float32), 0.0, 5.0, 16000)
+
+
+def test_shazamio_still_throttled_after_retries_is_a_rate_limit(shazam_api):
+    """Not a "no match": the run stops identifying and offers to resume."""
+    responses, sent = shazam_api
+    responses.append(THROTTLED)
+
+    with pytest.raises(RateLimitError):
+        ShazamDetectionClient().detect(_music())
+
+    assert len(sent) == 20  # shazamio's retries
+
+
+@pytest.mark.parametrize(
+    "answers, title",
+    [([NO_MATCH], None), ([THROTTLED, THROTTLED, MATCH], "Song")],
+    ids=["no match", "throttling clears within the retries"],
+)
+def test_shazamio_answers(shazam_api, answers, title):
+    responses, sent = shazam_api
+    responses.extend(answers)
+
+    assert ShazamDetectionClient().detect(_music()).title == title
+    assert len(sent) == len(answers)

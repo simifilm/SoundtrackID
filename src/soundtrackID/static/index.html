@@ -2680,10 +2680,13 @@ function updateRateLimitBanner(results) {
   const banner = document.getElementById('ratelimit-banner');
   if (!banner) return;
   const cues = results.cues || [];
-  const unidentified = cues.filter(c => !c.title).length;
+  const identified = cues.filter(c => c.title).length;
+  // Runs saved before skipped cues were marked: any unidentified cue may be pending.
+  const marked = cues.some(c => 'pending' in c);
+  const pending = cues.filter(c => (marked ? c.pending : !c.title)).length;
   if (!results.rate_limited) { banner.style.display = 'none'; return; }
   document.getElementById('ratelimit-text').textContent =
-    `Detection stopped at a provider rate limit. ${cues.length - unidentified} of ${cues.length} identified; ${unidentified} still pending.`;
+    `Detection stopped at a provider rate limit. ${identified} of ${cues.length} identified; ${pending} still pending.`;
   banner.style.display = 'flex';
   document.getElementById('resume-btn').disabled = false;
 }
