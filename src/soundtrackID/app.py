@@ -644,7 +644,8 @@ async def delete_history_item(video_name: str) -> dict:
 
 @app.get("/history")
 async def history() -> list[dict]:
-    """Return the last 10 completed runs, newest first."""
+    """Summarize every completed run, newest first; GET /results/{video_name}
+    returns a run's results."""
     items = []
     if _OUTPUT_DIR.exists():
         dirs = sorted(
@@ -665,13 +666,10 @@ async def history() -> list[dict]:
                         "timestamp": results_path.stat().st_mtime,
                         "total": len(cues),
                         "identified": sum(1 for c in cues if c.get("title")),
-                        "results": data,
                     }
                 )
             except Exception:
                 pass
-            if len(items) >= 10:
-                break
     return items
 
 
@@ -686,6 +684,15 @@ def _safe_run_dir(video_name: str) -> Path:
     if run_dir.parent != cache:
         raise HTTPException(status_code=400, detail="Invalid path")
     return run_dir
+
+
+@app.get("/results/{video_name}")
+async def get_results(video_name: str) -> FileResponse:
+    """A run's results.json."""
+    results_path = _safe_run_dir(video_name) / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    return FileResponse(results_path, media_type="application/json")
 
 
 @app.post("/results/{video_name}")

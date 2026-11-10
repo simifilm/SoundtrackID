@@ -2845,17 +2845,20 @@ async function loadHistory() {
         try { await fetch('/history/' + encodeURIComponent(item.video_name), { method: 'DELETE' }); } catch (_) {}
         loadHistory();
       });
-      div.addEventListener('click', () => {
+      div.addEventListener('click', async () => {
+        const res = await fetch('/results/' + encodeURIComponent(item.video_name));
+        if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return; }
+        const results = await res.json();
         dropZone.style.display = 'none';
         panel.style.display = 'none';
         progressView.style.display = 'none';
         resultsView.style.display = 'block';
-        const wf = item.results.waveform;
+        const wf = results.waveform;
         if (wf) {
           wfSamples    = wf.samples;
           wfDuration   = wf.duration;
-          wfChunks     = (item.results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
-          wfCues       = (item.results.cues || []).map(c => ({
+          wfChunks     = (results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
+          wfCues       = (results.cues || []).map(c => ({
             segment_id: c.segment_id,
             start: c.start,
             end: c.start + c.duration,
@@ -2872,7 +2875,7 @@ async function loadHistory() {
           applyZoomVisibility();
           redrawAll();
         }
-        showResults(item.results);
+        showResults(results);
       });
       list.appendChild(div);
     });

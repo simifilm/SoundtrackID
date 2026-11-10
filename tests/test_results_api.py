@@ -1,6 +1,7 @@
 """Tests for the manual-edit save endpoint POST /results/{video_name}."""
 
 import json
+import os
 from types import SimpleNamespace
 
 import numpy as np
@@ -93,6 +94,54 @@ def test_path_traversal_rejected(tmp_path, monkeypatch, name):
     assert r.status_code == 400
     for folder in (cache, tmp_path):
         assert json.loads((folder / "results.json").read_text()) == {"cues": ["keep"]}
+
+
+# ── Reading runs: GET /results/{video_name} and the history list ───────────
+
+
+def test_get_returns_the_run_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    run_dir = _make_run(tmp_path)
+
+    r = client.get("/results/myrun")
+
+    assert r.status_code == 200
+    assert r.json() == json.loads((run_dir / "results.json").read_text())
+
+
+def test_get_missing_run_is_404(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    assert client.get("/results/nope").status_code == 404
+
+
+@pytest.mark.parametrize("name", ["%2e", "%2e%2e"])
+def test_get_path_traversal_rejected(tmp_path, monkeypatch, name):
+    # "." and ".." would reach these results files without the check
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for folder in (cache, tmp_path):
+        (folder / "results.json").write_text("{}")
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
+    assert client.get(f"/results/{name}").status_code == 400
+
+
+def test_history_lists_every_run_newest_first(tmp_path, monkeypatch):
+    """Not just the last few; without their results, which GET /results loads."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    for i in range(12):
+        run_dir = _make_run(tmp_path, f"run{i:02d}")
+        os.utime(run_dir, (1000 + i, 1000 + i))  # run11 is the newest
+
+    items = client.get("/history").json()
+
+    assert [item["video_name"] for item in items] == [
+        f"run{i:02d}" for i in reversed(range(12))
+    ]
+    assert {k: v for k, v in items[0].items() if k != "timestamp"} == {
+        "video_name": "run11",
+        "total": 1,
+        "identified": 1,
+    }
 
 
 # ── Resume endpoint ────────────────────────────────────────────────────────
