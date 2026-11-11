@@ -6,23 +6,23 @@ import io
 import json
 import mimetypes
 import os
-import queue
 import shutil
 import sys as _sys
 import tempfile
 import threading
+import traceback
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable
 
 from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from soundtrackID.models import load_results, results_to_csv
+from soundtrackID import analysis
+from soundtrackID.models import load_results, results_to_csv, save_results
 
 # Load .env early so TMDb credentials are available downstream
 try:
@@ -142,10 +142,6 @@ def _prune_staging() -> None:
         pass
 
 
-class _PipelineCancelled(Exception):
-    pass
-
-
 def _get_classifier(threshold: float = 0.2):
     global _classifier
     if _classifier is None:
@@ -190,23 +186,13 @@ def _build_pipeline(
     bridge_gap: float = 2.0,
     hop: float = 5.0,
 ):
-    from soundtrackID.aggregator import ChunkAggregator
-    from soundtrackID.chunker import AudioChunker
-    from soundtrackID.detection import build_detection_client
-    from soundtrackID.isolators import DummyIsolator
-    from soundtrackID.loaders import VideoLoader
-    from soundtrackID.pipeline import Pipeline
+    from soundtrackID.pipeline import build_pipeline
 
-    classifier = _get_classifier(threshold=threshold)
-    window = classifier.window_duration
-    return Pipeline(
-        loader=VideoLoader(),
-        chunker=AudioChunker(chunk_duration=window, overlap=window - hop),
-        classifier=classifier,
-        aggregator=ChunkAggregator(gap_tolerance=1.0),
-        isolator=DummyIsolator(),
-        detection_client=build_detection_client(api),
-        output_dir=output_dir,
+    return build_pipeline(
+        _get_classifier(threshold=threshold),
+        api,
+        output_dir,
+        hop=hop,
         bridge_gap=bridge_gap,
     )
 
@@ -312,9 +298,7 @@ async def film_lookup(hint: dict = Body(default={})) -> dict:
 
     No file needed.
     """
-    import httpx
-
-    from soundtrackID.metadata.film import FilmLookup
+    from soundtrackID.metadata.film import lookup_film
 
     year = hint.get("year")
     try:
@@ -326,24 +310,16 @@ async def film_lookup(hint: dict = Body(default={})) -> dict:
         tmdb_id = int(tmdb_id) if tmdb_id not in (None, "") else None
     except (ValueError, TypeError):
         tmdb_id = None
-    client = httpx.Client(timeout=15.0)
     try:
-        lookup = FilmLookup(
-            client,
-            tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
-            tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
-        )
-        info = lookup.lookup(
+        film = lookup_film(
             imdb_id=(hint.get("imdb_id") or None),
             tmdb_id=tmdb_id,
             title=(hint.get("title") or None),
             year=year,
         )
-        return {"film": info.to_dict()}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Film lookup failed: {exc}")
-    finally:
-        client.close()
+    return {"film": film}
 
 
 @app.post("/analyze")
@@ -383,24 +359,17 @@ async def analyze(
         except (ValueError, TypeError):
             film_override = None
 
-    run_id = str(uuid.uuid4())
-
-    return StreamingResponse(
+    return _event_stream(
         _run_pipeline_sse(
             video,
-            run_id=run_id,
+            run_id=str(uuid.uuid4()),
             threshold=threshold,
             bridge_gap=bridge_gap,
             hop=hop,
             max_segment_duration=max_segment or None,
             api=api,
             film_override=film_override,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        )
     )
 
 
@@ -433,7 +402,7 @@ async def rerun(
     except OSError:
         shutil.copy2(sources[0], video)
 
-    return StreamingResponse(
+    return _event_stream(
         _run_pipeline_sse(
             video,
             run_id=str(uuid.uuid4()),
@@ -443,12 +412,7 @@ async def rerun(
             max_segment_duration=max_segment or None,
             api=api,
             film_override=results.get("film"),
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        )
     )
 
 
@@ -462,34 +426,14 @@ async def _run_pipeline_sse(
     api: str = "acrcloud",
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Run the pipeline in a thread and yield SSE events.
+    """Analyze `video` and stream the progress as SSE events.
 
-    `video`, named like the film's file, lies in a temporary folder of its own:
-    the run moves it into its run folder and removes the temporary one.
+    `video`, named like the film's file, lies in a temporary folder of its own,
+    removed when the run ends; the run keeps the video in its run folder.
     """
-    # Each analysis gets its own run folder, also the same film again (e.g. a
-    # re-run with other settings), so it is named after the file and the time.
-    run_name = f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
-    cancel_event = threading.Event()
-    with _cancel_lock:
-        _cancel_events[run_id] = cancel_event
 
-    ev_queue: queue.Queue[dict] = queue.Queue()
-
-    def on_progress(step: str, **fields) -> None:
-        if cancel_event.is_set():
-            raise _PipelineCancelled()
-        ev_queue.put({"step": step, **fields})
-
-    def run_sync() -> None:
+    def work(on_progress, cancel):
         try:
-            if film_override:
-                # User-confirmed metadata from the pre-analysis step wins.
-                container_tags = film_override
-            else:
-                from soundtrackID.metadata.mp4_tags import read_mp4_tags
-
-                container_tags = read_mp4_tags(video) or None
             pipeline = _build_pipeline(
                 _OUTPUT_DIR,
                 threshold=threshold,
@@ -497,104 +441,52 @@ async def _run_pipeline_sse(
                 bridge_gap=bridge_gap,
                 hop=hop,
             )
-            results = pipeline.run(
+            return analysis.analyze(
+                pipeline,
                 video,
-                on_progress=on_progress,
+                api,
+                # User-confirmed metadata from the pre-analysis step; else the tags.
+                film=film_override,
                 max_segment_duration=max_segment_duration,
-                container_tags=container_tags,
-                run_name=run_name,
+                keep_video=True,
+                on_progress=on_progress,
+                cancel=cancel,
             )
-            result_dict = results.to_dict()
-            # Saved so /resume continues with the same providers.
-            result_dict["providers"] = [p.strip() for p in api.split(",") if p.strip()]
-            # The analysis settings, so a run can be repeated exactly.
-            result_dict["settings"] = {
-                "threshold": threshold,
-                "hop": hop,
-                "bridge_gap": bridge_gap,
-                "max_segment_duration": max_segment_duration,
-            }
+        finally:
+            shutil.rmtree(video.parent, ignore_errors=True)
 
-            # Temporal re-rank: prefer a period-plausible candidate over an
-            # anachronistic top hit, now that the film year is known.
-            try:
-                from soundtrackID.temporal import temporal_rerank
+    async for event in _sse(work, run_id):
+        yield event
 
-                film_year = (result_dict.get("film") or {}).get("year")
-                temporal_rerank(result_dict, film_year)
-            except Exception:
-                import traceback as _tb
 
-                print("temporal rerank failed:\n" + _tb.format_exc())
+async def _sse(
+    work: Callable[[analysis.ProgressCb, threading.Event], dict], run_id: str
+) -> AsyncGenerator[str, None]:
+    """Run `work(on_progress, cancel)` in a thread and stream its progress as SSE.
 
-            # Automatic composer lookup: join composer / death-year / work directly
-            # from external APIs (MusicBrainz → Wikidata) for every cue that carries
-            # an ISRC. Best-effort — a network failure must not fail the analysis.
-            try:
-                import httpx
+    Starts with the run_id (POST /cancel/{run_id} cancels it) and ends with
+    "done" and the results, "cancelled" or "error".
+    """
+    loop = asyncio.get_running_loop()
+    events: asyncio.Queue[dict] = asyncio.Queue()
+    cancel = threading.Event()
+    with _cancel_lock:
+        _cancel_events[run_id] = cancel
 
-                from soundtrackID.metadata.enricher import enrich as _enrich_results
+    def put(event: dict) -> None:
+        loop.call_soon_threadsafe(events.put_nowait, event)
 
-                def _music_cb(step: str, **kw) -> None:
-                    if cancel_event.is_set():
-                        raise _PipelineCancelled()
-                    if step == "music_start":
-                        ev_queue.put(
-                            {"step": "enriching", "detail": f"0/{kw.get('total', 0)}"}
-                        )
-                    elif step == "music_cue":
-                        ev_queue.put(
-                            {
-                                "step": "enriching",
-                                "detail": f"{kw.get('index')}/{kw.get('total')}",
-                            }
-                        )
-
-                _client = httpx.Client(timeout=15.0)
-                try:
-                    _enrich_results(
-                        results=result_dict,
-                        http_client=_client,
-                        progress_cb=_music_cb,
-                    )
-                finally:
-                    _client.close()
-            except _PipelineCancelled:
-                raise
-            except Exception:
-                import traceback as _tb
-
-                print("automatic composer enrichment failed:\n" + _tb.format_exc())
-
-            # Persist the source video + a thumbnail filmstrip so the UI can show a
-            # video preview synced to the timeline (also for history/reopened runs).
-            run_dir = _OUTPUT_DIR / run_name
-            try:
-                ext = video.suffix or ".mp4"
-                video_dest = run_dir / f"source{ext}"
-                shutil.move(str(video), str(video_dest))
-                from soundtrackID.thumbnails import extract_filmstrip
-
-                film = extract_filmstrip(video_dest, run_dir / "filmstrip.jpg")
-                result_dict["video"] = {"file": f"source{ext}", "filmstrip": film}
-            except Exception:
-                import traceback as _tb
-
-                print("video/filmstrip persist failed:\n" + _tb.format_exc())
-            # Saved also without the video: the pipeline's own results.json lacks
-            # what was added since (rate limit, settings, re-ranking, composers).
-            _atomic_write_json(run_dir / "results.json", result_dict)
-            # The waveform (up to ~60k points) is already streamed separately via
-            # the "waveform" step and persisted in results.json; omit it from the
-            # done event so the streamed payload stays small on long films.
-            done_results = {k: v for k, v in result_dict.items() if k != "waveform"}
-            ev_queue.put({"step": "done", "results": done_results})
-        except _PipelineCancelled:
-            ev_queue.put({"step": "cancelled"})
+    def run() -> None:
+        try:
+            results = work(lambda step, **fields: put({"step": step, **fields}), cancel)
+            # The waveform (up to ~60k points) was streamed with its own event
+            # and is saved in results.json: left out to keep the event small.
+            done = {k: v for k, v in results.items() if k != "waveform"}
+            put({"step": "done", "results": done})
+        except analysis.Cancelled:
+            put({"step": "cancelled"})
         except Exception as exc:
-            import traceback
-
-            ev_queue.put(
+            put(
                 {
                     "step": "error",
                     "detail": str(exc),
@@ -602,42 +494,29 @@ async def _run_pipeline_sse(
                 }
             )
         finally:
-            shutil.rmtree(video.parent, ignore_errors=True)
             with _cancel_lock:
                 _cancel_events.pop(run_id, None)
 
-    task = asyncio.create_task(asyncio.to_thread(run_sync))
-
-    def encode(ev: dict) -> str:
-        return f"data: {json.dumps(ev)}\n\n"
-
-    yield encode({"step": "run_id", "run_id": run_id})
-
+    worker = asyncio.create_task(asyncio.to_thread(run))
+    yield _sse_event({"step": "run_id", "run_id": run_id})
     while True:
-        # Drain all pending events
-        while True:
-            try:
-                ev = ev_queue.get_nowait()
-                yield encode(ev)
-                if ev.get("step") in ("done", "error", "cancelled"):
-                    return
-            except queue.Empty:
-                break
-
-        if task.done():
-            # Final drain after task completion
-            while not ev_queue.empty():
-                ev = ev_queue.get_nowait()
-                yield encode(ev)
-                if ev.get("step") in ("done", "error", "cancelled"):
-                    return
-            # Task ended without a terminal event
-            exc = task.exception()
-            if exc:
-                yield encode({"step": "error", "detail": str(exc)})
+        event = await events.get()
+        yield _sse_event(event)
+        if event["step"] in ("done", "error", "cancelled"):
+            await worker
             return
 
-        await asyncio.sleep(0.05)
+
+def _sse_event(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _event_stream(events: AsyncGenerator[str, None]) -> StreamingResponse:
+    return StreamingResponse(
+        events,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.delete("/history/{video_name}")
@@ -704,7 +583,7 @@ async def get_results(video_name: str) -> dict:
 
 
 @app.post("/results/{video_name}")
-async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
+async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
     """Persist manual edits to a run's cues (fill-ins, corrections, removals).
 
     Only the `cues` array is replaced; film/waveform/etc. on disk are preserved.
@@ -722,7 +601,7 @@ async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
             status_code=500, detail=f"Failed to read results.json: {exc}"
         )
     data["cues"] = cues
-    _atomic_write_json(results_path, data)
+    save_results(results_path, data)
     return {"status": "saved", "cues": len(cues)}
 
 
@@ -807,20 +686,6 @@ async def serve_filmstrip(video_name: str) -> FileResponse:
 # ── Resume detection after a rate limit ───────────────────────────────────────
 
 
-def _apply_detection_to_cue(cue: dict, det) -> None:
-    """Copy a DetectionResult onto an existing cue (same keys as models._build_cues)."""
-    from soundtrackID.models import CUE_METADATA_KEYS
-
-    md = det.metadata or {}
-    cue["provider"] = det.provider
-    cue["title"] = det.title
-    cue["artist"] = det.artist
-    cue["album"] = md.get("album")
-    cue["confidence"] = det.confidence
-    for key in CUE_METADATA_KEYS:
-        cue[key] = md.get(key)
-
-
 @app.post("/resume/{video_name}")
 async def resume_run(
     video_name: str, payload: dict = Body(default_factory=dict)
@@ -828,169 +693,17 @@ async def resume_run(
     """Re-run identification on the still-unidentified cues of a rate-limited run,
     reading their saved segment WAVs. Fills gaps without re-analyzing the video."""
     run_dir = _safe_run_dir(video_name)
-    results_path = run_dir / "results.json"
-    if not results_path.exists():
+    if not (run_dir / "results.json").exists():
         raise HTTPException(status_code=404, detail="Run not found")
     api = (payload or {}).get("api") or "acrcloud"
-    return StreamingResponse(
-        _run_resume_sse(run_dir, results_path, api),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return _event_stream(
+        _sse(
+            lambda on_progress, cancel: analysis.resume(
+                run_dir, api, on_progress=on_progress, cancel=cancel
+            ),
+            str(uuid.uuid4()),
+        )
     )
-
-
-async def _run_resume_sse(
-    run_dir: Path, results_path: Path, api: str
-) -> AsyncGenerator[str, None]:
-    ev_queue: queue.Queue[dict] = queue.Queue()
-
-    def run_sync() -> None:
-        import numpy as np
-        from scipy.io import wavfile
-
-        from soundtrackID.detection import RateLimitError, build_detection_client
-        from soundtrackID.models import MusicSegment
-
-        try:
-            results = load_results(results_path)
-        except Exception as exc:
-            ev_queue.put(
-                {"step": "error", "detail": f"Failed to load results.json: {exc}"}
-            )
-            return
-
-        cues = results.get("cues") or []
-        todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
-        total = len(todo)
-        if total == 0:
-            results["rate_limited"] = False
-            results_lean = {k: v for k, v in results.items() if k != "waveform"}
-            _atomic_write_json(results_path, results)
-            ev_queue.put({"step": "done", "results": results_lean})
-            return
-
-        try:
-            client = build_detection_client(api)
-        except Exception as exc:
-            ev_queue.put({"step": "error", "detail": str(exc)})
-            return
-
-        ev_queue.put({"step": "resuming", "detail": f"0/{total}"})
-        still_limited = False
-        done_n = 0
-        identified = []  # the cues this resume identifies
-        answered_audio = []  # of cues no longer pending
-        for cue in todo:
-            wav_path = run_dir / cue["audio_file"]
-            if not wav_path.exists():
-                continue
-            try:
-                sr, audio = wavfile.read(wav_path)
-                if audio.dtype == np.int16:
-                    audio = audio.astype(np.float32) / 32767.0
-                elif audio.dtype == np.int32:
-                    audio = audio.astype(np.float32) / 2147483647.0
-                if audio.ndim > 1:
-                    audio = audio.mean(axis=1)
-                seg = MusicSegment(
-                    audio=audio,
-                    start_time=0.0,
-                    end_time=len(audio) / sr,
-                    sample_rate=sr,
-                )
-                det = client.detect(seg)
-            except RateLimitError:
-                still_limited = True
-                break
-            except Exception:
-                continue
-            if det.title:
-                _apply_detection_to_cue(cue, det)
-                identified.append(cue)
-            cue["pending"] = False  # answered, a match or not
-            cue["audio_file"] = None  # only pending cues keep their audio
-            answered_audio.append(wav_path)
-            done_n += 1
-            ev_queue.put({"step": "resuming", "detail": f"{done_n}/{total}"})
-
-        # Re-rank and enrich only the cues identified just now: the others keep
-        # what they have, e.g. a composer edited by hand.
-        new_cues = {"cues": identified}
-
-        # Temporal re-rank the freshly-identified cues before enriching.
-        try:
-            from soundtrackID.temporal import temporal_rerank
-
-            temporal_rerank(new_cues, (results.get("film") or {}).get("year"))
-        except Exception:
-            pass
-
-        # Enrich the freshly-identified cues, best-effort.
-        try:
-            import httpx
-
-            from soundtrackID.metadata.enricher import enrich as _enrich
-
-            def _cb(step: str, **kw) -> None:
-                if step == "music_start":
-                    ev_queue.put(
-                        {"step": "enriching", "detail": f"0/{kw.get('total', 0)}"}
-                    )
-                elif step == "music_cue":
-                    ev_queue.put(
-                        {
-                            "step": "enriching",
-                            "detail": f"{kw.get('index')}/{kw.get('total')}",
-                        }
-                    )
-
-            with httpx.Client(timeout=15.0) as _c:
-                _enrich(
-                    results=new_cues,
-                    http_client=_c,
-                    progress_cb=_cb,
-                )
-        except Exception:
-            import traceback
-
-            print("resume enrichment failed:\n" + traceback.format_exc())
-
-        results["rate_limited"] = still_limited
-        try:
-            _atomic_write_json(results_path, results)
-        except Exception as exc:
-            ev_queue.put(
-                {"step": "error", "detail": f"Failed to write results.json: {exc}"}
-            )
-            return
-        # Only once saved: until then the saved cues are still pending, and a
-        # resume needs their audio.
-        for wav_path in answered_audio:
-            wav_path.unlink(missing_ok=True)
-        results_lean = {k: v for k, v in results.items() if k != "waveform"}
-        ev_queue.put({"step": "done", "results": results_lean})
-
-    task = asyncio.create_task(asyncio.to_thread(run_sync))
-
-    def encode(ev: dict) -> str:
-        return f"data: {json.dumps(ev)}\n\n"
-
-    while True:
-        drained = False
-        try:
-            while True:
-                ev = ev_queue.get_nowait()
-                yield encode(ev)
-                if ev.get("step") in ("done", "error"):
-                    return
-        except queue.Empty:
-            drained = True
-        if task.done() and drained and ev_queue.empty():
-            exc = task.exception()
-            if exc:
-                yield encode({"step": "error", "detail": str(exc)})
-            return
-        await asyncio.sleep(0.05)
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:

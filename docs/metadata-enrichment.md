@@ -112,15 +112,19 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                    └───────────────────────────┬───────────────────────────┘
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
-   Analyze         │  POST /analyze {staging_id, film}                     │
+   Analyze         │  POST /analyze {staging_id, film} → analysis.analyze  │
                    │    ├─ pipeline.run(...) → cues; results.film = film   │
                    │    ├─ temporal re-rank using the film year            │
                    │    └─ composer lookup for every cue with an ISRC      │
                    │       (SSE step "enriching", detail "i/total")        │
                    │                                                       │
-                   │  results.json written to disk                         │
+                   │  results.json written once, when the run is complete  │
                    └───────────────────────────────────────────────────────┘
 ```
+
+The CLI (`python -m soundtrackID.cli analyze`) runs the same analysis. Its
+`--title`, `--year` and `--imdb-id` options and `--lookup-film` take the place of
+the Confirm film panel.
 
 ---
 

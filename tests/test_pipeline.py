@@ -94,7 +94,7 @@ class ThrottledClient:
 
 
 def test_classification_spans_cover_whole_audio(tmp_path):
-    """results.json gets gap-free music / no-music spans with every class."""
+    """The results get gap-free music / no-music spans with every class."""
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
@@ -115,12 +115,10 @@ def test_classification_spans_cover_whole_audio(tmp_path):
     ]
     assert all(set(s["classes"]) == set(LABELS) for s in spans)
     assert spans[1]["classes"]["Music"] > FakeClassifier.threshold
-    saved = json.loads((tmp_path / "film" / "results.json").read_text())
-    assert saved["classification"] == spans
 
 
 def test_classification_windows_list_top_three_classes(tmp_path):
-    """Every classification window is written with its three most likely classes."""
+    """Every classification window is listed with its three most likely classes."""
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
@@ -143,8 +141,6 @@ def test_classification_windows_list_top_three_classes(tmp_path):
     ]
     assert windows[2]["music"] == 0.6
     assert windows[2]["classes"] == {"Music": 0.6, "Speech": 0.3, "Applause": 0.06}
-    saved = json.loads((tmp_path / "film" / "results.json").read_text())
-    assert saved["classification_windows"] == windows
 
 
 def test_unidentified_cue_has_no_confidence(tmp_path):
@@ -320,8 +316,25 @@ def test_progress_events_carry_their_data_as_fields(tmp_path):
     ]
 
 
+def fake_components(monkeypatch, client=None, classifier=None):
+    """Make build_pipeline load audio with FakeLoader and identify with `client`
+    (default: no match); returns a stand-in for the app's _get_classifier."""
+    monkeypatch.setattr("soundtrackID.pipeline.VideoLoader", FakeLoader)
+    monkeypatch.setattr(
+        "soundtrackID.detection.build_detection_client",
+        lambda api: client or NoMatchClient(),
+    )
+
+    def get_classifier(threshold):
+        run_classifier = classifier or FakeClassifier()
+        run_classifier.threshold = threshold
+        return run_classifier
+
+    return get_classifier
+
+
 def _analyze(tmp_path, monkeypatch, video=b"video", **form):
-    """POST /analyze for film.mp4 with the fake pipeline; returns the SSE events."""
+    """POST /analyze for film.mp4 with the fake components; returns the SSE events."""
     from fastapi.testclient import TestClient
 
     from soundtrackID import app
@@ -329,19 +342,7 @@ def _analyze(tmp_path, monkeypatch, video=b"video", **form):
     monkeypatch.setattr(app, "_OUTPUT_DIR", tmp_path / "cache")
     monkeypatch.setattr(app, "_STAGING_DIR", tmp_path / "staging")
     monkeypatch.setattr(app, "_staging", {})
-    monkeypatch.setattr(
-        app,
-        "_build_pipeline",
-        lambda output_dir, **kwargs: Pipeline(
-            loader=FakeLoader(),
-            chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
-            classifier=FakeClassifier(),
-            aggregator=ChunkAggregator(gap_tolerance=1.0),
-            isolator=DummyIsolator(),
-            detection_client=NoMatchClient(),
-            output_dir=output_dir,
-        ),
-    )
+    monkeypatch.setattr(app, "_get_classifier", fake_components(monkeypatch))
 
     client = TestClient(app.app)
     staged = client.post("/identify", files={"file": ("film.mp4", video)}).json()
@@ -353,14 +354,18 @@ def _analyze(tmp_path, monkeypatch, video=b"video", **form):
 
 
 def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
+    """Everything the run was analyzed with, also what the form doesn't set."""
     form = {"threshold": "0.3", "hop": "2.5", "bridge_gap": "5", "max_segment": "10"}
 
     events = _analyze(tmp_path, monkeypatch, **form)
 
     assert events[-1]["results"]["settings"] == {
+        "classifier": "FakeClassifier",
         "threshold": 0.3,
+        "window": FakeClassifier.window_duration,
         "hop": 2.5,
         "bridge_gap": 5.0,
+        "isolation": False,
         "max_segment_duration": 10.0,
     }
 
@@ -368,8 +373,7 @@ def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
 def test_results_are_saved_in_full_when_the_video_cannot_be_stored(
     tmp_path, monkeypatch
 ):
-    """The pipeline's own results.json lacks what is added after it, e.g. the
-    rate-limit flag (Resume), settings, re-ranking and composers."""
+    """With everything the analysis adds, e.g. the settings and providers."""
     import shutil
 
     real_move = shutil.move
@@ -393,10 +397,10 @@ def test_results_are_saved_in_full_when_the_video_cannot_be_stored(
 def test_each_analysis_gets_its_own_run(tmp_path, monkeypatch):
     """Also of a film with the same file name, e.g. the same one again with
     other settings: the run folder carries the time of the analysis."""
-    from soundtrackID import app
-
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
-    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda: next(times)))
+    monkeypatch.setattr(
+        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+    )
 
     _analyze(tmp_path, monkeypatch, video=b"first film")
     events = _analyze(tmp_path, monkeypatch, video=b"second film")
@@ -420,7 +424,9 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
     from soundtrackID import app
 
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
-    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda: next(times)))
+    monkeypatch.setattr(
+        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+    )
     _analyze(tmp_path, monkeypatch, video=b"film")
     client = TestClient(app.app)
 

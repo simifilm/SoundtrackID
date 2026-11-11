@@ -85,16 +85,14 @@ def _group_detections(
 
 
 class OutputWriter:
-    """Handles writing detection results to disk."""
+    """Turns detections into cues and writes the audio of the pending ones."""
 
     def __init__(
         self,
         output_dir: Path,
-        conditioning: str = "original",
         bridge_gap: float = 2.0,
     ) -> None:
         self.output_dir = output_dir
-        self.conditioning = conditioning
         self.bridge_gap = bridge_gap
 
     def write(
@@ -107,19 +105,16 @@ class OutputWriter:
         classification_windows: list[dict] | None = None,
         run_name: str | None = None,
     ) -> ResultsOutput:
-        """Write detection results to disk.
+        """Merge consecutive detections with the same identification into cues.
 
-        Consecutive detections with the same identification are merged into one
-        cue. Creates:
-        - output_dir/<video_name>/results.json
-        - output_dir/<video_name>/segments/seg_001.wav, the audio of each pending
-          cue, which a resume sends again
-        where video_name is `run_name`, by default the video's file name.
+        Writes output_dir/<video_name>/segments/seg_001.wav, the audio of each
+        pending cue, which a resume sends again; video_name is `run_name`, by
+        default the video's file name. results.json is the caller's to save
+        (analysis.analyze), once the run is complete.
         """
         video_name = run_name or video_path.stem
         video_output_dir = self.output_dir / video_name
         segments_dir = video_output_dir / "segments"
-        video_output_dir.mkdir(parents=True, exist_ok=True)
 
         groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
 
@@ -134,7 +129,7 @@ class OutputWriter:
                 # A pending cue is a single clip: skipped clips are never joined.
                 seg = group[0][0]
                 audio_file = f"segments/{segment_id}.wav"
-                segments_dir.mkdir(exist_ok=True)
+                segments_dir.mkdir(parents=True, exist_ok=True)
                 audio_int16 = (np.clip(seg.audio, -1.0, 1.0) * 32767).astype(np.int16)
                 wavfile.write(
                     video_output_dir / audio_file, seg.sample_rate, audio_int16
@@ -153,7 +148,6 @@ class OutputWriter:
                     id=segment_id,
                     start=first_seg.start_time,
                     duration=last_seg.end_time - first_seg.start_time,
-                    conditioning=self.conditioning,
                     audio_file=audio_file,
                     confidence=confidence,
                     pending=pending,
@@ -201,10 +195,6 @@ class OutputWriter:
             classification_windows=classification_windows,
         )
 
-        results_path = video_output_dir / "results.json"
-        results_path.write_text(results_output.to_json())
-        print(f"  Results written to: {results_path}")
-
         return results_output
 
 
@@ -233,15 +223,19 @@ class Pipeline:
         # (ACRCloud is metered).
         self.detection_concurrency = max(1, detection_concurrency)
 
-        # Determine conditioning based on isolator type
-        conditioning = (
-            "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
-        )
-        self.output_writer = OutputWriter(
-            self.output_dir,
-            conditioning=conditioning,
-            bridge_gap=bridge_gap,
-        )
+        self.output_writer = OutputWriter(self.output_dir, bridge_gap=bridge_gap)
+
+    @property
+    def settings(self) -> dict:
+        """What this pipeline analyzes with, as saved with a run's results."""
+        return {
+            "classifier": type(self.classifier).__name__,
+            "threshold": self.classifier.threshold,
+            "window": self.chunker.chunk_duration,
+            "hop": self.chunker.chunk_duration - self.chunker.overlap,
+            "bridge_gap": self.output_writer.bridge_gap,
+            "isolation": not isinstance(self.isolator, DummyIsolator),
+        }
 
     def run(
         self,
@@ -513,133 +507,39 @@ class Pipeline:
         return output
 
 
-if __name__ == "__main__":
-    import argparse
+def build_pipeline(
+    classifier: BaseClassifier,
+    api: str,
+    output_dir: Path,
+    hop: float = CLASSIFICATION_HOP_S,
+    window: float | None = None,
+    bridge_gap: float = 2.0,
+    isolation: bool = False,
+) -> Pipeline:
+    """The pipeline the app and the CLI analyze with.
 
+    `api` names the detection provider(s), comma-separated to let them vote.
+    `window` is the length of a classified window, by default the classifier's
+    own (no padding); `isolation` removes the vocals before identification
+    (Demucs).
+    """
+    # Imported here, so tests can replace the provider.
     from soundtrackID.detection import build_detection_client
 
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
-    parser = argparse.ArgumentParser(
-        description="Run the film music detection pipeline on a video file."
-    )
-    parser.add_argument("video_path", type=Path, help="Path to the video file")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("./output"),
-        help="Output directory (default: ./output)",
-    )
-    parser.add_argument(
-        "--api",
-        default="acrcloud",
-        help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-        "list for ensemble majority voting (default: acrcloud)",
-    )
-    parser.add_argument(
-        "--classifier",
-        choices=("onnx", "hf"),
-        default="onnx",
-        help="Music classifier backend (default: onnx)",
-    )
-    parser.add_argument(
-        "--no-isolation",
-        action="store_true",
-        help="Skip vocal isolation (use DummyIsolator)",
-    )
-    parser.add_argument(
-        "--chunk-duration",
-        type=float,
-        default=10.0,
-        help="Chunk duration in seconds (default: 10.0)",
-    )
-    parser.add_argument(
-        "--hop",
-        type=float,
-        default=CLASSIFICATION_HOP_S,
-        help=(
-            "Step between overlapping chunks in seconds "
-            f"(default: {CLASSIFICATION_HOP_S})"
-        ),
-    )
-    parser.add_argument(
-        "--max-segment",
-        type=float,
-        default=None,
-        help="Split segments into chunks of at most N seconds before detection",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.2,
-        help="Music classification threshold (default: 0.2)",
-    )
-    parser.add_argument(
-        "--csv",
-        action="store_true",
-        help="Also write results.csv: the same results as a spreadsheet",
-    )
-
-    args = parser.parse_args()
-
-    # Create components
-    loader = VideoLoader()
-    chunker = AudioChunker(
-        chunk_duration=args.chunk_duration, overlap=args.chunk_duration - args.hop
-    )
-
-    if args.classifier == "hf":
-        from soundtrackID.classifiers import HuggingFaceClassifier
-
-        classifier: BaseClassifier = HuggingFaceClassifier(
-            music_labels=["Music"], threshold=args.threshold
-        )
-    else:
-        from soundtrackID.classifiers import OnnxClassifier
-
-        onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
-        classifier = OnnxClassifier(
-            model_dir=str(onnx_model_dir),
-            music_labels=["Music"],
-            threshold=args.threshold,
-        )
-
-    aggregator = ChunkAggregator(gap_tolerance=1.0)
-
-    if args.no_isolation:
-        isolator: BaseMusicIsolator = DummyIsolator()
-    else:
+    window = window or classifier.window_duration
+    if isolation:
         from soundtrackID.isolators import DemucsIsolator
 
-        isolator = DemucsIsolator()
-
-    detection_client = build_detection_client(args.api)
-
-    # Create and run pipeline
-    pipeline = Pipeline(
-        loader=loader,
-        chunker=chunker,
+        isolator: BaseMusicIsolator = DemucsIsolator()
+    else:
+        isolator = DummyIsolator()
+    return Pipeline(
+        loader=VideoLoader(),
+        chunker=AudioChunker(chunk_duration=window, overlap=window - hop),
         classifier=classifier,
-        aggregator=aggregator,
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=isolator,
-        detection_client=detection_client,
-        output_dir=args.output_dir,
+        detection_client=build_detection_client(api),
+        output_dir=output_dir,
+        bridge_gap=bridge_gap,
     )
-
-    results = pipeline.run(args.video_path, max_segment_duration=args.max_segment)
-
-    if args.csv:
-        csv_path = args.output_dir / args.video_path.stem / "results.csv"
-        # newline="": the CSV brings its own line endings.
-        csv_path.write_text(results.to_csv(), encoding="utf-8", newline="")
-        print(f"  CSV written to: {csv_path}")
-
-    print("\nPipeline complete!")
-    print(f"  Segments: {len(results.segments)}")
-    print(f"  Identifications: {len(results.identifications)}")
-    print(f"  Output: {args.output_dir / args.video_path.stem}")

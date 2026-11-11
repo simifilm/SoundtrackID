@@ -53,7 +53,6 @@ class SegmentOutput:
     id: str
     start: float
     duration: float
-    conditioning: str
     audio_file: str | None  # only while pending: a resume sends it again
     confidence: float | None  # None: nothing identified
     pending: bool = False  # skipped at a rate limit; a resume identifies it
@@ -63,14 +62,13 @@ class SegmentOutput:
             "id": self.id,
             "start": self.start,
             "duration": self.duration,
-            "conditioning": self.conditioning,
             "audio_file": self.audio_file,
             "confidence": self.confidence,
         }
 
 
 # Detection metadata copied onto every cue, besides provider/title/artist/album.
-# Both new runs (ResultsOutput) and resumed ones (app._apply_detection_to_cue)
+# Both new runs (ResultsOutput) and resumed ones (analysis._apply_detection_to_cue)
 # build cues from this list, so a resumed cue gets the same fields.
 CUE_METADATA_KEYS = (
     "release_year",
@@ -139,7 +137,6 @@ class ResultsOutput:
                     "segment_id": seg.id,
                     "start": seg.start,
                     "duration": seg.duration,
-                    "conditioning": seg.conditioning,
                     "audio_file": seg.audio_file,
                     "confidence": seg.confidence,
                     "pending": seg.pending,
@@ -179,26 +176,41 @@ class ResultsOutput:
 #   1: no number.
 #   2: every cue says whether it is pending (skipped at a rate limit, so a resume
 #      identifies it); only pending cues have an audio_file; no ID / fiwi_id.
-RESULTS_VERSION = 2
+#   3: settings holds everything the run was analyzed with, also whether vocals
+#      were removed (isolation) instead of every cue's conditioning.
+RESULTS_VERSION = 3
 
 
 def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
     """Bring a results.json dict to the current format, in place, and return it."""
+    cues = data.get("cues") or []
     if data.get("version", 1) < 2:
         # Runs saved before skipped cues were marked: in a rate-limited run any
         # unidentified cue may be one. Runs since then have the mark already.
         limited = bool(data.get("rate_limited"))
-        for cue in data.get("cues") or []:
+        for cue in cues:
             cue.setdefault("pending", limited and not cue.get("title"))
         data.pop("ID", None)
         data.pop("fiwi_id", None)
-        data["version"] = 2
+    if data.get("version", 1) < 3:
+        conditionings = {c.pop("conditioning") for c in cues if "conditioning" in c}
+        if conditionings:
+            settings = data.setdefault("settings", {})
+            settings.setdefault("isolation", "vocals_removed" in conditionings)
+    data["version"] = RESULTS_VERSION
     return data
 
 
 def load_results(path: Path) -> dict[str, Any]:
     """Read a results.json, upgraded to the current format."""
     return upgrade_results(json.loads(path.read_text()))
+
+
+def save_results(path: Path, results: dict[str, Any]) -> None:
+    """Write a results.json at once: replaced whole, never left half-written."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(results, indent=2))
+    tmp.replace(path)
 
 
 def results_to_csv(results: dict[str, Any]) -> str:

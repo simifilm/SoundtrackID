@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from scipy.io import wavfile
 
+from soundtrackID import analysis
 from soundtrackID import app as app_module
 from soundtrackID.detection import RateLimitError
 from soundtrackID.models import (
@@ -141,6 +142,24 @@ def test_older_results_are_upgraded_when_read():
     assert upgrade_results(marked)["cues"] == [{"title": None, "pending": False}]
 
 
+def test_vocal_isolation_moves_from_the_cues_into_the_settings():
+    """Every cue said whether vocals were removed (conditioning); it's a setting."""
+    cue = {"title": "Song", "pending": False}
+    isolated = {"version": 2, "cues": [{**cue, "conditioning": "vocals_removed"}]}
+    original = {
+        "version": 2,
+        "settings": {"hop": 5.0},
+        "cues": [{**cue, "conditioning": "original"}],
+    }
+
+    assert upgrade_results(isolated) == {
+        "version": RESULTS_VERSION,
+        "settings": {"isolation": True},
+        "cues": [cue],
+    }
+    assert upgrade_results(original)["settings"] == {"hop": 5.0, "isolation": False}
+
+
 def test_get_missing_run_is_404(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     assert client.get("/results/nope").status_code == 404
@@ -223,7 +242,7 @@ def test_apply_detection_to_cue_maps_fields():
             "votes": [],
         },
     )
-    app_module._apply_detection_to_cue(cue, det)
+    analysis._apply_detection_to_cue(cue, det)
     assert cue["title"] == "Diane" and cue["artist"] == "Rapee"
     assert cue["album"] == "OST" and cue["isrc"] == "US123"
     assert cue["release_year"] == 1927 and cue["agreement"] == {"count": 1, "total": 3}
@@ -232,7 +251,7 @@ def test_apply_detection_to_cue_maps_fields():
 def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one():
     """E.g. its candidates, without which the date re-ranking skips it."""
     metadata = {key: f"<{key}>" for key in CUE_METADATA_KEYS}
-    segment = SegmentOutput("s1", 0, 10, "original", "segments/s1.wav", 0.9)
+    segment = SegmentOutput("s1", 0, 10, "segments/s1.wav", 0.9)
     identification = IdentificationOutput(
         "s1", "acrcloud", "T", "A", "Al", 0.9, metadata
     )
@@ -243,9 +262,9 @@ def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one():
     detection = DetectionResult(
         None, "T", "A", 0.9, "acrcloud", {**metadata, "album": "Al"}
     )
-    app_module._apply_detection_to_cue(resumed, detection)
+    analysis._apply_detection_to_cue(resumed, detection)
 
-    segment_fields = {"segment_id", "start", "duration", "conditioning", "audio_file"}
+    segment_fields = {"segment_id", "start", "duration", "audio_file"}
     detection_fields = set(analyzed) - segment_fields - {"pending", "enrichment"}
     assert resumed == {key: analyzed[key] for key in detection_fields}
 

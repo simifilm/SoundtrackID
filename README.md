@@ -153,34 +153,52 @@ FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
 
 ### CLI
 
+The CLI runs the same analysis as the app: identification, the date re-ranking
+and the composer lookup, saved as one run.
+
 ```bash
-uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolation
+uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4 --no-isolation
 ```
 
 ```
---output-dir DIR      Output directory (default: ./output)
+--output-dir DIR      Folder of the runs (default: ./output)
 --api API             Detection provider(s): acrcloud, shazam, audd — or a
                       comma-separated list for ensemble voting (default: acrcloud)
 --classifier {onnx,hf}
                       Music classifier backend (default: onnx)
 --no-isolation        Skip vocal isolation (faster)
---chunk-duration SEC  Classifier chunk size in seconds (default: 10)
---hop SEC             Step between overlapping classifier chunks (default: 5)
+--chunk-duration SEC  Length of a classified window in seconds (default: 10)
+--hop SEC             Step between overlapping classified windows (default: 5)
 --max-segment SEC     Split segments into chunks of at most N seconds before detection
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
+--bridge-gap SEC      Join clips of the same track across up to N seconds without
+                      music (default: 2)
+--title, --year, --imdb-id
+                      The film, where its file's tags lack it or are wrong; the
+                      year flags music released after the film
+--lookup-film         Fill in what is missing about the film online (TMDb,
+                      Wikidata), like the app's Look up online
 --csv                 Also write results.csv: the same results as a spreadsheet
 ```
 
+When a provider stops early (a rate limit, or unreachable), continue the run later;
+it identifies only the cues still pending:
+
+```bash
+uv run --extra app python -m soundtrackID.cli resume "output/My Film_2026-11-11_10-15-00"
+```
+
 ACRCloud and AudD read their keys from the environment or a `.env` file:
-`ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`.
+`ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`;
+`--lookup-film` reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 ## Output
 
-Results are written to `output/<video_name>/`:
+Each analysis is a run of its own, in `output/<video_name>_<date>_<time>/`:
 
 ```
 output/
-  My Film (2024)/
+  My Film_2026-11-11_10-15-00/
     results.json        # all segments and identifications
     results.csv         # with --csv: the same results as a spreadsheet
     segments/

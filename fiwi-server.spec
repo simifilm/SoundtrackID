@@ -93,6 +93,7 @@ a = Analysis(
         # soundtrackID modules
         "soundtrackID",
         "soundtrackID.app",
+        "soundtrackID.analysis",
         "soundtrackID.pipeline",
         "soundtrackID.classifiers",
         "soundtrackID.detection",

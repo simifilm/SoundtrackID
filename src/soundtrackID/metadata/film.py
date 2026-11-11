@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -228,6 +229,28 @@ class FilmLookup:
         if r.status_code != 200:
             return None
         return _parse_imdbapi_title(r.json())
+
+
+def lookup_film(
+    imdb_id: str | None = None,
+    tmdb_id: int | None = None,
+    title: str | None = None,
+    year: int | None = None,
+) -> dict[str, Any]:
+    """Look a film up online from what is known about it, with the TMDb keys
+    from the environment: the app's "Look up online" and the CLI's --lookup-film.
+    """
+    client = httpx.Client(timeout=15.0)
+    try:
+        lookup = FilmLookup(
+            client,
+            tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
+            tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
+        )
+        info = lookup.lookup(imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year)
+        return info.to_dict()
+    finally:
+        client.close()
 
 
 # ── Pure parsers (testable without network) ──────────────────────────────

@@ -25,7 +25,6 @@ CUES = [
         "segment_id": "seg_001",
         "start": 12.5,
         "duration": 30.0,
-        "conditioning": "original",
         "confidence": 0.9,
         "provider": "ensemble",
         "agreement": {"count": 2, "total": 3},
@@ -77,7 +76,6 @@ def test_csv_has_a_column_for_every_field_of_the_json():
         "segment_id",
         "start",
         "duration",
-        "conditioning",
         "confidence",
         "provider",
         "agreement.count",
@@ -102,7 +100,7 @@ def test_csv_has_a_column_for_every_field_of_the_json():
 
 def test_pipeline_results_as_csv():
     """What the CLI writes with --csv."""
-    segment = SegmentOutput("seg_001", 0.0, 10.0, "original", None, 0.8)
+    segment = SegmentOutput("seg_001", 0.0, 10.0, None, 0.8)
     identification = IdentificationOutput("seg_001", "acrcloud", "T", "A", "Al", 0.8)
     results = ResultsOutput("film.mp4", [segment], identifications=[identification])
 
