@@ -6,6 +6,7 @@ import pytest
 from soundtrackID.detection import (
     BaseMusicDetectionClient,
     EnsembleDetectionClient,
+    ProviderAuthError,
     RateLimitError,
     _consensus_from_votes,
     _normalize_title,
@@ -235,6 +236,19 @@ def test_ensemble_fails_when_every_provider_failed():
     with pytest.raises(RuntimeError) as exc:
         ens.detect(_segment())
     assert not isinstance(exc.value, RateLimitError)
+
+
+def test_ensemble_fails_when_a_provider_rejects_its_keys():
+    # Voting on without it would quietly drop a provider the user chose.
+    class Rejecting(BaseMusicDetectionClient):
+        def detect(self, segment):
+            raise ProviderAuthError("AudD rejected the API token (error 900)")
+
+    ens = EnsembleDetectionClient(
+        [("acrcloud", _FakeClient("Abyss")), ("audd", Rejecting())]
+    )
+    with pytest.raises(ProviderAuthError, match="AudD rejected"):
+        ens.detect(_segment())
 
 
 @pytest.mark.parametrize("answer", ["Abyss", None], ids=["match", "no-match"])

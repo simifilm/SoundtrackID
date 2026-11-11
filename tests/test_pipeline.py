@@ -13,7 +13,7 @@ from scipy.io import wavfile
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
-from soundtrackID.detection import RateLimitError
+from soundtrackID.detection import ProviderAuthError, RateLimitError
 from soundtrackID.isolators import DummyIsolator
 from soundtrackID.models import ClassificationResult, DetectionResult, MusicSegment
 from soundtrackID.pipeline import Pipeline, _group_detections
@@ -305,6 +305,30 @@ def test_a_window_the_provider_failed_on_stays_pending(tmp_path, caplog):
     ]
     assert cues[1]["audio_file"] == "segments/seg_002.wav"
     assert "malformed answer" in caplog.text
+
+
+class RejectingClient:
+    """Rejects its keys, as a provider does with a wrong one."""
+
+    def detect(self, segment):
+        raise ProviderAuthError("ACRCloud rejected the API keys (error 3014)")
+
+
+def test_rejected_keys_stop_the_run(tmp_path):
+    """Waiting doesn't fix them, so no pending cues for a resume that would fail
+    the same way: the run fails at once and says why."""
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=RejectingClient(),
+        output_dir=tmp_path,
+    )
+
+    with pytest.raises(ProviderAuthError, match="rejected the API keys"):
+        pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
 
 
 def test_progress_events_carry_their_data_as_fields(tmp_path):

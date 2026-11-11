@@ -25,7 +25,7 @@ def test_the_banner_counts_the_pending_cues(page, run):
     open_run(page)
 
     expect(page.locator("#ratelimit-text")).to_have_text(
-        "Detection stopped early: a provider hit its limit or couldn't be reached. "
+        "A provider hit its limit, couldn't be reached or failed. "
         "1 of 3 identified; 2 still pending."
     )
 

@@ -95,7 +95,11 @@ def resume(
     import numpy as np
     from scipy.io import wavfile
 
-    from soundtrackID.detection import RateLimitError, build_detection_client
+    from soundtrackID.detection import (
+        ProviderAuthError,
+        RateLimitError,
+        build_detection_client,
+    )
     from soundtrackID.models import MusicSegment
 
     progress = _checked(on_progress, cancel)
@@ -136,6 +140,8 @@ def resume(
             det = client.detect(seg)
         except RateLimitError:
             break  # still refused: the rest stays pending
+        except ProviderAuthError:
+            raise  # nothing saved: the cues stay pending for the right keys
         except Exception:
             log.exception("Identifying %s failed", cue.get("segment_id"))
             continue  # stays pending: a later resume tries again

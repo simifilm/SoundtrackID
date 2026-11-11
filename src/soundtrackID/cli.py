@@ -197,7 +197,8 @@ def _summarize(results: dict[str, Any], run_dir: Path) -> None:
     print(f"\n{identified} of {len(cues)} cues identified. Results in: {run_dir}")
     if pending:
         print(
-            f"{pending} cue(s) still pending, the provider stopped early. "
+            f"{pending} cue(s) still pending: a provider hit its limit, couldn't "
+            "be reached or failed. "
             f'Continue later with: python -m soundtrackID.cli resume "{run_dir}"'
         )
 

@@ -13,7 +13,11 @@ from scipy.io import wavfile
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.classifiers import BaseClassifier
-from soundtrackID.detection import BaseMusicDetectionClient, RateLimitError
+from soundtrackID.detection import (
+    BaseMusicDetectionClient,
+    ProviderAuthError,
+    RateLimitError,
+)
 from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackID.loaders import VideoLoader
 from soundtrackID.models import (
@@ -342,13 +346,16 @@ class Pipeline:
         def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
             """Return a detection, converting a provider rate-limit (which also
             flags the run) or error into a skipped window instead of aborting
-            everything: a resume asks for it again."""
+            everything: a resume asks for it again. Rejected keys abort: no
+            resume gets past them."""
             nonlocal rate_limited
             try:
                 return fut.result()
             except RateLimitError:
                 rate_limited = True
                 return skipped_result(chunk_seg)
+            except ProviderAuthError:
+                raise
             except Exception:
                 log.exception(
                     "Identifying %.1f-%.1f s failed",

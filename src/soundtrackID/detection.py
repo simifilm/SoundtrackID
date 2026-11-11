@@ -52,12 +52,28 @@ def _find_shazamkit_helper() -> str | None:
 
 
 class RateLimitError(RuntimeError):
-    """A provider refused the request due to a quota / rate limit / auth problem,
-    or couldn't be reached.
+    """A provider can't answer for now: it refused the request at its quota or
+    rate limit, failed (HTTP 5xx), or couldn't be reached.
 
     Raised so the pipeline can stop calling that provider, keep whatever it has
     already identified, and offer a resume rather than losing the whole run.
     """
+
+
+class ProviderAuthError(RuntimeError):
+    """A provider rejected its API keys.
+
+    Waiting doesn't fix that, so unlike a RateLimitError it stops the run (or
+    resume) at once and says so, instead of leaving cues for a resume that
+    would fail the same way.
+    """
+
+
+_CHECK_KEYS = "check them under Settings → API keys (the CLI reads them from .env)"
+
+# ACRCloud's codes for wrong keys: 3001 missing / invalid access key, 3014
+# invalid signature (a wrong access secret).
+_ACRCLOUD_KEY_ERRORS = (3001, 3014)
 
 
 def _extract_year(value) -> int | None:
@@ -407,11 +423,16 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
         code = payload.get("status", {}).get("code")
         if code != 0:
             # 1001 = no result; 2xxx = recording/fingerprint issues (tolerate,
-            # treat as no match). 3xxx = auth/quota limit — stop and allow resume.
-            if isinstance(code, int) and 3000 <= code < 4000:
-                raise RateLimitError(
-                    f"ACRCloud error {code}: {payload.get('status', {}).get('msg')}"
+            # treat as no match). Wrong keys stop the run; other 3xxx (quota,
+            # QpS limit, HTTP error) stop the calls and allow a resume.
+            msg = payload.get("status", {}).get("msg")
+            if code in _ACRCLOUD_KEY_ERRORS:
+                raise ProviderAuthError(
+                    f"ACRCloud rejected its API keys (error {code}: {msg}): "
+                    + _CHECK_KEYS
                 )
+            if isinstance(code, int) and 3000 <= code < 4000:
+                raise RateLimitError(f"ACRCloud error {code}: {msg}")
             return empty
 
         music = payload.get("metadata", {}).get("music", [])
@@ -502,9 +523,14 @@ class AudDDetectionClient(BaseMusicDetectionClient):
         if status == "error":
             err = payload.get("error", {}) or {}
             code = err.get("error_code")
-            # 900 = no/invalid api_token, 901 = request limit reached. Stop and
-            # allow resume (parallels ACRCloud 3xxx).
-            if code in (900, 901):
+            # 900 = no/invalid api_token: stop the run. 901 = request limit
+            # reached: stop the calls and allow resume (as ACRCloud's 3003).
+            if code == 900:
+                raise ProviderAuthError(
+                    f"AudD rejected its API token (error 900: "
+                    f"{err.get('error_message')}): " + _CHECK_KEYS
+                )
+            if code == 901:
                 raise RateLimitError(f"AudD error {code}: {err.get('error_message')}")
             return empty
 
@@ -689,6 +715,9 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
         def run(name: str, client: BaseMusicDetectionClient):
             try:
                 return name, client.detect(segment), None, False
+            except ProviderAuthError:
+                # Voting on without it would quietly drop a chosen provider.
+                raise
             except RateLimitError as exc:
                 return name, None, str(exc), True
             except Exception as exc:  # one provider failing must not sink the run

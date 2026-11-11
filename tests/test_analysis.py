@@ -9,6 +9,7 @@ import pytest
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.analysis import Cancelled, analyze, resume
 from soundtrackID.chunker import AudioChunker
+from soundtrackID.detection import ProviderAuthError
 from soundtrackID.isolators import DummyIsolator
 from soundtrackID.pipeline import Pipeline
 from tests.test_pipeline import (
@@ -16,6 +17,7 @@ from tests.test_pipeline import (
     FakeClassifier,
     FakeLoader,
     NoMatchClient,
+    RejectingClient,
     ThrottledClient,
 )
 
@@ -120,3 +122,24 @@ def test_a_resume_logs_a_cue_the_provider_failed_on(tmp_path, monkeypatch, caplo
     assert [c["segment_id"] for c in still] == pending
     assert all((run_dir / c["audio_file"]).exists() for c in still)
     assert "malformed answer" in caplog.text
+
+
+def test_a_resume_with_rejected_keys_fails_and_keeps_the_run(tmp_path, monkeypatch):
+    """It says why, and the cues stay pending for a resume with the right keys."""
+    analyze(
+        _pipeline(tmp_path, ThrottledClient(answers=2)),
+        Path("film.mp4"),
+        "acrcloud",
+        film={"title": "F"},
+        max_segment_duration=5.0,
+    )
+    [run_dir] = tmp_path.iterdir()
+    before = (run_dir / "results.json").read_text()
+    monkeypatch.setattr(
+        "soundtrackID.detection.build_detection_client", lambda api: RejectingClient()
+    )
+
+    with pytest.raises(ProviderAuthError):
+        resume(run_dir, "acrcloud")
+
+    assert (run_dir / "results.json").read_text() == before

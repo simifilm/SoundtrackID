@@ -40,8 +40,8 @@ function showResults(results) {
   updateRateLimitBanner(results);
 }
 
-// Show a resume prompt when detection stopped early on a provider rate limit
-// (or a provider that couldn't be reached).
+// Show a resume prompt while cues are pending: a provider hit its limit,
+// couldn't be reached or failed on them (wrong keys fail the run instead).
 function updateRateLimitBanner(results) {
   const banner = document.getElementById('ratelimit-banner');
   if (!banner) return;
@@ -50,7 +50,7 @@ function updateRateLimitBanner(results) {
   const pending = cues.filter(c => c.pending).length;
   if (!pending) { banner.style.display = 'none'; return; }
   document.getElementById('ratelimit-text').textContent =
-    `Detection stopped early: a provider hit its limit or couldn't be reached. ${identified} of ${cues.length} identified; ${pending} still pending.`;
+    `A provider hit its limit, couldn't be reached or failed. ${identified} of ${cues.length} identified; ${pending} still pending.`;
   banner.style.display = 'flex';
   document.getElementById('resume-btn').disabled = false;
 }

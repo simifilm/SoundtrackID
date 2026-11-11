@@ -21,6 +21,7 @@ from scipy.io import wavfile
 from soundtrackID.detection import (
     ACRCloudDetectionClient,
     AudDDetectionClient,
+    ProviderAuthError,
     RateLimitError,
     _parse_acr_candidate,
 )
@@ -134,11 +135,19 @@ def test_acrcloud_no_match_is_empty(monkeypatch, fixture):
     "response, code",
     [
         (load("acrcloud_invalid_signature.json"), 3014),
-        (json.dumps({"status": {"msg": "Limit exceeded", "code": 3003}}), 3003),
+        (json.dumps({"status": {"msg": "Invalid Access Key", "code": 3001}}), 3001),
     ],
-    ids=["invalid-signature", "limit-exceeded"],
+    ids=["invalid-signature", "invalid-access-key"],
 )
-def test_acrcloud_auth_and_quota_errors_stop_the_run(monkeypatch, response, code):
+def test_acrcloud_rejected_keys_say_so(monkeypatch, response, code):
+    # Waiting doesn't fix wrong keys, so not a limit a resume gets past.
+    with pytest.raises(ProviderAuthError, match=f"ACRCloud rejected .*error {code}"):
+        _acr_detect(monkeypatch, response)
+
+
+@pytest.mark.parametrize("code", [3000, 3003, 3015], ids=["http", "limit", "qps"])
+def test_acrcloud_limits_and_http_errors_stop_the_run(monkeypatch, code):
+    response = json.dumps({"status": {"msg": "Limit exceeded", "code": code}})
     with pytest.raises(RateLimitError, match=f"ACRCloud error {code}"):
         _acr_detect(monkeypatch, response)
 
@@ -254,22 +263,17 @@ def test_audd_no_match_is_empty(monkeypatch, fixture):
     assert r.title is None and r.confidence == 0.0 and r.provider == "audd"
 
 
-@pytest.mark.parametrize(
-    "response, code",
-    [
-        (json.loads(load("audd_invalid_token.json")), 900),
-        (
-            {
-                "status": "error",
-                "error": {"error_code": 901, "error_message": "limit reached"},
-            },
-            901,
-        ),
-    ],
-    ids=["invalid-token", "limit-reached"],
-)
-def test_audd_token_and_limit_errors_stop_the_run(monkeypatch, response, code):
-    with pytest.raises(RateLimitError, match=f"AudD error {code}"):
+def test_audd_rejected_token_says_so(monkeypatch):
+    with pytest.raises(ProviderAuthError, match="AudD rejected .*error 900"):
+        _audd_detect(monkeypatch, json.loads(load("audd_invalid_token.json")))
+
+
+def test_audd_limit_stops_the_run(monkeypatch):
+    response = {
+        "status": "error",
+        "error": {"error_code": 901, "error_message": "limit reached"},
+    }
+    with pytest.raises(RateLimitError, match="AudD error 901"):
         _audd_detect(monkeypatch, response)
 
 

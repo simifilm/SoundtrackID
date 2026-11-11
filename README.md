@@ -181,8 +181,9 @@ uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4 --no-iso
 --csv                 Also write results.csv: the same results as a spreadsheet
 ```
 
-When a provider stops early (a rate limit, or unreachable), continue the run later;
-it identifies only the cues still pending:
+When a provider leaves cues pending (a rate limit, unreachable, or a failed answer),
+continue the run later; it identifies only the cues still pending. Wrong API keys
+stop the run instead, with a message:
 
 ```bash
 uv run --extra app python -m soundtrackID.cli resume "output/My Film_2026-11-11_10-15-00"
@@ -203,7 +204,7 @@ output/
     timeline.json       # waveform and music classification, for the app's timeline
     results.csv         # with --csv: the same results as a spreadsheet
     segments/
-      seg_004.wav       # audio of a cue left pending at a rate limit, for Resume
+      seg_004.wav       # audio of a cue left pending, for Resume
 ```
 
 ## Tests
