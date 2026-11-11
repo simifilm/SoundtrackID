@@ -54,7 +54,9 @@ metadata = [
 
 [dependency-groups]
 dev = [
+    "playwright>=1.65.0",
     "pytest>=7.0",
+    "pytest-playwright>=0.10.0",
     "ruff>=0.1",
 ]
 build = [
@@ -77,3 +79,4 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["browser: drives the page in a headless Chromium (tests/ui)"]

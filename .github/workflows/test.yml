@@ -1,5 +1,6 @@
 # Runs ruff and the Python tests on every push and pull request, except for
-# main: build.yml calls this workflow for pull requests to main
+# main: build.yml calls this workflow for pull requests to main. The browser
+# tests of the page (tests/ui) run on pull requests only.
 
 name: Test
 
@@ -26,4 +27,19 @@ jobs:
       - name: Check formatting
         run: uv run --group dev ruff format --check
       - name: Run tests
-        run: uv run --extra app --group dev pytest
+        run: uv run --extra app --group dev pytest -m "not browser"
+
+  # The page in a headless Chromium. Also for pull requests to main: a workflow
+  # build.yml calls sees their pull_request event.
+  browser:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Install Chromium
+        run: uv run --group dev playwright install --with-deps chromium
+      - name: Run browser tests
+        run: uv run --extra app --group dev pytest -m browser

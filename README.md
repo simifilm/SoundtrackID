@@ -215,6 +215,10 @@ uv run --extra app pytest
 The tests need no network and no API keys: the music services and lookup APIs are
 replaced by recorded or canned responses, and test videos are generated on the fly.
 
+The tests in `tests/ui` drive the page in a headless Chromium; without it they are
+skipped. Install it once with `uv run playwright install chromium`. To run only those,
+or all others: `pytest -m browser`, `pytest -m "not browser"`.
+
 ## Project structure
 
 ```
