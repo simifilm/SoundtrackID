@@ -1,7 +1,10 @@
 """Tests for the manual-edit save endpoint POST /results/{video_name}."""
 
+import csv
+import io
 import json
 import os
+from datetime import date
 from types import SimpleNamespace
 
 import numpy as np
@@ -115,6 +118,49 @@ def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch
     del saved["waveform"]  # in the run's timeline
     assert r.json() == upgrade_results(saved)
     assert r.json()["version"] == RESULTS_VERSION
+
+
+def _run_with_enrichment(tmp_path, enrichment):
+    run_dir = tmp_path / "myrun"
+    run_dir.mkdir()
+    cue = {"segment_id": "seg_001", "title": "Song", "enrichment": enrichment}
+    (run_dir / "results.json").write_text(json.dumps({"cues": [cue]}))
+
+
+def test_the_rights_verdict_is_that_of_the_year_the_run_is_read(tmp_path, monkeypatch):
+    """The last author died 71 years ago: still protected when the run was
+    saved last year, in the public domain now, also in the CSV."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    died = date.today().year - 71
+    _run_with_enrichment(
+        tmp_path,
+        {
+            "composer": "A",
+            "authors": [{"name": "A", "roles": ["composer"], "death_year": died}],
+            "latest_author_death_year": died,
+            "authors_complete": True,
+            "authors_partial": False,
+            "public_domain": False,  # as assessed last year
+            "pd_presumption": None,
+        },
+    )
+
+    cue = client.get("/results/myrun").json()["cues"][0]
+    [row] = csv.DictReader(io.StringIO(client.get("/output/myrun/csv").text))
+
+    assert cue["enrichment"]["public_domain"] is True
+    assert row["enrichment.public_domain"] == "True"
+
+
+def test_a_verdict_saved_without_its_authors_is_kept(tmp_path, monkeypatch):
+    """Nothing to assess it from again."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    enrichment = {"composer": "A", "composer_death_year": 1900, "public_domain": True}
+    _run_with_enrichment(tmp_path, enrichment)
+
+    cue = client.get("/results/myrun").json()["cues"][0]
+
+    assert cue["enrichment"] == enrichment
 
 
 def test_results_carry_their_format_version():

@@ -72,6 +72,10 @@ operative PD date is the composer's death year, not the director's.
   within 70 years; `null` when neither can be said.
 - `pd_presumption` — for authors without a death year: `true` when the youngest
   of them was born more than 170 years ago (100-year lifespan + 70 years).
+- Both verdicts, with `latest_author_death_year` and `authors_complete`, change
+  with the year (a work whose last author died in 1956 is in the public domain
+  from 2027), so they are assessed again from `authors` whenever a run is read;
+  a `results.json` holds them as of its last save.
 - `authors_partial` — the author list may be incomplete (the Wikidata search
   only finds the composer).
 - `original_year` — the work's first publication year (Wikidata), used to flag

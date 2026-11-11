@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from soundtrackID.metadata import rights
+
 
 @dataclass
 class AudioChunk:
@@ -213,7 +215,8 @@ def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_results(path: Path) -> dict[str, Any]:
-    """Read a results.json, upgraded to the current format."""
+    """Read a results.json, upgraded to the current format, with the rights
+    verdicts of this year."""
     data = json.loads(path.read_text())
     timeline = {k: data.pop(k) for k in TIMELINE_KEYS if k in data}
     timeline_path = path.parent / "timeline.json"
@@ -221,7 +224,20 @@ def load_results(path: Path) -> dict[str, Any]:
         # Saved before the timeline had a file of its own: moved there now, as
         # the next save of these results leaves it out.
         save_json(timeline_path, timeline)
-    return upgrade_results(data)
+    return _assess_rights(upgrade_results(data))
+
+
+def _assess_rights(data: dict[str, Any]) -> dict[str, Any]:
+    """Assess every cue's rights again, as of this year: the verdict changes
+    with the year, so the one saved may be out of date. An enrichment saved
+    without its authors keeps its verdict, with nothing to assess it from."""
+    year = rights.current_year()
+    for cue in data.get("cues") or []:
+        enrichment = cue.get("enrichment")
+        if isinstance(enrichment, dict) and "authors" in enrichment:
+            partial = bool(enrichment.get("authors_partial"))
+            enrichment.update(rights.verdict(enrichment["authors"], partial, year))
+    return data
 
 
 def load_timeline(run_dir: Path) -> dict[str, Any]:

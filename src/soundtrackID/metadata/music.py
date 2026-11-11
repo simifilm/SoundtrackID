@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 import httpx
 
+from soundtrackID.metadata.rights import current_year, verdict
+
 MB_BASE = "https://musicbrainz.org/ws/2"
 MB_USER_AGENT = "SoundtrackID/0.1 (simon@simifilm.ch)"
 MB_RATE_LIMIT_SEC = 1.0
@@ -108,16 +110,9 @@ class MusicLookup:
         if original_year and "wikidata" not in info.sources:
             info.sources.append("wikidata")
 
-        info.latest_author_death_year, info.authors_complete, info.public_domain = (
-            _pd_status(info.authors, _current_year(), partial=info.authors_partial)
-        )
-        # The presumption rule concludes *towards* PD, so it needs the same whole
-        # author set the positive verdict does.
-        info.pd_presumption = (
-            None
-            if info.authors_partial
-            else _presumption_applies(info.authors, _current_year())
-        )
+        assessed = verdict(info.authors, info.authors_partial, current_year())
+        for key, value in assessed.items():
+            setattr(info, key, value)
         return info
 
     # ── MusicBrainz chain ────────────────────────────────────────────────
@@ -431,63 +426,6 @@ def _score_work_authors(authors: list[dict[str, Any]], artist_str: str | None) -
     return score
 
 
-def _current_year() -> int:
-    from datetime import date
-
-    return date.today().year
-
-
-def _pd_status(
-    authors: list[dict[str, Any]],
-    current_year: int,
-    term: int = 70,
-    partial: bool = False,
-) -> tuple[int | None, bool, bool | None]:
-    """Public-domain assessment from a work's authors (PMLE, `term` years post
-    mortem auctoris — 70 in the EU/CH/US). Returns
-    (latest_author_death_year, authors_complete, public_domain).
-
-    The term runs from the *last surviving* author, so the two verdicts need
-    different evidence: an author we haven't found can only push the expiry later,
-    never earlier. "Protected" is therefore safe to assert from a known recent
-    death alone, while "public domain" additionally needs every author's death
-    year (`authors_complete`) and the set itself to be whole (`partial` False).
-    None = cannot be asserted."""
-    if not authors:
-        return None, False, None
-    deaths = [a.get("death_year") for a in authors]
-    known = [d for d in deaths if d]
-    complete = len(known) == len(authors)
-    latest = max(known) if known else None
-    if latest is not None and (current_year - latest) <= term:
-        return latest, complete, False
-    if partial or not complete or latest is None:
-        return latest, complete, None
-    return latest, complete, True
-
-
-def _presumption_applies(
-    authors: list[dict[str, Any]],
-    current_year: int,
-    term: int = 70,
-    max_lifespan: int = 100,
-) -> bool | None:
-    """Presumption rule for authors without a death year: if the last of them was
-    born more than `max_lifespan` + `term` years ago, they're presumed dead for at
-    least `term` years. None when not applicable: every death year is known, a
-    birth year is missing, or a known author died within `term` years (protected
-    either way)."""
-    unknown = [a for a in authors if not a.get("death_year")]
-    if not unknown or any(not a.get("birth_year") for a in unknown):
-        return None
-    if any(
-        current_year - a["death_year"] <= term for a in authors if a.get("death_year")
-    ):
-        return None
-    latest_birth = max(a["birth_year"] for a in unknown)
-    return (current_year - latest_birth) > max_lifespan + term
-
-
 def _wikidata_entity_url(uri: str | None) -> str | None:
     """SPARQL returns entity URIs (…/entity/Q42); the readable page is …/wiki/Q42."""
     if not uri:
@@ -562,7 +500,7 @@ def _parse_wikidata_composer(data: dict) -> ComposerInfo | None:
         composer_match="search",
         # This query asks for P86 (composer) only - a lyricist or co-writer may
         # exist and stay unseen, so the set is flagged partial and the PD verdict
-        # stays one-sided (see _pd_status).
+        # stays one-sided (see rights._pd_status).
         authors=[
             {
                 "name": composer,
