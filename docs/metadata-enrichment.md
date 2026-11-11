@@ -198,9 +198,11 @@ FIWI_TMDB_API_TOKEN=eyJhbGc...      # v4 Bearer JWT (preferred — header auth)
 FIWI_TMDB_KEY=xxxxxxxxxxxxxx         # v3 hex (fallback — query param)
 ```
 
-Loaded by `python-dotenv` at server startup. `.env` is gitignored. For the
-bundled `.app`, the PyInstaller spec bundles `.env` next to the binary so
-production builds pick up the same credentials.
+Loaded by `python-dotenv` at server startup. `.env` is gitignored. It holds
+these two keys and nothing else: the PyInstaller spec bundles it into the app as
+it is, so production builds pick up the same credentials, and stops the build if
+it holds any other key. A developer's own keys go in `.env.dev`, which is never
+bundled (see the README's "Environment files").
 
 The keys can also be entered in the app under **Settings → API keys**. They are
 saved in `settings.json` next to the cache folder and override the `.env`

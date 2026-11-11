@@ -1,6 +1,6 @@
 """Command line: analyze a video, or resume a run a provider stopped.
 
-    python -m soundtrackID.cli analyze path/to/film.mp4 --no-isolation
+    python -m soundtrackID.cli analyze path/to/film.mp4
     python -m soundtrackID.cli resume output/<run>
 
 Runs the same analysis as the app (soundtrackID.analysis): pipeline, date
@@ -13,17 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from soundtrackID.analysis import analyze, resume
+from soundtrackID.envfiles import load_env_files
 from soundtrackID.models import load_results, results_to_csv
 from soundtrackID.pipeline import CLASSIFICATION_HOP_S, build_pipeline
 
 
 def main(argv: list[str] | None = None) -> None:
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
+    load_env_files()  # .env.dev, then .env
     # The analysis's progress and what went wrong, on the console; other
     # libraries only their warnings (httpx logs request URLs, maybe with a key).
     logging.basicConfig(format="%(message)s")
@@ -56,9 +52,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Music classifier backend (default: onnx)",
     )
     a.add_argument(
-        "--no-isolation",
+        "--isolation",
         action="store_true",
-        help="Skip vocal isolation (use DummyIsolator)",
+        help="Remove the vocals before identification (Demucs; needs the "
+        "'demucs' extras)",
+    )
+    # The default since --isolation; still accepted for older commands.
+    a.add_argument(
+        "--no-isolation", action="store_false", dest="isolation", help=argparse.SUPPRESS
     )
     a.add_argument(
         "--chunk-duration",
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
             hop=args.hop,
             window=args.chunk_duration,
             bridge_gap=args.bridge_gap,
-            isolation=not args.no_isolation,
+            isolation=args.isolation,
         )
         results = analyze(
             pipeline,

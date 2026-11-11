@@ -69,7 +69,7 @@ class ProviderAuthError(RuntimeError):
     """
 
 
-_CHECK_KEYS = "check them under Settings → API keys (the CLI reads them from .env)"
+_CHECK_KEYS = "check them under Settings → API keys (the CLI reads .env.dev)"
 
 # ACRCloud's codes for wrong keys: 3001 missing / invalid access key, 3014
 # invalid signature (a wrong access secret).

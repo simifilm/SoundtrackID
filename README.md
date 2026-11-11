@@ -157,7 +157,7 @@ The CLI runs the same analysis as the app: identification, the date re-ranking
 and the composer lookup, saved as one run.
 
 ```bash
-uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4 --no-isolation
+uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4
 ```
 
 ```
@@ -166,7 +166,8 @@ uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4 --no-iso
                       comma-separated list for ensemble voting (default: acrcloud)
 --classifier {onnx,hf}
                       Music classifier backend (default: onnx)
---no-isolation        Skip vocal isolation (faster)
+--isolation           Remove the vocals before identification (Demucs; slow,
+                      needs --extra demucs)
 --chunk-duration SEC  Length of a classified window in seconds (default: 10)
 --hop SEC             Step between overlapping classified windows (default: 5)
 --max-segment SEC     Split segments into chunks of at most N seconds before detection
@@ -189,9 +190,10 @@ stop the run instead, with a message:
 uv run --extra app python -m soundtrackID.cli resume "output/My Film_2026-11-11_10-15-00"
 ```
 
-ACRCloud and AudD read their keys from the environment or a `.env` file:
-`ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`;
-`--lookup-film` reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
+ACRCloud and AudD read their keys from the environment or the `.env.dev` file
+(see [Environment files](#environment-files)): `ACRCLOUD_HOST`,
+`ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`; `--lookup-film`
+reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 ## Output
 
@@ -425,16 +427,31 @@ uv run --extra app python -m soundtrackID &   # start Python server on :8000
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ```
 
-### TMDb credentials
+### Environment files
 
-Enrichment uses TMDb. Everyone can use the same credentials for TMDb. The credentials must be stored in the `.env` file at the project root (gitignored):
+Two gitignored files at the project root hold the keys:
 
-```
-FIWI_TMDB_API_TOKEN=eyJhbGc...   # v4 Bearer JWT (preferred — header auth, not query param)
-FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
-```
+- **`.env`** is what the app ships: the TMDb credentials, which everyone can share,
+  and nothing else. The spec file bundles it into the application as it is, and
+  stops the build if it holds any other key.
 
-The server reads `.env` at startup. For the bundled `.app`, the spec file bundles `.env` into the application so the production build picks up the same credentials.
+  ```
+  FIWI_TMDB_API_TOKEN=eyJhbGc...   # v4 Bearer JWT (preferred — header auth, not query param)
+  FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
+  ```
+
+- **`.env.dev`** holds your own keys, which must never ship: ACRCloud, AudD, and the
+  signing credentials. Only a run from source reads it.
+
+  ```
+  ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
+  ACRCLOUD_ACCESS_KEY=...
+  ACRCLOUD_ACCESS_SECRET=...
+  AUDD_API_TOKEN=...
+  ```
+
+The server and the CLI read `.env.dev`, then `.env`, at startup: a key in `.env.dev`
+wins over the same key in `.env`, and one set in the environment wins over both.
 
 ---
 

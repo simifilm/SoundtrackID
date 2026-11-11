@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
+from soundtrackID.envfiles import load_env_files
 from soundtrackID.models import load_results, load_timeline, results_to_csv, save_json
 
 log = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ try:
         if _meipass_env.exists():
             load_dotenv(_meipass_env, override=False)
     else:
-        load_dotenv()
+        load_env_files()  # .env.dev, then .env
 except ImportError:
     pass
 
@@ -50,11 +51,40 @@ if getattr(_sys, "frozen", False):
 else:
     _STATIC_DIR = Path(__file__).parent / "static"
 
+
+def _app_data_dir() -> Path:
+    """Where the installed app keeps its runs, saved API keys and log: the
+    user's application data folder (the local one on Windows: runs keep films)."""
+    if _sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+        return base / "SoundtrackID"
+    return Path.home() / "Library" / "Application Support" / "SoundtrackID"
+
+
+def _move_misplaced_windows_data(new: Path) -> None:
+    """Move what the Windows app kept under the macOS path in the home folder,
+    before it had a folder of its own, into `new`, so earlier runs and saved
+    keys stay. What `new` has already is kept; the old folders go once empty."""
+    old = Path.home() / "Library" / "Application Support" / "SoundtrackID"
+    if not old.is_dir():
+        return
+    new.mkdir(parents=True, exist_ok=True)
+    for item in old.iterdir():
+        if not (new / item.name).exists():
+            try:
+                shutil.move(str(item), str(new / item.name))
+            except OSError:
+                log.warning("Could not move %s to %s", item, new, exc_info=True)
+    for folder in (old, old.parent, old.parent.parent):
+        try:
+            folder.rmdir()  # only while empty
+        except OSError:
+            break
+
+
 if getattr(_sys, "frozen", False):
-    # Writable user directory inside the macOS app sandbox
-    _OUTPUT_DIR = (
-        Path.home() / "Library" / "Application Support" / "SoundtrackID" / "cache"
-    )
+    _OUTPUT_DIR = _app_data_dir() / "cache"
 else:
     _OUTPUT_DIR = Path("./output/cache")
 
@@ -205,8 +235,10 @@ def _build_pipeline(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Apply saved API keys, then pre-warm the classifier so the first request
-    # doesn't block.
+    # Move what an earlier Windows build kept under the macOS path, apply saved
+    # API keys, then pre-warm the classifier so the first request doesn't block.
+    if getattr(_sys, "frozen", False) and _sys.platform == "win32":
+        _move_misplaced_windows_data(_OUTPUT_DIR.parent)
     _load_settings_into_env()
     await asyncio.to_thread(_get_classifier)
     yield

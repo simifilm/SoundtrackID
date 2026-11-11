@@ -105,7 +105,8 @@ jobs:
       - name: Install Node packages
         run: npm ci
 
-      # .env is gitignored; fiwi-server.spec bundles it into the app if present.
+      # .env is gitignored; fiwi-server.spec bundles it into the app, and only
+      # the TMDb keys may be in it.
       - name: Write TMDb credentials to .env
         shell: bash
         env:

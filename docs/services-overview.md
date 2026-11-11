@@ -29,8 +29,11 @@ Handover companion to `detection-providers.md` and `metadata-enrichment.md`.
 
 ## Key handling
 
-- Keys are read from `.env` (gitignored) at startup and can be overridden per
-  install through the in-app settings page, which persists them to
-  `settings.json` (gitignored) and pushes them into the process environment.
+- Keys are read from `.env.dev` and `.env` (both gitignored) at startup and can
+  be overridden per install through the in-app settings page, which persists them
+  to `settings.json` (gitignored) and pushes them into the process environment.
+- `.env` ships in the app, so it holds only the TMDb keys every install shares;
+  the build stops if it holds any other. Provider and signing keys go in
+  `.env.dev`, which is never bundled.
 - No key is committed to the repository. Handover of the actual key values is a
   manual step outside git.

@@ -177,7 +177,7 @@ favour of ACRCloud.**
 ## Credentials summary
 
 ```
-# .env
+# .env.dev
 ACRCLOUD_HOST="identify-eu-west-1.acrcloud.com"
 ACRCLOUD_ACCESS_KEY="..."
 ACRCLOUD_ACCESS_SECRET="..."

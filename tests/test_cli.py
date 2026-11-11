@@ -4,7 +4,10 @@ import csv
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from soundtrackID import cli
+from soundtrackID.isolators import BaseMusicIsolator
 from soundtrackID.models import DetectionResult
 from tests.test_pipeline import FakeClassifier, ThrottledClient, fake_components
 
@@ -17,13 +20,45 @@ def _analyze(tmp_path, monkeypatch, *options, client=None):
         cli, "_classifier", lambda name, threshold: get_classifier(threshold)
     )
 
-    cli.main(
-        ["analyze", "film.mp4", "--no-isolation", "--output-dir", str(tmp_path)]
-        + list(options)
-    )
+    cli.main(["analyze", "film.mp4", "--output-dir", str(tmp_path)] + list(options))
 
     [run_dir] = tmp_path.iterdir()
     return run_dir
+
+
+class FakeDemucs(BaseMusicIsolator):
+    built = 0
+
+    def __init__(self):
+        FakeDemucs.built += 1
+
+    def isolate(self, audio, sample_rate):
+        return audio
+
+
+@pytest.mark.parametrize("options", [[], ["--no-isolation"]], ids=["default", "old"])
+def test_vocals_stay_unless_isolation_is_asked_for(tmp_path, monkeypatch, options):
+    """Demucs needs the demucs extra, which the documented install lacks; the
+    old --no-isolation is still accepted."""
+    monkeypatch.setattr("soundtrackID.isolators.DemucsIsolator", FakeDemucs)
+    FakeDemucs.built = 0
+
+    run_dir = _analyze(tmp_path, monkeypatch, *options)
+
+    assert FakeDemucs.built == 0
+    settings = json.loads((run_dir / "results.json").read_text())["settings"]
+    assert settings["isolation"] is False
+
+
+def test_isolation_removes_the_vocals_when_asked_for(tmp_path, monkeypatch):
+    monkeypatch.setattr("soundtrackID.isolators.DemucsIsolator", FakeDemucs)
+    FakeDemucs.built = 0
+
+    run_dir = _analyze(tmp_path, monkeypatch, "--isolation")
+
+    assert FakeDemucs.built == 1
+    settings = json.loads((run_dir / "results.json").read_text())["settings"]
+    assert settings["isolation"] is True
 
 
 def test_analyze_saves_a_run_like_the_app(tmp_path, monkeypatch):
