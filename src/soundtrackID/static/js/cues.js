@@ -72,35 +72,6 @@ function renderFilmHeader(film) {
     <div class="film-meta">${parts.join(' · ')}</div>`;
 }
 
-// ── Anachronism gate: a track released well after the film can't be original ──
-const ANACHRONISM_TOLERANCE = 3;   // years of slack (re-releases, tagging noise)
-function currentFilmYear() {
-  const y = currentResults && currentResults.film && currentResults.film.year;
-  const n = Number(y);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-function isAnachronistic(cue) {
-  const fy = currentFilmYear();
-  if (!fy) return false;
-  const enr = cue.enrichment || {};
-  // Primary signal: the work's real original (publication/composition) year from
-  // Wikidata. When we have it, it's authoritative.
-  if (enr.original_year) return enr.original_year > fy + ANACHRONISM_TOLERANCE;
-  // No original date → fall back to ACRCloud's release year (a reissue date, so
-  // only a hint) plus two cheap safeguards against false positives.
-  if (!(cue.release_year && cue.release_year > fy + ANACHRONISM_TOLERANCE)) return false;
-  // The composer died on/before the film year → the work provably predates it.
-  if (enr.composer_death_year && enr.composer_death_year <= fy) return false;
-  // It's by the film's own credited composer → it IS the original score.
-  const filmComposer = ((currentResults && currentResults.film && currentResults.film.music_composer) || '').toLowerCase();
-  if (filmComposer) {
-    const names = filmComposer.split(/,|&|\band\b/).map(s => s.trim()).filter(Boolean);
-    const hay = ((cue.artist || '') + ' ' + (enr.composer || '')).toLowerCase();
-    if (names.some(n => n && hay.includes(n))) return false;
-  }
-  return true;
-}
-
 const PROVIDER_LABELS = { acrcloud: 'ACRCloud', shazam: 'Shazam', audd: 'AudD', ensemble: 'Ensemble' };
 
 // Positive confidence signal from the ensemble: more providers agreeing = higher
@@ -211,25 +182,21 @@ function cueHasDetail(cue) {
   return (cue.votes && cue.votes.length > 1) || ((cue.enrichment || {}).authors || []).length > 0;
 }
 
-// Group cues into unique pieces (same normalized title + artist). Recurrences of
-// one work collapse into a single Tracks entry; the representative is the cue with
-// the strongest ensemble agreement (best identification of that piece).
-function trackKey(cue) {
-  const norm = s => (s || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  return norm(cue.title) + ' ' + norm(cue.artist);
-}
+// Group cues into unique pieces: which piece a cue is, the server works out
+// (track_key), as it does whether it postdates the film (anachronistic).
+// Recurrences of one work collapse into a single Tracks entry; the representative
+// is the cue with the strongest ensemble agreement (best identification of it).
 function groupCues(cues) {
   const map = new Map();
   cues.forEach(cue => {
     if (!cue.title) return;  // unidentified segments live only in the timeline
-    const k = trackKey(cue);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k).push(cue);
+    if (!map.has(cue.track_key)) map.set(cue.track_key, []);
+    map.get(cue.track_key).push(cue);
   });
   const agree = c => (c.agreement && c.agreement.count) || 0;
   return Array.from(map.values()).map(cs => ({
     rep: cs.reduce((b, c) => (agree(c) > agree(b) ? c : b), cs[0]),
     cues: cs,
-    anachronistic: cs.every(isAnachronistic),
+    anachronistic: cs.every(c => c.anachronistic),
   }));
 }

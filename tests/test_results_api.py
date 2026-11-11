@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from scipy.io import wavfile
 
 from soundtrackID import app as app_module
+from soundtrackID.derived import refresh
 from soundtrackID.detection import RateLimitError
 from soundtrackID.models import (
     ANALYSIS_KEYS,
@@ -54,7 +55,7 @@ def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
             "segment_id": "seg_001",
             "title": "New Title",
             "artist": "A",
-            "enrichment": {"composer": "Somebody", "original_year": 1916},
+            "enrichment": {"original_year": 1916},
         },
     ]
     r = client.post("/results/myrun", json={"cues": new_cues})
@@ -68,6 +69,57 @@ def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
     # Preserved, in the timeline's own file now.
     timeline = json.loads((run_dir / "timeline.json").read_text())
     assert timeline == {"waveform": {"samples": [1, 2, 3]}}
+
+
+def _run_with_cue(tmp_path, cue, film=None):
+    run_dir = tmp_path / "myrun"
+    run_dir.mkdir()
+    (run_dir / "results.json").write_text(json.dumps({"film": film, "cues": [cue]}))
+    return run_dir
+
+
+def test_a_saved_edit_comes_back_with_what_follows_from_it(tmp_path, monkeypatch):
+    """A work dated after the film by hand is marked as later than it, in the
+    answer (which the page shows) and on disk."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    cue = {"segment_id": "seg_001", "title": "Song", "artist": "A", "enrichment": {}}
+    run_dir = _run_with_cue(tmp_path, cue, film={"title": "F", "year": 1950})
+    edited = {**cue, "enrichment": {"original_year": 1975}}
+
+    r = client.post("/results/myrun", json={"cues": [edited]})
+
+    [answered] = r.json()["results"]["cues"]
+    [saved] = json.loads((run_dir / "results.json").read_text())["cues"]
+    assert answered["anachronistic"] is saved["anachronistic"] is True
+    assert answered["track_key"] == "song|a"
+
+
+def test_a_hand_edited_composer_keeps_the_co_authors_and_their_verdict(
+    tmp_path, monkeypatch
+):
+    """The life dates were the composer looked up, so they go; the lyricist
+    found before stays, and their death in 1993 keeps the work protected."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    enrichment = {
+        "composer": "Glenn Miller",
+        "composer_death_year": 1944,
+        "authors": [
+            {"name": "Glenn Miller", "roles": ["composer"], "death_year": 1944},
+            {"name": "Mitchell Parish", "roles": ["lyricist"], "death_year": 1993},
+        ],
+    }
+    cue = {"segment_id": "seg_001", "title": "Moonlight Serenade"}
+    _run_with_cue(tmp_path, {**cue, "enrichment": enrichment})
+    edited = {**cue, "enrichment": {**enrichment, "composer": "Someone Else"}}
+
+    r = client.post("/results/myrun", json={"cues": [edited]})
+
+    saved = r.json()["results"]["cues"][0]["enrichment"]
+    assert [a["name"] for a in saved["authors"]] == ["Someone Else", "Mitchell Parish"]
+    assert saved["authors"][0]["death_year"] is None
+    assert saved["composer_death_year"] is None
+    assert saved["authors_partial"] is True
+    assert (saved["latest_author_death_year"], saved["public_domain"]) == (1993, False)
 
 
 def test_an_edit_keeps_where_a_cue_is_and_whether_it_is_pending(tmp_path, monkeypatch):
@@ -172,7 +224,7 @@ def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch
     assert r.status_code == 200
     saved = json.loads((run_dir / "results.json").read_text())
     del saved["waveform"]  # in the run's timeline
-    assert r.json() == upgrade_results(saved)
+    assert r.json() == refresh(upgrade_results(saved))
     assert r.json()["version"] == RESULTS_VERSION
 
 

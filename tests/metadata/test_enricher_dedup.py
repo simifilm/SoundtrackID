@@ -61,12 +61,6 @@ def test_recurring_track_enriched_once(monkeypatch):
     assert cues[2]["enrichment"]["composer"] == "composer-of-La Cumparsita"
 
 
-def test_identity_key_normalizes_case_and_punctuation():
-    a = enricher._identity_key({"title": "La Cumparsita", "artist": "Matos Rodríguez"})
-    b = enricher._identity_key({"title": "la cumparsita", "artist": "matos rodríguez"})
-    assert a == b
-
-
 def test_progress_counts_unique_tracks(monkeypatch):
     counter = _CountingLookup()
     monkeypatch.setattr(enricher, "MusicLookup", lambda *_a, **_k: counter)

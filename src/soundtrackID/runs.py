@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 from scipy.io import wavfile
 
+from soundtrackID.derived import refresh
 from soundtrackID.models import TIMELINE_KEYS, MusicSegment, load_results, save_json
 
 # One lock per run folder, so the saves of a run in this process (an edit, the
@@ -56,10 +57,12 @@ class Run:
     # ── Results and timeline ──────────────────────────────────────────────
 
     def load(self) -> dict[str, Any]:
-        """The run's results, in the current format; reading changes nothing."""
-        return load_results(self.results_path)
+        """The run's results, in the current format, with what follows from them
+        as of now (derived); reading changes nothing on disk."""
+        return refresh(load_results(self.results_path))
 
     def save(self, results: dict[str, Any]) -> None:
+        """Save `results`, after working out, in place, what follows from them."""
         with self._lock():
             self._save(results)
 
@@ -92,7 +95,7 @@ class Run:
             timeline = self.timeline()
             if timeline:
                 save_json(timeline_path, timeline)
-        save_json(self.results_path, results)
+        save_json(self.results_path, refresh(results))
 
     def _lock(self) -> threading.Lock:
         key = self.path.resolve()

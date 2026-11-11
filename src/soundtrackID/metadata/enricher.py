@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Callable
 
 import httpx
 
+from soundtrackID.derived import track_key
 from soundtrackID.metadata.music import MusicLookup
 
 ProgressCb = Callable[..., None]
@@ -30,13 +30,13 @@ def enrich(
     cues = results.get("cues") or []
     identified = [c for c in cues if _has_isrc(c)]
 
-    # Group by track identity so each unique piece is enriched once. A cue that
-    # recurs later in the film (same title+artist) reuses the first lookup
-    # instead of re-querying MusicBrainz/Wikidata.
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    order: list[tuple[str, str]] = []
+    # Group by track (the app's Tracks view groups the same way) so each unique
+    # piece is enriched once. A cue that recurs later in the film reuses the
+    # first lookup instead of re-querying MusicBrainz/Wikidata.
+    groups: dict[str | None, list[dict[str, Any]]] = {}
+    order: list[str | None] = []
     for cue in identified:
-        key = _identity_key(cue)
+        key = track_key(cue)
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -63,15 +63,6 @@ def enrich(
     cb("music_done")
 
     return results
-
-
-def _identity_key(cue: dict[str, Any]) -> tuple[str, str]:
-    """Normalized (title, artist) — cues that share it are the same piece."""
-
-    def norm(s: Any) -> str:
-        return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (s or "").lower())).strip()
-
-    return (norm(cue.get("title")), norm(cue.get("artist")))
 
 
 def _has_isrc(cue: dict[str, Any]) -> bool:

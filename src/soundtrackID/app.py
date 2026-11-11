@@ -660,7 +660,9 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
 
     Only the `cues` array is replaced; film/waveform/etc. on disk are preserved.
     Each cue must be one of the run's; where it is and whether it is pending
-    (with its audio, which a resume reads and removes) stay as saved.
+    (with its audio, which a resume reads and removes) stay as saved. Returns the
+    results as saved, with what follows from the edit (derived), which the page
+    shows.
     """
     cues = payload.get("cues")
     if not isinstance(cues, list):
@@ -672,10 +674,10 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
         results["cues"] = apply_edits(results.get("cues") or [], cues)
 
     try:
-        run.update(edit)
+        results = run.update(edit)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return {"status": "saved", "cues": len(cues)}
+    return {"status": "saved", "cues": len(cues), "results": results}
 
 
 @app.get("/output/{video_name}/video")

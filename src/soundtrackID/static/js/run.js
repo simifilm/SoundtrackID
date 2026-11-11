@@ -131,7 +131,7 @@ function updateAnachronismToolbar(cues) {
   const toolbar = document.getElementById('results-toolbar');
   const label = document.getElementById('anachronism-toggle-label');
   if (!toolbar) return;
-  const n = cues.filter(isAnachronistic).length;
+  const n = cues.filter(c => c.anachronistic).length;
   if (n === 0) { toolbar.style.display = 'none'; return; }
   toolbar.style.display = 'flex';
   label.textContent = `Hide ${n} temporally implausible match${n === 1 ? '' : 'es'}`;

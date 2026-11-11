@@ -47,34 +47,16 @@ function trackFieldValue(cue, field) {
 }
 
 // Write an edited field to every cue of the group, then persist + re-render.
-// A hand-edited composer names a different person than the one that was looked
-// up, so their life dates - and every verdict derived from them - no longer apply
-// and are cleared rather than shown against the new name. Co-authors found earlier
-// (a lyricist, say) are kept: the edit says nothing about them. The author set is
-// partial from here on, so the rights verdict stays "Unverified" until the cue is
-// enriched again.
-function setComposerOverride(enr, name) {
-  const others = (enr.authors || []).filter(a => !(a.roles || []).includes('composer'));
-  enr.authors = name
-    ? [{ name, roles: ['composer'], birth_year: null, death_year: null, wikidata_url: null }, ...others]
-    : others;
-  enr.composer = name;
-  enr.composer_birth_year = null;
-  enr.composer_death_year = null;
-  enr.authors_partial = true;
-  enr.authors_complete = false;
-  enr.latest_author_death_year = null;
-  enr.public_domain = null;
-  enr.pd_presumption = null;
-}
-
+// What follows from the edit (a hand-edited composer's author entry and the
+// rights verdict, the track, whether it postdates the film) the server works out
+// when it saves; saveCues shows its answer.
 function applyTrackEdit(group, field, raw) {
   const val = String(raw).trim();
   group.cues.forEach(cue => {
     if (field === 'title') cue.title = val || null;
     else if (field === 'artist') cue.artist = val || null;
     else if (field === 'album') cue.album = val || null;
-    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; setComposerOverride(cue.enrichment, val || null); }
+    else if (field === 'composer') { cue.enrichment = cue.enrichment || {}; cue.enrichment.composer = val || null; }
     else if (field === 'date') { cue.enrichment = cue.enrichment || {}; cue.enrichment.original_year = val ? (parseInt(val, 10) || null) : null; }
   });
   persistAndRerender();
@@ -146,8 +128,11 @@ function rerenderResults() {
   updateAnachronismToolbar(cues);
 }
 
+let saveSeq = 0;  // the latest save: only its answer is shown
+
 async function saveCues() {
   if (!currentVideoName) return;
+  const seq = ++saveSeq;
   try {
     const r = await fetch(`/results/${encodeURIComponent(currentVideoName)}`, {
       method: 'POST',
@@ -155,6 +140,14 @@ async function saveCues() {
       body: JSON.stringify({ cues: currentResults.cues || [] }),
     });
     if (!r.ok) throw new Error('server returned ' + r.status);
+    const { results } = await r.json();
+    // The cues as the server saved them, with what follows from the edit. Copied
+    // onto the cues shown (an open cell editor holds them), unless another edit
+    // has been saved since; re-rendered once no cell is being edited.
+    if (seq !== saveSeq || !results) return;
+    const saved = new Map(results.cues.map(c => [c.segment_id, c]));
+    (currentResults.cues || []).forEach(c => Object.assign(c, saved.get(c.segment_id)));
+    if (!document.querySelector('input.cell-edit')) rerenderResults();
   } catch (err) {
     errorArea.textContent = 'Could not save changes: ' + err.message;
     errorArea.style.display = 'block';
@@ -187,7 +180,7 @@ function renderTracks(groups, videoName) {
 
 // Timeline (chronological): the raw detection sequence, minimal, for oversight.
 function buildTimelineRowHTML(cue, videoName) {
-  const anaBadge = isAnachronistic(cue)
+  const anaBadge = cue.anachronistic
     ? '<span class="anachronism-badge" title="Later than the film; likely a later work, not the original score.">⚠</span>'
     : '';
   return `
@@ -215,7 +208,7 @@ function renderTimeline(cues, videoName) {
     tr.dataset.segmentId = cue.segment_id;
     tr.style.cursor = 'pointer';
     tr.innerHTML = buildTimelineRowHTML(cue, videoName);
-    tr.classList.toggle('anachronistic', isAnachronistic(cue));
+    tr.classList.toggle('anachronistic', Boolean(cue.anachronistic));
     attachTimelineRow(tr, cue);
     resultsBody.appendChild(tr);
   });

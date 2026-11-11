@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
+from soundtrackID.derived import refresh
 from tests.ui.conftest import cue, make_run, open_run, saved
 
 pytestmark = pytest.mark.browser
@@ -36,7 +37,8 @@ def test_the_download_menu_offers_json_and_csv_of_the_same_results(page, run):
     name, content = download(page, menu.locator('[data-format="json"]').click)
 
     assert name == f"{run.name}_results.json"
-    assert json.loads(content) == saved(run)
+    # As the app shows them: with what follows from them as of now.
+    assert json.loads(content) == refresh(saved(run))
     expect(menu).to_be_hidden()
     page.locator("#download-btn").click()
     name, content = download(page, menu.locator('[data-format="csv"]').click)

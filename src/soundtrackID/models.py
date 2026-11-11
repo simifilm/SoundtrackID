@@ -10,8 +10,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from soundtrackID.metadata import rights
-
 
 @dataclass
 class AudioChunk:
@@ -82,7 +80,9 @@ MATCH_KEYS = (
 )
 
 # Then "enrichment", the composers (metadata.enricher), and "temporal_pick" when
-# the date re-ranking chose another candidate (temporal).
+# the date re-ranking chose another candidate (temporal). "anachronistic" and
+# "track_key" follow from the rest, worked out whenever a run is read or saved
+# (derived).
 
 # The fields a hand edit changes, and what each must be when it isn't None.
 EDITED_TYPES = {"title": str, "artist": str, "album": str, "enrichment": dict}
@@ -103,8 +103,9 @@ def apply_edits(saved: list[Cue], edited: list[Any]) -> list[Cue]:
     """A run's cues after a hand edit: `edited`, its cues as the user left them
     (corrected, some removed), checked against the `saved` ones. Where a cue is
     and whether it is pending stay the analysis's (ANALYSIS_KEYS), whatever the
-    edit says. A cue that isn't one of the run's, or an edited field of the wrong
-    type, raises ValueError."""
+    edit says. A composer changed by hand gets an author entry of their own
+    (_hand_edited_composer). A cue that isn't one of the run's, or an edited
+    field of the wrong type, raises ValueError."""
     by_id = {cue.get("segment_id"): cue for cue in saved}
     seen: set = set()
     cues = []
@@ -121,8 +122,40 @@ def apply_edits(saved: list[Cue], edited: list[Any]) -> list[Cue]:
         if wrong:
             raise ValueError(f"{segment_id}: {', '.join(wrong)} of the wrong type")
         original = by_id[segment_id]
-        cues.append({**cue, **{key: original.get(key) for key in ANALYSIS_KEYS}})
+        cue = {**cue, **{key: original.get(key) for key in ANALYSIS_KEYS}}
+        enrichment = cue.get("enrichment")
+        looked_up = (original.get("enrichment") or {}).get("composer")
+        if isinstance(enrichment, dict) and enrichment.get("composer") != looked_up:
+            _hand_edited_composer(enrichment)
+        cues.append(cue)
     return cues
+
+
+def _hand_edited_composer(enrichment: dict[str, Any]) -> None:
+    """A composer edited by hand is another person than the one looked up, so
+    that one's life dates no longer apply: the composer's author entry is
+    replaced by one without dates. Co-authors found before (a lyricist, say)
+    stay, as the edit says nothing about them, and the author set counts as
+    partial from now on. The rights verdict follows from the authors when the
+    results are saved (derived)."""
+    name = enrichment.get("composer") or None
+    others = [
+        author
+        for author in enrichment.get("authors") or []
+        if "composer" not in (author.get("roles") or [])
+    ]
+    composer = {
+        "name": name,
+        "roles": ["composer"],
+        "birth_year": None,
+        "death_year": None,
+        "wikidata_url": None,
+    }
+    enrichment["composer"] = name
+    enrichment["authors"] = ([composer] if name else []) + others
+    enrichment["composer_birth_year"] = None
+    enrichment["composer_death_year"] = None
+    enrichment["authors_partial"] = True
 
 
 @dataclass
@@ -212,26 +245,14 @@ def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_results(path: Path) -> dict[str, Any]:
-    """Read a results.json, upgraded to the current format, with the rights
-    verdicts of this year. A timeline saved in it is left out: runs.Run reads
-    it, and moves it to timeline.json when the results are saved."""
+    """Read a results.json, upgraded to the current format. A timeline saved in
+    it is left out: runs.Run reads it, and moves it to timeline.json when the
+    results are saved. What follows from the results (derived) is runs.Run's to
+    work out."""
     data = json.loads(path.read_text())
     for key in TIMELINE_KEYS:
         data.pop(key, None)
-    return _assess_rights(upgrade_results(data))
-
-
-def _assess_rights(data: dict[str, Any]) -> dict[str, Any]:
-    """Assess every cue's rights again, as of this year: the verdict changes
-    with the year, so the one saved may be out of date. An enrichment saved
-    without its authors keeps its verdict, with nothing to assess it from."""
-    year = rights.current_year()
-    for cue in data.get("cues") or []:
-        enrichment = cue.get("enrichment")
-        if isinstance(enrichment, dict) and "authors" in enrichment:
-            partial = bool(enrichment.get("authors_partial"))
-            enrichment.update(rights.verdict(enrichment["authors"], partial, year))
-    return data
+    return upgrade_results(data)
 
 
 def save_json(path: Path, data: dict[str, Any]) -> None:

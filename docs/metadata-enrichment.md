@@ -79,7 +79,9 @@ operative PD date is the composer's death year, not the director's.
 - `authors_partial` — the author list may be incomplete (the Wikidata search
   only finds the composer).
 - `original_year` — the work's first publication year (Wikidata), used to flag
-  music that postdates the film.
+  music that postdates the film: the cue's `anachronistic`, in the results and
+  the CSV, worked out (with the cue's `track_key`, which piece it is) whenever a
+  run is read or saved, also after a hand edit.
 
 In the results table this fills the **Composer** column (with `+N` when the work
 has co-authors), the **Date** column (`original_year`, else the provider's

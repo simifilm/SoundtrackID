@@ -1,5 +1,7 @@
 """Editing the identified tracks: corrections are saved to the run."""
 
+import re
+
 import pytest
 from playwright.sync_api import expect
 
@@ -67,7 +69,8 @@ def test_an_edited_field_is_saved(page, run, field, value, stored):
 
 
 def test_a_hand_edited_composer_drops_the_life_dates_found_before(page, run):
-    """They were someone else's; the lyricist found before stays."""
+    """They were someone else's; the lyricist found before stays, and their
+    death in 1993 keeps the work protected, which the page shows at once."""
     open_run(page)
 
     edit_and_save(page, "Moonlight Serenade", "composer", "Someone Else")
@@ -75,11 +78,28 @@ def test_a_hand_edited_composer_drops_the_life_dates_found_before(page, run):
     enrichment = saved(run)["cues"][0]["enrichment"]
     assert enrichment["composer"] == "Someone Else"
     assert enrichment["composer_death_year"] is None
-    assert enrichment["public_domain"] is None
+    assert enrichment["public_domain"] is False
     names = [a["name"] for a in enrichment["authors"]]
     assert names == ["Someone Else", "Mitchell Parish"]
     row = page.locator("#tracks-body tr", has_text="Moonlight Serenade")
-    expect(row.locator(".rights-pill")).to_have_text("Unverified")
+    expect(row.locator(".rights-pill")).to_have_text("Protected")
+
+
+def test_a_date_after_the_film_marks_the_track_as_later(page, runs):
+    """Whether a track postdates the film follows from its date: the server
+    works it out when the edit is saved, and the page shows it."""
+    make_run(
+        runs,
+        [cue(1, "Moonlight Serenade", enrichment=dict(COMPOSER))],
+        film={"title": "Film", "year": 1950},
+    )
+    open_run(page)
+    row = page.locator("#tracks-body tr", has_text="Moonlight Serenade")
+    expect(row).not_to_have_class(re.compile(r"\banachronistic\b"))
+
+    edit_and_save(page, "Moonlight Serenade", "date", "1975")
+
+    expect(row).to_have_class(re.compile(r"\banachronistic\b"))
 
 
 def test_escape_keeps_the_value(page, run):
