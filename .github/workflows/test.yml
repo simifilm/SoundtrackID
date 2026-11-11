@@ -1,0 +1,29 @@
+# Runs ruff and the Python tests on every push and pull request, except for
+# main: build.yml calls this workflow for pull requests to main
+
+name: Test
+
+on:
+  push:
+  pull_request:
+    branches-ignore: [main] # the target branch, tested by build.yml
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # The tests don't need the ONNX model, so this job skips Git LFS.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Lint
+        run: uv run --group dev ruff check
+      - name: Check formatting
+        run: uv run --group dev ruff format --check
+      - name: Run tests
+        run: uv run --extra app --group dev pytest

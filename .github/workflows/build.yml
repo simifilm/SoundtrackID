@@ -34,20 +34,9 @@ permissions:
   contents: read
 
 jobs:
-  # The tests don't need the ONNX model, so this job skips Git LFS.
+  # Ruff and the Python tests, from test.yml.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.13"
-      - name: Lint
-        run: uv run --group dev ruff check
-      - name: Check formatting
-        run: uv run --group dev ruff format --check
-      - name: Run tests
-        run: uv run --extra app --group dev pytest
+    uses: ./.github/workflows/test.yml
 
   # On a tag push, takes the version from the tag (v0.3.0 -> 0.3.0). Test
   # builds leave it empty and keep the version in tauri.conf.json.
