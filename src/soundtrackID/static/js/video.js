@@ -139,3 +139,15 @@ filmstripCanvas.addEventListener('click', e => {
   const t = ((e.clientX - rect.left) / rect.width) * wfDuration;
   seekVideo(t);
 });
+
+// Space plays / pauses the video from anywhere on the page, except while typing
+// in a field or when the player has focus (its own controls handle Space then).
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || !hasVideo) return;
+  const el = e.target;
+  if (el === videoEl || el.isContentEditable || el.closest('input, textarea, select')) return;
+  e.preventDefault();   // no page scroll, no click on a focused button
+  if (e.repeat) return;
+  if (videoEl.paused) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
+  else videoEl.pause();
+});
