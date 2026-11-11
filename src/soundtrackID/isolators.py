@@ -2,7 +2,6 @@
 
 import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -127,44 +126,3 @@ class DemucsIsolator(BaseMusicIsolator):
             music_np = music_np.mean(axis=0)
 
         return music_np.astype(np.float32)
-
-
-if __name__ == "__main__":
-    import sys
-
-    from scipy.io import wavfile
-
-    input_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("output/segments")
-    output_dir = Path("output/segments_clean")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Find all WAV files in input directory
-    wav_files = sorted(input_dir.glob("*.wav"))
-    if not wav_files:
-        print(f"No WAV files found in {input_dir}")
-        sys.exit(1)
-
-    print(f"Found {len(wav_files)} segment(s) in {input_dir}")
-    isolator = DemucsIsolator()
-
-    print("\nProcessing segments...")
-    for wav_path in wav_files:
-        print(f"\n  Processing: {wav_path.name}")
-
-        # Read input audio
-        sample_rate, audio = wavfile.read(wav_path)
-        if audio.dtype == np.int16:
-            audio = audio.astype(np.float32) / 32767.0
-        elif audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / np.iinfo(audio.dtype).max
-
-        # Isolate music
-        music = isolator.isolate(audio, sample_rate)
-
-        # Export cleaned segment
-        output_path = output_dir / wav_path.name.replace("segment_", "clean_")
-        audio_int16 = (np.clip(music, -1.0, 1.0) * 32767).astype(np.int16)
-        wavfile.write(output_path, sample_rate, audio_int16)
-        print(f"    -> {output_path.name}")
-
-    print(f"\nExported {len(wav_files)} cleaned segment(s) to {output_dir}/")

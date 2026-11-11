@@ -126,7 +126,7 @@ class Run:
         audio_file = f"segments/{segment_id}.wav"
         path = self.path / audio_file
         path.parent.mkdir(exist_ok=True)
-        wavfile.write(path, clip.sample_rate, _to_int16(clip.audio))
+        clip.write_wav(path)
         return audio_file
 
     def read_audio(self, audio_file: str) -> MusicSegment | None:
@@ -158,7 +158,3 @@ class Run:
         segments = (self.path / "segments").resolve()
         path = (self.path / audio_file).resolve()
         return path if path.parent == segments else None
-
-
-def _to_int16(audio: np.ndarray) -> np.ndarray:
-    return (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)

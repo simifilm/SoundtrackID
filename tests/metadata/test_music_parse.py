@@ -9,7 +9,6 @@ from soundtrackID.metadata.music import (
     _normalize_name,
     _parse_life_years,
     _parse_wikidata_composer,
-    _parse_year,
     _score_work_authors,
 )
 
@@ -100,12 +99,6 @@ def test_parse_life_years():
     }
     assert _parse_life_years(both) == (1891, 1945)
     assert _parse_life_years({"results": {"bindings": []}}) == (None, None)
-
-
-def test_parse_year_variants():
-    assert _parse_year("1827-03-26") == 1827
-    assert _parse_year(None) is None
-    assert _parse_year("not a year") is None
 
 
 # ── Birth/death resolution: people only ───────────────────────────────────

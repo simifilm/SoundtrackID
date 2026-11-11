@@ -231,20 +231,27 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── main.py                 Starts the web server
 │   ├── app.py                  FastAPI endpoints: upload, film lookup, analysis, history
 │   ├── cli.py                  Command line: analyze a video, resume a run
+│   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
 │   ├── analysis.py             The analysis the app and the CLI share, and resume
 │   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models and the results.json output format
+│   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues
+│   ├── derived.py              What follows from the results: rights verdict, anachronisms
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks
 │   ├── classifiers.py          Scores each chunk for music (ONNX or HuggingFace)
-│   ├── aggregator.py           Merges music chunks into cues, writes segment .wav files
+│   ├── slots.py                Turns the overlapping chunks' scores into music / no-music spans
+│   ├── aggregator.py           Merges music chunks into the windows sent for identification
 │   ├── isolators.py            Optional Demucs vocal isolation
 │   ├── detection.py            Identification clients (ACRCloud, Shazam, AudD) and ensemble voting
+│   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
+│   ├── mava_export.py          The MAVA export (TSV and mapping)
 │   ├── metadata/               Film and composer enrichment
 │   │   ├── enricher.py         Looks up the composers of a run's cues
 │   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
 │   │   ├── music.py            Composer lookup: MusicBrainz → Wikidata
+│   │   ├── rights.py           Public domain or protected, from the authors' life years
 │   │   └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
 │   └── static/                 The web UI
 │       ├── index.html          The page's markup

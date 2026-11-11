@@ -9,9 +9,13 @@ import threading
 from abc import ABC, abstractmethod
 
 import numpy as np
-from scipy.io import wavfile
 
-from soundtrackID.models import MATCH_KEYS, DetectionResult, MusicSegment
+from soundtrackID.models import (
+    MATCH_KEYS,
+    DetectionResult,
+    MusicSegment,
+    parse_year,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,14 +80,6 @@ _CHECK_KEYS = "check them under Settings → API keys (the CLI reads .env.dev)"
 _ACRCLOUD_KEY_ERRORS = (3001, 3014)
 
 
-def _extract_year(value) -> int | None:
-    """Pull a 4-digit year out of a date string / year field (e.g. '2022-05-01')."""
-    if value is None:
-        return None
-    m = re.search(r"\d{4}", str(value))
-    return int(m.group()) if m else None
-
-
 def _parse_acr_candidate(m: dict) -> dict:
     """Parse one ACRCloud music candidate into a flat cue-shaped dict."""
     ext = m.get("external_metadata", {})
@@ -92,7 +88,7 @@ def _parse_acr_candidate(m: dict) -> dict:
     mb = ext.get("musicbrainz")
     mb_id = mb[0].get("track", {}).get("id") if isinstance(mb, list) and mb else None
     genres = m.get("genres") or []
-    release_year = _extract_year(m.get("release_date")) or _extract_year(
+    release_year = parse_year(m.get("release_date")) or parse_year(
         m.get("album", {}).get("release_date")
     )
     return {
@@ -209,8 +205,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
         """
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
-            audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(temp_path, segment.sample_rate, audio_int16)
+            segment.write_wav(temp_path)
 
         import subprocess
 
@@ -271,10 +266,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             )
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 path = f.name
-                audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(
-                    np.int16
-                )
-                wavfile.write(path, segment.sample_rate, audio_int16)
+                segment.write_wav(path)
             try:
                 return await shazam.recognize(path)
             finally:
@@ -304,7 +296,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
                 album = meta[0].get("text")
             for item in meta:
                 if str(item.get("title", "")).strip().lower() == "released":
-                    release_year = _extract_year(item.get("text"))
+                    release_year = parse_year(item.get("text"))
                     break
         youtube_link = next(
             (s.get("youtubeurl") for s in sections if s.get("type") == "VIDEO"), None
@@ -408,8 +400,7 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
-            audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(temp_path, segment.sample_rate, audio_int16)
+            segment.write_wav(temp_path)
 
         duration = max(1, int(round(len(segment.audio) / segment.sample_rate)))
         try:
@@ -488,8 +479,7 @@ class AudDDetectionClient(BaseMusicDetectionClient):
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
-            audio_int16 = (np.clip(segment.audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(temp_path, segment.sample_rate, audio_int16)
+            segment.write_wav(temp_path)
 
         try:
             with open(temp_path, "rb") as fh:
@@ -559,7 +549,7 @@ class AudDDetectionClient(BaseMusicDetectionClient):
             provider="audd",
             metadata={
                 "album": result.get("album"),
-                "release_year": _extract_year(result.get("release_date")),
+                "release_year": parse_year(result.get("release_date")),
                 "isrc": isrc,
                 "genre": None,
                 "song_link": result.get("song_link"),
@@ -800,12 +790,9 @@ if __name__ == "__main__":
 
     from scipy.io import wavfile as scipy_wavfile
 
-    try:
-        from dotenv import load_dotenv
+    from soundtrackID.envfiles import load_env_files
 
-        load_dotenv()
-    except ImportError:
-        pass
+    load_env_files()  # .env.dev, then .env, like the app and the CLI
 
     parser = argparse.ArgumentParser(
         description="Identify music in one or more WAV files via Shazam or ACRCloud."

@@ -3,12 +3,14 @@
 import csv
 import io
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.io import wavfile
 
 
 @dataclass
@@ -33,6 +35,12 @@ class MusicSegment:
     start_time: float
     end_time: float
     sample_rate: int
+
+    def write_wav(self, path: str | Path) -> None:
+        """The clip as a 16-bit WAV file, as the providers get it and a run
+        keeps it for a resume; louder than full scale is clipped."""
+        pcm = (np.clip(self.audio, -1.0, 1.0) * 32767).astype(np.int16)
+        wavfile.write(path, self.sample_rate, pcm)
 
 
 @dataclass
@@ -97,6 +105,18 @@ def match_fields(det: DetectionResult | None) -> dict[str, Any]:
     fields = {key: det.metadata.get(key) for key in MATCH_KEYS}
     fields.update(provider=det.provider, title=det.title, artist=det.artist)
     return fields
+
+
+def parse_year(value: Any) -> int | None:
+    """The year of a date or a year, as the providers, TMDb, Wikidata,
+    MusicBrainz and MP4 tags give it (e.g. "1950-08-04" or 1950): a number
+    as it is, else the first four digits of a string."""
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        return None
+    m = re.search(r"\d{4}", value)
+    return int(m.group()) if m else None
 
 
 def apply_edits(saved: list[Cue], edited: list[Any]) -> list[Cue]:
@@ -191,12 +211,6 @@ class ResultsOutput:
             "classification": self.classification,
             "classification_windows": self.classification_windows,
         }
-
-    def to_json(self, indent: int = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    def to_csv(self) -> str:
-        return results_to_csv(self.to_dict())
 
 
 # Format of results.json. Runs outlive app versions, so older files are upgraded

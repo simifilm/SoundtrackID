@@ -10,10 +10,11 @@ from typing import Any, Literal
 
 import httpx
 
+from soundtrackID.metadata import USER_AGENT, escape_sparql_string
 from soundtrackID.metadata.rights import current_year, verdict
+from soundtrackID.models import parse_year
 
 MB_BASE = "https://musicbrainz.org/ws/2"
-MB_USER_AGENT = "SoundtrackID/0.1 (simon@simifilm.ch)"
 MB_RATE_LIMIT_SEC = 1.0
 WD_BASE = "https://query.wikidata.org/sparql"
 
@@ -184,8 +185,8 @@ class MusicLookup:
                 # Life dates only for people: a band's begin/end are founding and
                 # break-up, and copyright lies with its individual members.
                 if kind == "Person":
-                    birth = _parse_year(_artist_birth(artist))
-                    death = _parse_year(_artist_death(artist))
+                    birth = parse_year(_artist_birth(artist))
+                    death = parse_year(_artist_death(artist))
                 # Date missing or type unknown
                 # Wikidata has birth/death only for people
                 if kind in ("Person", None) and (birth is None or death is None):
@@ -283,7 +284,7 @@ class MusicLookup:
     def _mb_get(self, path: str, params: dict | None = None) -> dict | None:
         full = {"fmt": "json", **(params or {})}
         url = f"{MB_BASE}{path}"
-        headers = {"user-agent": MB_USER_AGENT, "accept": "application/json"}
+        headers = {"user-agent": USER_AGENT, "accept": "application/json"}
         # The /work search endpoint is much slower than direct lookups and, under
         # load, MusicBrainz throttles with 503s — so use a generous timeout and
         # retry once on timeout/503 rather than silently yielding no result.
@@ -347,7 +348,7 @@ class MusicLookup:
         year = None
         if data:
             for b in (data.get("results") or {}).get("bindings") or []:
-                y = _parse_year((b.get("date") or {}).get("value"))
+                y = parse_year((b.get("date") or {}).get("value"))
                 if y:
                     year = y  # ORDER BY ASC → first bound date is the earliest
                     break
@@ -362,7 +363,7 @@ class MusicLookup:
                 params={"query": sparql, "format": "json"},
                 headers={
                     "accept": "application/sparql-results+json",
-                    "user-agent": MB_USER_AGENT,
+                    "user-agent": USER_AGENT,
                 },
                 timeout=15.0,
             )
@@ -456,24 +457,13 @@ def _artist_death(artist: dict) -> str | None:
     return life.get("end")
 
 
-def _parse_year(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if not isinstance(value, str):
-        return None
-    m = re.search(r"\d{4}", value)
-    return int(m.group()) if m else None
-
-
 def _parse_life_years(data: dict) -> tuple[int | None, int | None]:
     """First (birth, death) years found in Wikidata result rows."""
     bindings = (data.get("results") or {}).get("bindings") or []
 
     def first(key: str) -> int | None:
         for b in bindings:
-            year = _parse_year((b.get(key) or {}).get("value"))
+            year = parse_year((b.get(key) or {}).get("value"))
             if year:
                 return year
         return None
@@ -490,8 +480,8 @@ def _parse_wikidata_composer(data: dict) -> ComposerInfo | None:
     if not composer:
         return None
     work = (b.get("workLabel") or {}).get("value")
-    birth = _parse_year((b.get("birth") or {}).get("value"))
-    death = _parse_year((b.get("death") or {}).get("value"))
+    birth = parse_year((b.get("birth") or {}).get("value"))
+    death = parse_year((b.get("death") or {}).get("value"))
     return ComposerInfo(
         composer=composer,
         composer_birth_year=birth,
@@ -517,14 +507,10 @@ def _parse_wikidata_composer(data: dict) -> ComposerInfo | None:
     )
 
 
-def _escape_sparql_string(s: str) -> str:
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _sparql_person_life_by_mbid(mb_artist_id: str) -> str:
     """Find birth (P569) and death (P570) for the person identified by MusicBrainz
     artist ID — avoids name collisions."""
-    safe = _escape_sparql_string(mb_artist_id)
+    safe = escape_sparql_string(mb_artist_id)
     return f"""
 SELECT ?birth ?death WHERE {{
   ?person wdt:P434 "{safe}".
@@ -539,8 +525,8 @@ def _sparql_work_year_by_title_people(title: str, names: list[str]) -> str:
     """Earliest date of a musical work with `title`, whose composer (P86) or
     performer (P175) is one of `names`. Constraining by the people keeps the match
     fast and unambiguous."""
-    safe_title = _escape_sparql_string(title)
-    values = " ".join(f'"{_escape_sparql_string(n)}"@en' for n in names)
+    safe_title = escape_sparql_string(title)
+    values = " ".join(f'"{escape_sparql_string(n)}"@en' for n in names)
     return f"""
 SELECT ?date WHERE {{
   VALUES ?pname {{ {values} }}
@@ -559,8 +545,8 @@ LIMIT 3
 
 
 def _sparql_work_by_title_artist(title: str, artist: str) -> str:
-    safe_title = _escape_sparql_string(title)
-    safe_artist = _escape_sparql_string(artist)
+    safe_title = escape_sparql_string(title)
+    safe_artist = escape_sparql_string(artist)
     return f"""
 SELECT ?workLabel ?composerLabel ?composer ?birth ?death WHERE {{
   ?work wdt:P31/wdt:P279* wd:Q207628;

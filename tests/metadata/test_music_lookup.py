@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from soundtrackID.metadata import music
-from soundtrackID.metadata.music import MB_USER_AGENT, MusicLookup
+from soundtrackID.metadata import USER_AGENT, music
+from soundtrackID.metadata.music import MusicLookup
 from tests.metadata.mock_http import mock_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -94,7 +94,7 @@ def test_isrc_chain_resolves_the_composer():
     ]
     for r in mb:
         assert r.url.params["fmt"] == "json"
-        assert r.headers["user-agent"] == MB_USER_AGENT
+        assert r.headers["user-agent"] == USER_AGENT
 
 
 def test_repeated_track_is_served_from_the_cache():

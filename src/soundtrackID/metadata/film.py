@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+from soundtrackID.metadata import USER_AGENT, escape_sparql_string
+from soundtrackID.models import parse_year
 
 log = logging.getLogger(__name__)
 
@@ -159,7 +161,7 @@ class FilmLookup:
             if director_person_id:
                 person = self._tmdb_get(f"/3/person/{director_person_id}")
                 if person:
-                    info.director_death_year = _parse_year(person.get("deathday"))
+                    info.director_death_year = parse_year(person.get("deathday"))
 
         return info
 
@@ -217,7 +219,7 @@ class FilmLookup:
             params={"query": sparql, "format": "json"},
             headers={
                 "accept": "application/sparql-results+json",
-                "user-agent": "SoundtrackID/0.1 (simon@simifilm.ch)",
+                "user-agent": USER_AGENT,
             },
         )
         if r.status_code != 200:
@@ -267,7 +269,7 @@ def lookup_film(
 def _parse_tmdb_movie(movie: dict, credits: dict) -> FilmInfo:
     info = FilmInfo()
     info.title = movie.get("title") or movie.get("original_title")
-    info.year = _parse_year(movie.get("release_date"))
+    info.year = parse_year(movie.get("release_date"))
     info.imdb_id = movie.get("imdb_id")
     crew = (credits or {}).get("crew") or []
     director = next((c for c in crew if c.get("job") == "Director"), None)
@@ -298,9 +300,9 @@ def _parse_wikidata_film(data: dict) -> FilmInfo | None:
     b = bindings[0]
     info = FilmInfo()
     info.title = _wd_value(b, "filmLabel")
-    info.year = _parse_year(_wd_value(b, "pubdate"))
+    info.year = parse_year(_wd_value(b, "pubdate"))
     info.director = _wd_value(b, "directorLabel")
-    info.director_death_year = _parse_year(_wd_value(b, "death"))
+    info.director_death_year = parse_year(_wd_value(b, "death"))
     imdb = _wd_value(b, "imdb")
     if imdb and imdb.startswith("tt"):
         info.imdb_id = imdb
@@ -323,7 +325,7 @@ def _parse_imdbapi_title(data: dict) -> FilmInfo | None:
     if isinstance(year, int):
         info.year = year
     elif isinstance(year, str):
-        info.year = _parse_year(year)
+        info.year = parse_year(year)
     imdb = data.get("id")
     if isinstance(imdb, str) and imdb.startswith("tt"):
         info.imdb_id = imdb
@@ -336,25 +338,14 @@ def _parse_imdbapi_title(data: dict) -> FilmInfo | None:
             if isinstance(death, int):
                 info.director_death_year = death
             elif isinstance(death, str):
-                info.director_death_year = _parse_year(death)
+                info.director_death_year = parse_year(death)
     return info
-
-
-def _parse_year(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if not isinstance(value, str):
-        return None
-    m = re.search(r"\d{4}", value)
-    return int(m.group()) if m else None
 
 
 def _sparql_film_by_imdb(imdb_id: str) -> str:
     return f"""
 SELECT ?filmLabel ?pubdate ?director ?directorLabel ?death ?imdb WHERE {{
-  ?film wdt:P345 "{imdb_id}".
+  ?film wdt:P345 "{escape_sparql_string(imdb_id)}".
   OPTIONAL {{ ?film wdt:P577 ?pubdate. }}
   OPTIONAL {{
     ?film wdt:P57 ?director.
@@ -368,7 +359,7 @@ LIMIT 1
 
 
 def _sparql_film_by_title(title: str, year: int | None) -> str:
-    safe_title = title.replace('"', '\\"')
+    safe_title = escape_sparql_string(title)
     year_clause = ""
     if year:
         year_clause = f"FILTER(YEAR(?pubdate) = {year})"

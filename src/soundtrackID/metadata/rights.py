@@ -2,7 +2,8 @@
 
 The verdict depends on the year it is made in: a work whose last author died in
 1956 is protected in 2026 and in the public domain from 2027. So it is made
-again whenever a run is read (models.load_results), not kept from the lookup.
+again whenever a run is read or saved (derived.refresh), not kept from the
+lookup.
 """
 
 from datetime import date

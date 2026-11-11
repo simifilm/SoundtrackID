@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 
+from soundtrackID.metadata import USER_AGENT
 from soundtrackID.metadata.film import FilmLookup
 from tests.metadata.mock_http import mock_client
 
@@ -87,6 +88,7 @@ def test_without_tmdb_credentials_wikidata_is_asked():
     }
     assert _hosts(requests) == {"query.wikidata.org"}
     assert 'wdt:P345 "tt0043014"' in requests[0].url.params["query"]
+    assert requests[0].headers["user-agent"] == USER_AGENT
 
 
 def test_wikidata_fills_only_what_tmdb_lacks():

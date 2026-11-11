@@ -104,25 +104,9 @@ a = Analysis(
         ("LICENSE", "."),
     ] + shazamio_datas + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
     hiddenimports=[
-        # soundtrackID modules
-        "soundtrackID",
-        "soundtrackID.app",
-        "soundtrackID.analysis",
-        "soundtrackID.pipeline",
-        "soundtrackID.classifiers",
-        "soundtrackID.detection",
-        "soundtrackID.aggregator",
-        "soundtrackID.chunker",
-        "soundtrackID.loaders",
-        "soundtrackID.isolators",
-        "soundtrackID.models",
-        "soundtrackID.thumbnails",
+        # soundtrackID's own modules, all of them, so none can be forgotten here
+        *collect_submodules("soundtrackID"),
         # metadata enrichment
-        "soundtrackID.metadata",
-        "soundtrackID.metadata.enricher",
-        "soundtrackID.metadata.film",
-        "soundtrackID.metadata.music",
-        "soundtrackID.metadata.mp4_tags",
         "httpx",
         "mutagen",
         "dotenv",

@@ -8,9 +8,10 @@ caller can still proceed with manual entry.
 from __future__ import annotations
 
 import plistlib
-import re
 from pathlib import Path
 from typing import Any
+
+from soundtrackID.models import parse_year
 
 
 def read_mp4_tags(path: Path) -> dict[str, Any]:
@@ -31,7 +32,7 @@ def read_mp4_tags(path: Path) -> dict[str, Any]:
         out["title"] = title
 
     if day := _first_str(tags.get("\xa9day")):
-        if year := _extract_year(day):
+        if year := parse_year(day):
             out["year"] = year
 
     itunmovi = tags.get("----:com.apple.iTunes:iTunMOVI")
@@ -66,11 +67,6 @@ def _first_str(value: Any) -> str | None:
         except UnicodeDecodeError:
             return None
     return str(value).strip() or None
-
-
-def _extract_year(day: str) -> int | None:
-    m = re.search(r"\d{4}", day)
-    return int(m.group()) if m else None
 
 
 def _parse_itunmovi_director(raw: Any) -> str | None:

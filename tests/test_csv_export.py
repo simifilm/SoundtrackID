@@ -1,6 +1,6 @@
 """Tests for the CSV export.
 
-Covers models.results_to_csv, ResultsOutput.to_csv (the CLI's --csv) and
+Covers models.results_to_csv, which the CLI's --csv also writes with, and
 GET /output/{video_name}/csv (the UI's download).
 """
 
@@ -11,7 +11,7 @@ import json
 from fastapi.testclient import TestClient
 
 from soundtrackID import app as app_module
-from soundtrackID.models import ResultsOutput, results_to_csv
+from soundtrackID.models import results_to_csv
 
 client = TestClient(app_module.app)
 
@@ -89,16 +89,6 @@ def test_csv_has_a_column_for_every_field_of_the_json():
     assert authors == CUES[0]["enrichment"]["authors"]
     # Fields the unidentified cue lacks or has empty stay empty.
     assert (unidentified["title"], unidentified["enrichment.composer"]) == ("", "")
-
-
-def test_pipeline_results_as_csv():
-    """What the CLI writes with --csv."""
-    cue = {"segment_id": "seg_001", "title": "T", "artist": "A", "album": "Al"}
-    results = ResultsOutput("film.mp4", [cue])
-
-    [row] = _rows(results.to_csv())
-
-    assert (row["segment_id"], row["title"], row["album"]) == ("seg_001", "T", "Al")
 
 
 def test_download_holds_the_saved_results(tmp_path, monkeypatch):
