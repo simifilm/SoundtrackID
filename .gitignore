@@ -148,6 +148,7 @@ activemq-data/
 
 # Environments
 .env
+.env.dev
 .envrc
 .venv
 env/
@@ -214,7 +215,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-tests/test_video.mp4
 output/
 .DS_Store
 

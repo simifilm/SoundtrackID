@@ -1,22 +1,27 @@
 """Music classification."""
 
+import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
-from soundtrackID.models import AudioChunk, ClassificationResult
+from soundtrackID.models import AudioChunk
 
 
 class BaseClassifier(ABC):
+    labels: list[str]
+    window_duration: float
+
     @abstractmethod
-    def classify(self, chunk: AudioChunk) -> ClassificationResult:
-        """Classify an audio chunk for music presence."""
+    def classify(self, chunk: AudioChunk) -> tuple[float, NDArray[np.float32]]:
+        """How likely `chunk` is music, and the probability of each of `labels`.
+
+        Whether that is music enough is the run's call (its threshold), so
+        runs at different thresholds can share the loaded model.
+        """
         ...
-
-
-class DummyClassifier(BaseClassifier):
-    def classify(self, chunk: AudioChunk) -> ClassificationResult:
-        return ClassificationResult(chunk=chunk, is_music=True, confidence=1.0)
 
 
 class OnnxClassifier(BaseClassifier):
@@ -37,7 +42,6 @@ class OnnxClassifier(BaseClassifier):
         self,
         model_dir: str,
         music_labels: list[str] | None = None,
-        threshold: float = 0.5,
     ):
         try:
             import onnxruntime as ort
@@ -48,7 +52,6 @@ class OnnxClassifier(BaseClassifier):
             ) from e
 
         self.music_labels = music_labels or ["Music"]
-        self.threshold = threshold
         self.session = ort.InferenceSession(
             f"{model_dir}/model.onnx",
             providers=["CPUExecutionProvider"],
@@ -95,18 +98,12 @@ class OnnxClassifier(BaseClassifier):
         log_mel = (log_mel - self._MEAN) / (self._STD * 2)
         return log_mel[np.newaxis].astype(np.float32)  # (1, 1024, 128)
 
-    def classify(self, chunk: AudioChunk) -> ClassificationResult:
+    def classify(self, chunk: AudioChunk) -> tuple[float, NDArray[np.float32]]:
         features = self._extract_features(chunk.data, chunk.sample_rate)
         logits = self.session.run(None, {"input_values": features})[0]
         exp = np.exp(logits - logits.max(axis=-1, keepdims=True))
         probs = exp / exp.sum(axis=-1, keepdims=True)
-        confidence = float(probs[0, self.music_indices].sum())
-        return ClassificationResult(
-            chunk=chunk,
-            is_music=confidence > self.threshold,
-            confidence=confidence,
-            probs=probs[0],
-        )
+        return float(probs[0, self.music_indices].sum()), probs[0]
 
 
 class HuggingFaceClassifier(BaseClassifier):
@@ -120,7 +117,6 @@ class HuggingFaceClassifier(BaseClassifier):
         self,
         model_id: str = "MIT/ast-finetuned-audioset-10-10-0.4593",
         music_labels: list[str] | None = None,
-        threshold: float = 0.5,
         device: str = "cpu",
     ):
         try:
@@ -137,7 +133,6 @@ class HuggingFaceClassifier(BaseClassifier):
 
         self.model_id = model_id
         self.music_labels = music_labels or ["Music"]
-        self.threshold = threshold
         self.device = device
         self._torch = torch
 
@@ -157,8 +152,7 @@ class HuggingFaceClassifier(BaseClassifier):
         id2label = self.model.config.id2label
         self.labels = [id2label[i] for i in range(len(id2label))]
 
-    def classify(self, chunk: AudioChunk) -> ClassificationResult:
-        """Classify an audio chunk for music presence."""
+    def classify(self, chunk: AudioChunk) -> tuple[float, NDArray[np.float32]]:
         # Resample if needed (most models expect 16kHz)
         audio = self._resample(
             chunk.data, chunk.sample_rate, self.processor.sampling_rate
@@ -175,15 +169,7 @@ class HuggingFaceClassifier(BaseClassifier):
             probs = self._torch.softmax(logits, dim=-1)
 
         # Sum probabilities of music-related labels
-        confidence = probs[0, self.music_indices].sum().item()
-        is_music = confidence > self.threshold
-
-        return ClassificationResult(
-            chunk=chunk,
-            is_music=is_music,
-            confidence=confidence,
-            probs=probs[0].cpu().numpy(),
-        )
+        return probs[0, self.music_indices].sum().item(), probs[0].cpu().numpy()
 
     def _resample(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
         """Resample audio to target sample rate."""
@@ -199,27 +185,17 @@ class HuggingFaceClassifier(BaseClassifier):
         return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
 
 
-if __name__ == "__main__":
-    import sys
-    import warnings
+# The ONNX export of the AST model, from source (assets/ast_model, Git LFS).
+_MODEL_DIR = Path(__file__).parents[2] / "assets" / "ast_model"
 
-    import librosa
 
-    warnings.filterwarnings("ignore")
-
-    path = sys.argv[1] if len(sys.argv) > 1 else "tests/test_video.mp4"
-    classifier = HuggingFaceClassifier(music_labels=["Music"], threshold=0.3)
-
-    for offset in range(0, 240, 10):
-        try:
-            audio, sr = librosa.load(path, sr=16000, duration=10.0, offset=offset)
-        except Exception:
-            break
-        chunk = AudioChunk(
-            data=audio, start_time=offset, end_time=offset + 10, sample_rate=sr
-        )
-        result = classifier.classify(chunk)
-        status = "YES" if result.is_music else "NO"
-        print(
-            f"{offset:3d}-{offset + 10:3d}s: {status}  ({result.confidence * 100:.1f}%)"
-        )
+def load_classifier(hf: bool = False) -> BaseClassifier:
+    """The music classifier the app and the CLI analyze with: the ONNX export,
+    or the HuggingFace original when `hf` asks for it or the export is missing.
+    The installed app bundles only the export."""
+    if getattr(sys, "frozen", False):
+        model_dir = Path(sys._MEIPASS) / "ast_model"  # pyright: ignore[reportAttributeAccessIssue]
+        return OnnxClassifier(model_dir=str(model_dir), music_labels=["Music"])
+    if hf or not _MODEL_DIR.exists():
+        return HuggingFaceClassifier(music_labels=["Music"])
+    return OnnxClassifier(model_dir=str(_MODEL_DIR), music_labels=["Music"])

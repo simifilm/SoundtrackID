@@ -11,28 +11,23 @@ from __future__ import annotations
 
 from typing import Any
 
+from soundtrackID.models import MATCH_KEYS
+
 TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative
 
-# Fields copied from a chosen candidate onto the cue (cue-shaped keys).
-_APPLY_KEYS = (
-    "title",
-    "artist",
-    "album",
-    "release_year",
-    "isrc",
-    "genre",
-    "spotify_url",
-    "youtube_link",
-    "musicbrainz_recording_id",
-    "musicbrainz_url",
+# Cue fields describing the match, all taken from a chosen candidate: those it
+# lacks (cover, Apple Music link, provider agreement) belonged to the replaced
+# match and are cleared. The provider, its candidates and each provider's own
+# answer (votes) still hold for the segment.
+_APPLY_KEYS = tuple(
+    key for key in MATCH_KEYS if key not in ("provider", "candidates", "votes")
 )
 
 
 def _apply_candidate(cue: dict[str, Any], cand: dict[str, Any]) -> None:
     for key in _APPLY_KEYS:
         cue[key] = cand.get(key)
-    cue["confidence"] = (cand.get("score") or 0.0) / 100.0
     cue["temporal_pick"] = True
 
 

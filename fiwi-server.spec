@@ -62,8 +62,22 @@ mutagen_datas, mutagen_bins, mutagen_hidden = collect_all("mutagen")
 # PyInstaller won't pick up on its own — collect_all grabs the .so too.
 acrcloud_datas, acrcloud_bins, acrcloud_hidden = collect_all("acrcloud")
 
-# Bundle .env if present so the .app has TMDb credentials
-_env_extra = [(".env", ".")] if os.path.exists(".env") else []
+# The app ships .env as it is: the TMDb credentials every install shares, and
+# nothing else. A developer's own keys (ACRCloud, AudD, signing) go in .env.dev,
+# which only a run from source reads; anything else in .env stops the build
+# rather than ship in the app.
+_SHIPPED_KEYS = {"FIWI_TMDB_API_TOKEN", "FIWI_TMDB_KEY"}
+_env_extra = []
+if os.path.exists(".env"):
+    from dotenv import dotenv_values
+
+    _unshippable = sorted(set(dotenv_values(".env")) - _SHIPPED_KEYS)
+    if _unshippable:
+        raise SystemExit(
+            "fiwi-server.spec: .env holds " + ", ".join(_unshippable) + ", which "
+            "would ship in the app; move them to .env.dev (read from source only)."
+        )
+    _env_extra = [(".env", ".")]
 
 # The native ShazamKit helper, as a minimal .app bundle (it needs its own
 # embedded provisioning profile, see shazamkit/build.sh). Rebuilt on every
@@ -90,25 +104,9 @@ a = Analysis(
         ("LICENSE", "."),
     ] + shazamio_datas + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
     hiddenimports=[
-        # soundtrackID modules
-        "soundtrackID",
-        "soundtrackID.app",
-        "soundtrackID.pipeline",
-        "soundtrackID.classifiers",
-        "soundtrackID.detection",
-        "soundtrackID.aggregator",
-        "soundtrackID.chunker",
-        "soundtrackID.loaders",
-        "soundtrackID.isolators",
-        "soundtrackID.models",
-        "soundtrackID.config",
-        "soundtrackID.thumbnails",
+        # soundtrackID's own modules, all of them, so none can be forgotten here
+        *collect_submodules("soundtrackID"),
         # metadata enrichment
-        "soundtrackID.metadata",
-        "soundtrackID.metadata.enricher",
-        "soundtrackID.metadata.film",
-        "soundtrackID.metadata.music",
-        "soundtrackID.metadata.mp4_tags",
         "httpx",
         "mutagen",
         "dotenv",

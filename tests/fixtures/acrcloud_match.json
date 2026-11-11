@@ -1,0 +1,104 @@
+{
+  "result_type": 0,
+  "status": {
+    "code": 0,
+    "version": "1.0",
+    "msg": "Success"
+  },
+  "metadata": {
+    "music": [
+      {
+        "score": 25,
+        "release_date": "2004-06-15",
+        "acrid": "f391f3b88050fd916bbc4e6cfa957528",
+        "works": [
+          {
+            "iswc": "T0700385472",
+            "id": "T0700385472",
+            "name": "IT'S DE LOVELY",
+            "creators": [
+              {
+                "last_name": "PORTER",
+                "name": "PORTER COLE",
+                "ipi": 24742104,
+                "roles": [
+                  "Composer"
+                ]
+              },
+              {
+                "last_name": "CHAPPELL MUSIC LTD",
+                "name": "CHAPPELL MUSIC LTD",
+                "ipi": 46879043,
+                "roles": [
+                  "Publisher"
+                ]
+              }
+            ]
+          }
+        ],
+        "duration_ms": 279000,
+        "external_metadata": {
+          "youtube": {
+            "vid": "IeWqQ4i8dRk"
+          },
+          "deezer": {
+            "artists": [
+              {
+                "name": "Robbie Williams",
+                "id": "212"
+              }
+            ],
+            "track": {
+              "id": "14886555",
+              "name": "It's De-Lovely (Album Version)"
+            },
+            "album": {
+              "name": "De-Lovely Music From The Motion Picture",
+              "id": "1208720"
+            }
+          }
+        },
+        "result_from": 1,
+        "label": "Columbia/Sony Music Soundtrax",
+        "artists": [
+          {
+            "name": "Robbie Williams",
+            "roles": [
+              "AssociatedPerformer",
+              "MainArtist"
+            ]
+          }
+        ],
+        "db_begin_time_offset_ms": 102620,
+        "db_end_time_offset_ms": 110700,
+        "sample_begin_time_offset_ms": 2740,
+        "sample_end_time_offset_ms": 11520,
+        "play_offset_ms": 113920,
+        "title": "It's De-Lovely (Album Version)",
+        "external_ids": {
+          "upc": "0827969274828",
+          "isrc": "USSM10403979",
+          "iswc": "T0700385472"
+        },
+        "album": {
+          "name": "De-Lovely Music From The Motion Picture"
+        },
+        "genres": [
+          {
+            "name": "Pop"
+          }
+        ],
+        "contributors": {
+          "composers": [
+            "Cole Porter"
+          ],
+          "lyricists": [
+            "Cole Porter"
+          ]
+        }
+      }
+    ],
+    "timestamp_utc": "2026-11-10 13:06:06"
+  },
+  "cost_time": 0.16100001335144
+}

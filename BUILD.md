@@ -64,7 +64,8 @@ as-is.
 
 ### 3.3 Build, sign, notarize, staple
 
-Signing credentials come from the environment (kept in the gitignored `.env`):
+Signing credentials come from the environment (kept in the gitignored `.env.dev`;
+not in `.env`, which ships in the app, so the build stops if they are there):
 
 | Variable | Purpose |
 |----------|---------|

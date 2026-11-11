@@ -52,7 +52,6 @@ def test_labels_from_config(tmp_path):
 def test_classify_returns_probs():
     """classify keeps the full softmax vector next to the music score."""
     classifier = OnnxClassifier.__new__(OnnxClassifier)
-    classifier.threshold = 0.2
     classifier.music_indices = [1]
     classifier.session = MagicMock()
     classifier.session.run.return_value = [np.array([[0.0, 1.0, 0.0]], np.float32)]
@@ -64,8 +63,8 @@ def test_classify_returns_probs():
         sample_rate=16000,
     )
 
-    result = classifier.classify(chunk)
+    music, probs = classifier.classify(chunk)
 
-    assert result.probs.shape == (3,)
-    assert result.probs.sum() == pytest.approx(1.0)
-    assert result.confidence == pytest.approx(result.probs[1])
+    assert probs.shape == (3,)
+    assert probs.sum() == pytest.approx(1.0)
+    assert music == pytest.approx(probs[1])

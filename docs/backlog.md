@@ -39,8 +39,8 @@ Legend: ✅ done · 🟡 partial · ⬜ not started
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 4.1 | **JSON output error on long films** (suspected limit exceeded) | ✅ | Waveform (up to ~60k pts) no longer embedded in the streamed `done` event; the frontend uses the separate `waveform` step + disk `results.json`. Streamed payload stays small on long films. |
-| 4.2 | **Restart / resume** on request-limit errors | ✅ | Provider quota errors raise `RateLimitError`; the pipeline stops calling that provider, keeps identified cues, sets `rate_limited`, and saves partial results. `POST /resume/{name}` re-detects only the still-unidentified cues from their saved segment WAVs. UI shows a Resume banner. |
+| 4.1 | **JSON output error on long films** (suspected limit exceeded) | ✅ | Waveform (up to ~60k pts) no longer embedded in the streamed `done` event; the frontend uses the separate `waveform` step + the run's `timeline.json`. Streamed payload stays small on long films. |
+| 4.2 | **Restart / resume** on request-limit errors | ✅ | Provider quota errors raise `RateLimitError`; the pipeline stops calling that provider, keeps identified cues, marks the skipped ones `pending`, and saves partial results. `POST /resume/{name}` (or `cli resume`) re-detects only the pending cues from their saved segment WAVs. UI shows a Resume banner while any cue is pending. |
 
 ## 5. Integrations / export
 

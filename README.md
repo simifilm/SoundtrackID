@@ -26,8 +26,8 @@ don't have to install anything else.
    short gaps are bridged.
 4. **Identify** — each cue is matched against a music database, the same way a phone
    recognises a song playing in the room.
-5. **Enrich** *(optional)* — film and composer details are looked up and added to the
-   results.
+5. **Look up composers** — for every identified cue with an ISRC, the composer and their
+   year of death are looked up automatically.
 
 ---
 
@@ -66,10 +66,11 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 
 | Setting | Default | What it does |
 |---|---|---|
-| Detection API | ACRCloud | Which music database is used to identify the cues |
-| Chunk Duration | 15 s | How finely the audio is sliced — shorter finds shorter cues |
-| Sensitivity | 20 % | Lower values catch more music, but also more false positives |
-| Export | JSON | Switch to CSV to get a spreadsheet file alongside the results |
+| Detection providers | Shazam | Which music services identify the cues; tick two or more to let them vote (see [Detection providers](#detection-providers)) |
+| Chunk Duration | 30 s | Longest piece of a cue sent for identification — long cues are split, so a change of track inside a cue is caught; shorter means more requests |
+| Hop Size | 5 s | Step between the overlapping windows scored for music — smaller places cue boundaries more precisely but takes longer |
+| Music Threshold | 20 % | How likely a window must be music to count as music; lower values catch more music, but also more false positives |
+| Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 
 Long films take a while: every cue has to be looked up individually, and the music
 services answer one request at a time.
@@ -79,23 +80,22 @@ services answer one request at a time.
 Detected cues appear in a list, with a minimap and a filmstrip of the whole film below
 it. Hovering a cue shows a preview of that moment in the video.
 
-When the analysis is done, a **Download results** button appears — click it to save
-`results.json` (and `results.csv` if you enabled the CSV export). Earlier analyses stay
+When the analysis is done, a **Download results** button appears — choose JSON or CSV
+(a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
 listed under **Recent runs** and can be downloaded again at any time.
 
 ### Metadata enrichment
 
-After an analysis, click **Metadaten anreichern** to add information about the film and
-the composer:
+Before the analysis starts, a **Confirm film** panel shows the details read from the video
+file's own tags. Correct or complete them, or click **Look up online** to fill the empty
+fields. The year matters: it is used to flag music that was released after the film.
+The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.
-- **Composer** — composer name, title of the work, and the composer's year of death.
-  Results found through a reliable match are shown as-is; uncertain matches are marked
-  with a `?` badge.
-
-The dialog fills itself in from the video file's own tags when the file carries them.
-For older runs without that information, type the film title, year or IMDb/TMDb ID
-yourself.
+- **Composer** — the work's authors (composer, lyricist), its title and their years of
+  death, and from those whether the work is in the public domain (the **Rights**
+  column). Results found through a reliable match are shown as-is; uncertain matches
+  are shown in grey italics. Only cues with an ISRC are looked up.
 
 > **Note:** whether the music is in the public domain depends on the **composer's** year
 > of death, not the director's. The film header shows the director's year of death only
@@ -106,16 +106,21 @@ Details of where each field comes from are in
 
 ### Detection providers
 
-Two music services can identify the cues. Both cope with short, quiet, film-mixed audio,
-which is what makes them usable on film soundtracks at all.
+Three music services can identify the cues. All cope with short, quiet, film-mixed
+audio, which is what makes them usable on film soundtracks at all.
 
 | Provider | Notes |
 |---|---|
-| **ACRCloud** (default) | Finds the most music. Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
-| **Shazam** | A solid fallback, and needs no account. |
+| **ACRCloud** | Finds the most music (and is the CLI default). Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
+| **Shazam** | Preselected in the app, and needs no account. |
+| **AudD** | Needs an API token. Matches come with a MusicBrainz link and usually an ISRC, which the composer lookup needs. |
 
-[docs/detection-providers.md](docs/detection-providers.md) compares both against
-AcoustID and records the tests behind this recommendation.
+Tick two or more and they vote: each cue gets the answer most of them agree on, with a
+badge showing how many agreed. Keys for ACRCloud and AudD are entered under
+**Settings → API keys**.
+
+[docs/detection-providers.md](docs/detection-providers.md) compares ACRCloud and Shazam
+against AcoustID and records the tests behind this recommendation.
 
 ---
 
@@ -139,44 +144,88 @@ uv run --extra app python -m soundtrackID
 
 Then open [http://localhost:8000](http://localhost:8000).
 
-### CLI
+#### Optional: HuggingFace classifier (PyTorch)
+The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolation
+FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
+```
+
+### CLI
+
+The CLI runs the same analysis as the app, with the same default settings:
+identification, the date re-ranking and the composer lookup, saved as one run.
+
+```bash
+uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4
 ```
 
 ```
---output-dir DIR      Output directory (default: ./output)
---api {shazam,acrcloud}
-                      Detection provider (default: acrcloud)
+--output-dir DIR      Folder of the runs (default: output/cache, the app's, so
+                      its history lists them)
+--api API             Detection provider(s): acrcloud, shazam, audd — or a
+                      comma-separated list for ensemble voting (default: shazam)
 --classifier {onnx,hf}
                       Music classifier backend (default: onnx)
---no-isolation        Skip vocal isolation (faster)
---chunk-duration SEC  Classifier chunk size in seconds (default: 10)
---hop SEC             Step between overlapping classifier chunks (default: 5)
---max-segment SEC     Split segments into chunks of at most N seconds before detection
+--isolation           Remove the vocals before identification (Demucs; slow,
+                      needs --extra demucs)
+--chunk-duration SEC  Length of a classified window in seconds (default: the
+                      model's own, 10.23)
+--hop SEC             Step between overlapping classified windows (default: 5)
+--max-segment SEC     Split segments into chunks of at most N seconds before
+                      detection; 0 sends each whole (default: 30)
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
+--bridge-gap SEC      Join clips of the same track across up to N seconds without
+                      music (default: 0)
+--title, --year, --imdb-id
+                      The film, where its file's tags lack it or are wrong; the
+                      year flags music released after the film
+--lookup-film         Fill in what is missing about the film online (TMDb,
+                      Wikidata), like the app's Look up online
+--csv                 Also write results.csv: the same results as a spreadsheet
 ```
+
+When a provider leaves cues pending (a rate limit, unreachable, or a failed answer),
+continue the run later; it identifies only the cues still pending. Wrong API keys
+stop the run instead, with a message:
+
+```bash
+uv run --extra app python -m soundtrackID.cli resume "output/cache/My Film_2026-11-11_10-15-00"
+```
+
+ACRCloud and AudD read their keys from the environment or the `.env.dev` file
+(see [Environment files](#environment-files)): `ACRCLOUD_HOST`,
+`ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`, `AUDD_API_TOKEN`; `--lookup-film`
+reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 ## Output
 
-Results are written to `output/<video_name>/`:
+Each analysis is a run of its own, in `output/cache/<video_name>_<date>_<time>/`
+from source, whether the app or the CLI made it (the installed app keeps its runs
+in its data folder):
 
 ```
-output/
-  My Film (2024)/
+output/cache/
+  My Film_2026-11-11_10-15-00/
     results.json        # all segments and identifications
-    results.csv         # optional CSV export
+    timeline.json       # waveform and music classification, for the app's timeline
+    results.csv         # with --csv: the same results as a spreadsheet
     segments/
-      seg_001.wav       # extracted audio for each music cue
-      seg_002.wav
+      seg_004.wav       # audio of a cue left pending, for Resume
 ```
 
 ## Tests
 
 ```bash
-uv run pytest
+uv run --extra app pytest
 ```
+
+The tests need no network and no API keys: the music services and lookup APIs are
+replaced by recorded or canned responses, and test videos are generated on the fly.
+
+The tests in `tests/ui` drive the page in a headless Chromium; without it they are
+skipped. Install it once with `uv run playwright install chromium`. To run only those,
+or all others: `pytest -m browser`, `pytest -m "not browser"`.
 
 ## Project structure
 
@@ -185,29 +234,41 @@ uv run pytest
 ├── src/soundtrackID/           Python package: pipeline, web server and UI
 │   ├── __main__.py             Entry point for `python -m soundtrackID`
 │   ├── main.py                 Starts the web server
-│   ├── app.py                  FastAPI endpoints: upload, analysis, enrichment, history
-│   ├── pipeline.py             Runs the full pipeline; also the CLI entry point
+│   ├── app.py                  FastAPI endpoints: upload, film lookup, analysis, history
+│   ├── cli.py                  Command line: analyze a video, resume a run
+│   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
+│   ├── analysis.py             The analysis the app and the CLI share, and resume
+│   ├── defaults.py             What an analysis uses unless told otherwise
+│   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models and the results.json output format
-│   ├── config.py               Config dataclass and config.yaml loader
+│   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues
+│   ├── derived.py              What follows from the results: rights verdict, anachronisms
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks
 │   ├── classifiers.py          Scores each chunk for music (ONNX or HuggingFace)
-│   ├── aggregator.py           Merges music chunks into cues, writes segment .wav files
+│   ├── slots.py                Turns the overlapping chunks' scores into music / no-music spans
+│   ├── aggregator.py           Merges music chunks into the windows sent for identification
 │   ├── isolators.py            Optional Demucs vocal isolation
-│   ├── detection.py            Identification clients: ACRCloud, Shazam, AcoustID
+│   ├── detection.py            Identification clients (ACRCloud, Shazam, AudD) and ensemble voting
+│   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
+│   ├── mava_export.py          The MAVA export (TSV and mapping)
 │   ├── metadata/               Film and composer enrichment
-│   │   ├── enricher.py         Orchestrates enrichment of a results file
+│   │   ├── enricher.py         Looks up the composers of a run's cues
 │   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
 │   │   ├── music.py            Composer lookup: MusicBrainz → Wikidata
+│   │   ├── rights.py           Public domain or protected, from the authors' life years
 │   │   └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
-│   └── static/index.html       The complete web UI, in one file
+│   └── static/                 The web UI
+│       ├── index.html          The page's markup
+│       ├── app.css             Its styles
+│       └── js/                 Its scripts, one per part of the page, run in the order
+│                               index.html lists them (state.js first, main.js last)
 ├── src-tauri/                  Desktop shell (Rust / Tauri)
 ├── assets/ast_model/           ONNX classifier model (Git LFS)
 ├── scripts/                    macOS signing script and entitlements
-├── tests/                      pytest suite
+├── tests/                      pytest suite; tests/ui drives the page in a headless browser
 ├── docs/                       Detailed documentation
-├── config.yaml                 Default pipeline settings
 ├── fiwi-server.spec            PyInstaller spec for bundling the server
 └── pyproject.toml              Python dependencies and optional extras
 ```
@@ -379,16 +440,31 @@ uv run --extra app python -m soundtrackID &   # start Python server on :8000
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ```
 
-### TMDb credentials
+### Environment files
 
-Enrichment uses TMDb. Everyone can use the same credentials for TMDb. The credentials must be stored in the `.env` file at the project root (gitignored):
+Two gitignored files at the project root hold the keys:
 
-```
-FIWI_TMDB_API_TOKEN=eyJhbGc...   # v4 Bearer JWT (preferred — header auth, not query param)
-FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
-```
+- **`.env`** is what the app ships: the TMDb credentials, which everyone can share,
+  and nothing else. The spec file bundles it into the application as it is, and
+  stops the build if it holds any other key.
 
-The server reads `.env` at startup. For the bundled `.app`, the spec file bundles `.env` into the application so the production build picks up the same credentials.
+  ```
+  FIWI_TMDB_API_TOKEN=eyJhbGc...   # v4 Bearer JWT (preferred — header auth, not query param)
+  FIWI_TMDB_KEY=xxxxxxxx           # v3 hex (fallback)
+  ```
+
+- **`.env.dev`** holds your own keys, which must never ship: ACRCloud, AudD, and the
+  signing credentials. Only a run from source reads it.
+
+  ```
+  ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com
+  ACRCLOUD_ACCESS_KEY=...
+  ACRCLOUD_ACCESS_SECRET=...
+  AUDD_API_TOKEN=...
+  ```
+
+The server and the CLI read `.env.dev`, then `.env`, at startup: a key in `.env.dev`
+wins over the same key in `.env`, and one set in the environment wins over both.
 
 ---
 

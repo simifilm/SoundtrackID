@@ -1,32 +1,41 @@
 """Pipeline orchestrator."""
 
 import json
+import logging
 import os
+import threading
 import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
-from scipy.io import wavfile
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.classifiers import BaseClassifier
-from soundtrackID.detection import BaseMusicDetectionClient, RateLimitError
+from soundtrackID.defaults import BRIDGE_GAP_S, CLASSIFICATION_HOP_S, MUSIC_THRESHOLD
+from soundtrackID.detection import (
+    BaseMusicDetectionClient,
+    ProviderAuthError,
+    RateLimitError,
+)
 from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackID.loaders import VideoLoader
 from soundtrackID.models import (
     ClassificationResult,
+    Cue,
     DetectionResult,
-    IdentificationOutput,
     MusicSegment,
     ResultsOutput,
-    SegmentOutput,
+    match_fields,
 )
 from soundtrackID.slots import merge_spans, stream_slots, top_classes
 
-# Seconds between the starts of overlapping classification windows.
-CLASSIFICATION_HOP_S = 5.0
+log = logging.getLogger(__name__)
+
+# The run's progress callback: progress(step, detail="", **fields).
+Progress = Callable[..., None]
 
 
 def _det_key(det: DetectionResult) -> tuple | None:
@@ -44,6 +53,8 @@ def _group_detections(
 
     Pass 1: consecutive same-key runs (None==None so unidentified also merge),
     as long as a clip starts <= gap_tolerance_s after the previous one ended.
+    Clips the provider didn't answer (a rate limit or an error) stay alone, so
+    a resume identifies each one.
     Pass 2: bridge unidentified groups between identical tracks when the later
     track starts <= gap_tolerance_s after the earlier one ended.
     """
@@ -55,6 +66,8 @@ def _group_detections(
             groups
             and key == _det_key(groups[-1][-1][1])
             and item[0].start_time - groups[-1][-1][0].end_time <= gap_tolerance_s
+            and not item[1].skipped
+            and not groups[-1][-1][1].skipped
         ):
             groups[-1].append(item)
         else:
@@ -81,179 +94,302 @@ def _group_detections(
     return groups
 
 
-class OutputWriter:
-    """Handles writing detection results to disk."""
+def build_cues(
+    results: list[tuple[MusicSegment, DetectionResult]], bridge_gap: float
+) -> tuple[list[Cue], dict[str, MusicSegment]]:
+    """Merge consecutive detections with the same identification into cues.
+
+    Returns the cues and the audio of each pending one, by its segment_id, which
+    the run keeps for a resume to send again (runs.Run.write_audio); a pending
+    cue's audio_file is the run's to set.
+    """
+    groups = _group_detections(results, gap_tolerance_s=bridge_gap)
+
+    cues: list[Cue] = []
+    pending_audio: dict[str, MusicSegment] = {}
+    for i, group in enumerate(groups):
+        segment_id = f"seg_{i + 1:03d}"
+        pending = all(d.skipped for _, d in group)
+        if pending:
+            # A pending cue is a single clip: skipped clips are never joined.
+            pending_audio[segment_id] = group[0][0]
+
+        first_seg, last_seg = group[0][0], group[-1][0]
+        identified = [d for _, d in group if d.title]
+        cue: Cue = {
+            "segment_id": segment_id,
+            "start": first_seg.start_time,
+            "duration": last_seg.end_time - first_seg.start_time,
+            "audio_file": None,
+            "pending": pending,
+            **match_fields(identified[0] if identified else None),
+            "enrichment": None,
+        }
+        if identified:
+            # Canonical album for the merged cue: the most frequent album name
+            # among the group's identified windows (ties → first seen), so a
+            # single piece doesn't inherit whichever album the first window
+            # happened to carry.
+            album_counts: dict[str, int] = {}
+            for d in identified:
+                alb = d.metadata.get("album")
+                if alb:
+                    album_counts[alb] = album_counts.get(alb, 0) + 1
+            cue["album"] = (
+                max(album_counts, key=album_counts.get) if album_counts else None
+            )
+        cues.append(cue)
+
+    return cues, pending_audio
+
+
+# The waveform the app draws: 5 points a second, at most 60,000 (3 h 20 min).
+WAVEFORM_HZ = 5
+WAVEFORM_MAX_PTS = 60_000
+
+
+def waveform_peaks(audio: np.ndarray, sample_rate: int) -> dict:
+    """The audio's waveform for the app: the loudest sample of each stretch,
+    scaled so that the loudest of all is 1, and the duration in seconds."""
+    duration_s = len(audio) / sample_rate
+    n_pts = min(WAVEFORM_MAX_PTS, max(1, int(round(duration_s * WAVEFORM_HZ))))
+    n_pts = min(n_pts, len(audio))
+    block = max(1, len(audio) // n_pts)
+    trimmed = (len(audio) // block) * block
+    peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
+    max_p = float(peaks.max())
+    return {
+        "samples": [round(float(x / max_p), 3) for x in peaks]
+        if max_p > 0
+        else [0.0] * len(peaks),
+        "duration": round(float(len(audio) / sample_rate), 2),
+    }
+
+
+class _Classification:
+    """A run's audio, classified window by window as the aggregator asks for it.
+
+    A window is music if the classifier scores it above the run's threshold.
+    Keeps what the results show of it: every window's top classes, so a wrong
+    music verdict can be traced, and the gap-free hop-sized slots the aggregator
+    gets instead of the overlapping windows, which make the classification's
+    spans.
+    """
 
     def __init__(
         self,
-        output_dir: Path,
-        conditioning: str = "original",
-        export_csv: bool = False,
-        export_mava: bool = False,
-        bridge_gap: float = 2.0,
+        chunker: AudioChunker,
+        classifier: BaseClassifier,
+        threshold: float,
+        progress: Progress,
     ) -> None:
-        self.output_dir = output_dir
-        self.conditioning = conditioning
-        self.export_csv = export_csv
-        self.export_mava = export_mava
-        self.bridge_gap = bridge_gap
+        self._chunker = chunker
+        self._classifier = classifier
+        self._threshold = threshold
+        self._progress = progress
+        self.windows: list[dict] = []
+        self.slots: list[ClassificationResult] = []
 
-    def write(
+    def slots_of(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> Iterator[ClassificationResult]:
+        hop = self._chunker.chunk_duration - self._chunker.overlap
+        for slot in stream_slots(
+            self._windows_of(audio, sample_rate), audio, sample_rate, hop
+        ):
+            self.slots.append(slot)
+            yield slot
+
+    def _windows_of(
+        self, audio: np.ndarray, sample_rate: int
+    ) -> Iterator[ClassificationResult]:
+        for chunk in self._chunker.chunk(audio, sample_rate):
+            music, probs = self._classifier.classify(chunk)
+            result = ClassificationResult(
+                chunk=chunk,
+                is_music=music > self._threshold,
+                confidence=music,
+                probs=probs,
+            )
+            self.windows.append(
+                {
+                    "start": chunk.start_time,
+                    "end": chunk.end_time,
+                    "music": round(music, 4),
+                    "is_music": result.is_music,
+                    "classes": top_classes(probs, self._classifier.labels, 3),
+                }
+            )
+            status = "MUSIC" if result.is_music else "-----"
+            detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
+            log.info("  %s", detail)
+            self._progress(
+                "classifying",
+                detail,
+                start=chunk.start_time,
+                end=chunk.end_time,
+                is_music=result.is_music,
+            )
+            yield result
+
+
+class _Identification:
+    """Identifies a run's music windows while the run is still being classified.
+
+    Each window goes to a thread pool once the aggregator has it, and the
+    answers are taken as they come in, so identifying early windows overlaps
+    classifying later audio. Only the provider calls run in the pool; progress
+    is reported from the calling thread.
+
+    A window the provider didn't answer is skipped, which the run keeps pending
+    for a resume: at a rate limit, which also skips the windows not asked yet
+    rather than burn more calls, or on an error. Rejected keys stop the run.
+    """
+
+    def __init__(
         self,
-        video_path: Path,
-        results: list[tuple[MusicSegment, DetectionResult]],
-        waveform: dict | None = None,
-        film: dict | None = None,
-        classification: list[dict] | None = None,
-        classification_windows: list[dict] | None = None,
-    ) -> ResultsOutput:
-        """Write detection results to disk.
+        client: BaseMusicDetectionClient,
+        concurrency: int,
+        progress: Progress,
+    ) -> None:
+        self._client = client
+        self._progress = progress
+        self._executor = ThreadPoolExecutor(max_workers=concurrency)
+        self._asked: dict[Future, tuple[int, MusicSegment]] = {}
+        self._answers: dict[int, tuple[MusicSegment, DetectionResult]] = {}
+        self._rate_limited = threading.Event()  # set by any thread, read by all
+        self._total = 0  # windows submitted
+        self._reaped = 0  # answers taken
+        self._all_submitted = False
+        # Debug-only: FIWI_DEBUG_DETECT_SLEEP=<seconds> makes each identification
+        # call sleep, to exercise the frontend's stall watchdog. No effect unset.
+        self._debug_sleep = float(os.environ.get("FIWI_DEBUG_DETECT_SLEEP") or 0)
 
-        Consecutive detections with the same identification are concatenated
-        into a single WAV file. Creates:
-        - output_dir/<video_name>/results.json
-        - output_dir/<video_name>/segments/seg_001.wav
-        """
-        video_name = video_path.stem
-        video_output_dir = self.output_dir / video_name
-        segments_dir = video_output_dir / "segments"
-        segments_dir.mkdir(parents=True, exist_ok=True)
+    def submit(self, window: MusicSegment) -> None:
+        """Ask about `window`, and take the answers already in, without waiting,
+        so identification keeps overlapping the classification."""
+        idx = self._total
+        self._total += 1
+        if self._rate_limited.is_set():
+            # Provider is throttled; don't burn more calls. Record the
+            # remaining windows as skipped so they can be resumed.
+            self._take(idx, window, _skipped(window), label=False)
+        else:
+            self._asked[self._executor.submit(self._detect, window)] = (idx, window)
+        for fut in [f for f in self._asked if f.done()]:
+            idx, window = self._asked.pop(fut)
+            self._take(idx, window, self._answer(fut, window), label=False)
 
-        groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
-
-        segment_outputs: list[SegmentOutput] = []
-        identification_outputs: list[IdentificationOutput] = []
-
-        for i, group in enumerate(groups):
-            segment_id = f"seg_{i + 1:03d}"
-            audio_filename = f"{segment_id}.wav"
-            audio_path = segments_dir / audio_filename
-
-            # A run's last clip is anchored to the run's end and can overlap the
-            # clip before it; keep only the part after the previous clip ended.
-            parts = [group[0][0].audio]
-            for (prev, _), (seg, _) in zip(group, group[1:]):
-                overlap = max(
-                    0, round((prev.end_time - seg.start_time) * seg.sample_rate)
+    def finish(self) -> list[tuple[MusicSegment, DetectionResult]]:
+        """Once every window is submitted: wait for the remaining answers, and
+        return all of them in the windows' order."""
+        self._all_submitted = True
+        self._progress("detecting", f"Identifying {self._total} chunk(s)...")
+        # Wait with a timeout so we can emit a "waiting" heartbeat while blocked
+        # on the identification provider (e.g. Shazam rate-limiting delays the
+        # response) — otherwise the UI would sit silent with no feedback.
+        waited = 0.0
+        remaining = set(self._asked)
+        while remaining:
+            done, remaining = wait(remaining, timeout=5.0, return_when=FIRST_COMPLETED)
+            if not done:
+                waited += 5.0
+                self._progress(
+                    "ident_waiting",
+                    reaped=self._reaped,
+                    total=self._total,
+                    seconds=int(waited),
                 )
-                parts.append(seg.audio[overlap:])
-            combined_audio = np.concatenate(parts)
-            sample_rate = group[0][0].sample_rate
-            audio_int16 = (np.clip(combined_audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(audio_path, sample_rate, audio_int16)
+                continue
+            waited = 0.0
+            for fut in done:
+                idx, window = self._asked.pop(fut)
+                self._take(idx, window, self._answer(fut, window), label=True)
+        self._executor.shutdown(wait=True)
+        return [self._answers[i] for i in range(self._total)]
 
-            first_seg, last_seg = group[0][0], group[-1][0]
-            identified = [d for _, d in group if d.title]
-            confidence = (
-                sum(d.confidence for d in identified) / len(identified)
-                if identified
-                else 0.5
+    def abort(self) -> None:
+        """Drop the calls not started yet; those under way finish."""
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _detect(self, window: MusicSegment) -> DetectionResult:
+        """One provider call, in a worker thread."""
+        # Once the provider throttles, windows already queued skip their call
+        # too (they stay unidentified for a resume); calls under way finish.
+        if self._rate_limited.is_set():
+            return _skipped(window)
+        if self._debug_sleep:
+            time.sleep(self._debug_sleep)
+        try:
+            return self._client.detect(window)
+        except RateLimitError:
+            self._rate_limited.set()
+            raise
+
+    def _answer(self, fut: Future, window: MusicSegment) -> DetectionResult:
+        """The provider's answer; a skipped window where there is none (a rate
+        limit, which also stops the calls, or an error) instead of aborting
+        everything: a resume asks for it again. Rejected keys abort: no resume
+        gets past them."""
+        try:
+            return fut.result()
+        except RateLimitError:
+            self._rate_limited.set()
+            return _skipped(window)
+        except ProviderAuthError:
+            raise
+        except Exception:
+            log.exception(
+                "Identifying %.1f-%.1f s failed", window.start_time, window.end_time
             )
+            return _skipped(window)
 
-            segment_outputs.append(
-                SegmentOutput(
-                    id=segment_id,
-                    start=first_seg.start_time,
-                    duration=last_seg.end_time - first_seg.start_time,
-                    conditioning=self.conditioning,
-                    audio_file=f"segments/{audio_filename}",
-                    confidence=confidence,
-                )
-            )
-
-            first_detection = next((d for _, d in group if d.title), None)
-            if first_detection:
-                # Canonical album for the merged cue: the most frequent album name
-                # among the group's identified windows (ties → first seen), so a
-                # single piece doesn't inherit whichever album the first window
-                # happened to carry.
-                album_counts: dict[str, int] = {}
-                for d in identified:
-                    alb = d.metadata.get("album")
-                    if alb:
-                        album_counts[alb] = album_counts.get(alb, 0) + 1
-                album = (
-                    max(album_counts, key=album_counts.get) if album_counts else None
-                )
-                identification_outputs.append(
-                    IdentificationOutput(
-                        segment_id=segment_id,
-                        provider=first_detection.provider,
-                        title=first_detection.title,
-                        artist=first_detection.artist,
-                        album=album,
-                        confidence=first_detection.confidence,
-                        metadata={
-                            k: v
-                            for k, v in first_detection.metadata.items()
-                            if k != "album" and v is not None
-                        },
-                    )
-                )
-
-        results_output = ResultsOutput(
-            source=video_path.name,
-            video_name=video_name,
-            segments=segment_outputs,
-            identifications=identification_outputs,
-            waveform=waveform,
-            film=film,
-            classification=classification,
-            classification_windows=classification_windows,
+    def _take(
+        self,
+        idx: int,
+        window: MusicSegment,
+        detection: DetectionResult,
+        *,
+        label: bool,
+    ) -> None:
+        # Always emit an "identified" progress event (title=null means the
+        # window was processed but not matched). The frontend handles it
+        # without touching the step indicator, so it advances the
+        # identification progress bar per window and can detect a stalled
+        # provider — including while classification is still running.
+        # "detecting" step labels are emitted only once classification has
+        # finished (label=True), to avoid thrashing the step transition.
+        self._reaped += 1
+        self._answers[idx] = (window, detection)
+        self._progress(
+            "identified",
+            start=round(window.start_time, 3),
+            end=round(window.end_time, 3),
+            title=detection.title,
+            artist=detection.artist,
+            reaped=self._reaped,
+            total=self._total if self._all_submitted else None,
         )
-
-        results_path = video_output_dir / "results.json"
-        results_path.write_text(results_output.to_json())
-        print(f"  Results written to: {results_path}")
-
-        if self.export_csv:
-            import csv
-
-            ident_map = {id_.segment_id: id_ for id_ in identification_outputs}
-            csv_path = video_output_dir / "results.csv"
-            with csv_path.open("w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(
-                    [
-                        "segment_id",
-                        "start",
-                        "duration",
-                        "conditioning",
-                        "confidence",
-                        "provider",
-                        "title",
-                        "artist",
-                        "album",
-                    ]
-                )
-                for seg in segment_outputs:
-                    ident = ident_map.get(seg.id)
-                    writer.writerow(
-                        [
-                            seg.id,
-                            seg.start,
-                            seg.duration,
-                            seg.conditioning,
-                            seg.confidence,
-                            ident.provider if ident else "",
-                            ident.title if ident else "",
-                            ident.artist if ident else "",
-                            ident.album if ident else "",
-                        ]
-                    )
-            print(f"  CSV written to: {csv_path}")
-
-        if self.export_mava:
-            from soundtrackID.mava_export import write_mava_export
-
-            tsv_path, mapping_path = write_mava_export(
-                results_output.to_dict()["cues"],
-                video_output_dir,
-                video_name=video_name,
+        if label:
+            prefix = f"[{self._reaped}/{self._total}]"
+            if detection.title:
+                det_detail = f"{prefix} {detection.title} - {detection.artist}"
+            else:
+                start, end = window.start_time, window.end_time
+                det_detail = f"{prefix} {start:.0f}s-{end:.0f}s: no match"
+            log.info("  %s", det_detail)
+            self._progress(
+                "detecting",
+                det_detail,
+                total=self._total,
+                title=detection.title,
+                artist=detection.artist,
             )
-            print(f"  MAVA export written to: {tsv_path.name} + {mapping_path.name}")
 
-        return results_output
+
+def _skipped(window: MusicSegment) -> DetectionResult:
+    """A window the provider didn't answer, pending for a resume."""
+    return DetectionResult(segment=window, title=None, artist=None, skipped=True)
 
 
 class Pipeline:
@@ -265,11 +401,9 @@ class Pipeline:
         aggregator: ChunkAggregator,
         isolator: BaseMusicIsolator,
         detection_client: BaseMusicDetectionClient,
-        output_dir: Path | None = None,
-        export_csv: bool = False,
-        export_mava: bool = False,
         detection_concurrency: int = 4,
-        bridge_gap: float = 2.0,
+        bridge_gap: float = BRIDGE_GAP_S,
+        threshold: float = MUSIC_THRESHOLD,
     ) -> None:
         self.loader = loader
         self.chunker = chunker
@@ -277,23 +411,25 @@ class Pipeline:
         self.aggregator = aggregator
         self.isolator = isolator
         self.detection_client = detection_client
-        self.output_dir = output_dir or Path("./output")
         # Number of identification calls dispatched concurrently. Kept modest by
         # default: identification providers are network-bound and rate-limited
         # (ACRCloud is metered).
         self.detection_concurrency = max(1, detection_concurrency)
+        self.bridge_gap = bridge_gap
+        # How likely a window must be music, by the classifier, to count as music.
+        self.threshold = threshold
 
-        # Determine conditioning based on isolator type
-        conditioning = (
-            "original" if isinstance(isolator, DummyIsolator) else "vocals_removed"
-        )
-        self.output_writer = OutputWriter(
-            self.output_dir,
-            conditioning=conditioning,
-            export_csv=export_csv,
-            export_mava=export_mava,
-            bridge_gap=bridge_gap,
-        )
+    @property
+    def settings(self) -> dict:
+        """What this pipeline analyzes with, as saved with a run's results."""
+        return {
+            "classifier": type(self.classifier).__name__,
+            "threshold": self.threshold,
+            "window": self.chunker.chunk_duration,
+            "hop": self.chunker.chunk_duration - self.chunker.overlap,
+            "bridge_gap": self.bridge_gap,
+            "isolation": not isinstance(self.isolator, DummyIsolator),
+        }
 
     def run(
         self,
@@ -302,357 +438,123 @@ class Pipeline:
         max_segment_duration: float | None = None,
         container_tags: dict | None = None,
     ) -> ResultsOutput:
-        """Run the pipeline on a video file.
+        """Run the pipeline on a video file. Writes nothing: what to keep of the
+        results is the caller's (analysis.analyze).
 
         Args:
             video_path: Path to the video file.
-            on_progress: Optional callable(step: str, detail: str) for progress updates.
+            on_progress: Optional callable(step: str, **fields) for progress updates.
                 Steps: "loading", "waveform", "classifying", "identified", "detecting",
                 "writing" (identification overlaps classification, so "classifying" and
                 "identified" events interleave). "done" is emitted by the caller.
+                Every step except "waveform" passes `detail`, a message for people.
+                Data comes as fields, never inside `detail`:
+                  waveform:        samples, duration
+                  classifying:     start, end, is_music (once per window)
+                  identified:      start, end, title, artist, reaped, total
+                  ident_waiting:   reaped, total, seconds
+                  detecting:       total, title, artist (per window, once
+                                   classification is done)
 
         Returns:
             ResultsOutput containing all detected segments and their metadata.
         """
 
-        def progress(step: str, detail: str = "") -> None:
-            print(f"[{step}] {detail}" if detail else f"[{step}]")
+        def progress(step: str, detail: str = "", **fields) -> None:
+            text = detail or (json.dumps(fields) if fields else "")
+            log.info("[%s] %s", step, text)
             if on_progress:
-                on_progress(step, detail)
+                on_progress(step, detail=detail, **fields)
 
         progress("loading", f"Loading audio from: {video_path}")
         audio, sample_rate = self.loader.load(video_path)
         progress("loading", f"Duration: {len(audio) / sample_rate:.1f}s")
 
-        WAVEFORM_HZ = 5
-        WAVEFORM_MAX_PTS = 60_000
-        duration_s = len(audio) / sample_rate
-        n_pts = min(WAVEFORM_MAX_PTS, max(1, int(round(duration_s * WAVEFORM_HZ))))
-        n_pts = min(n_pts, len(audio))
-        block = max(1, len(audio) // n_pts)
-        trimmed = (len(audio) // block) * block
-        peaks = np.abs(audio[:trimmed].reshape(-1, block)).max(axis=1)
-        max_p = float(peaks.max())
-        waveform_data = {
-            "samples": [round(float(x / max_p), 3) for x in peaks]
-            if max_p > 0
-            else [0.0] * len(peaks),
-            "duration": round(float(len(audio) / sample_rate), 2),
-        }
+        waveform = waveform_peaks(audio, sample_rate)
         if on_progress:
-            on_progress("waveform", json.dumps(waveform_data))
+            on_progress("waveform", **waveform)
 
         progress("classifying", "Starting chunk classification...")
-
-        # Detection runs concurrently with (and overlaps) classification: as the
-        # incremental aggregator finalizes each music segment, its identification
-        # chunks are submitted to a thread pool. Only the blocking detect() calls
-        # run in workers; all progress is emitted from this driver thread.
-        detection_results_by_idx: dict[int, tuple[MusicSegment, DetectionResult]] = {}
-        pending: dict[Future, tuple[int, MusicSegment]] = {}
-        total_chunks = 0
-        reaped = 0
-        classification_done = False
-
-        executor = ThreadPoolExecutor(max_workers=self.detection_concurrency)
-
-        # Debug-only: FIWI_DEBUG_DETECT_SLEEP=<seconds> makes each identification
-        # call sleep, to exercise the frontend's stall watchdog. No effect unset.
-        debug_sleep = float(os.environ.get("FIWI_DEBUG_DETECT_SLEEP") or 0)
-
-        rate_limited = False
-
-        def detect_one(seg: MusicSegment) -> DetectionResult:
-            if debug_sleep:
-                time.sleep(debug_sleep)
-            return self.detection_client.detect(seg)
-
-        def empty_result(seg: MusicSegment) -> DetectionResult:
-            return DetectionResult(segment=seg, title=None, artist=None, confidence=0.0)
-
-        def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
-            """Return a detection, converting a provider rate-limit into a
-            no-match (and flagging the run) instead of aborting everything."""
-            nonlocal rate_limited
-            try:
-                return fut.result()
-            except RateLimitError:
-                rate_limited = True
-                return empty_result(chunk_seg)
-
-        def emit_reaped(
-            idx: int,
-            chunk_seg: MusicSegment,
-            detection: DetectionResult,
-            *,
-            label: bool,
-        ) -> None:
-            # Always emit an "identified" progress event (title=null means the
-            # window was processed but not matched). The frontend handles it
-            # without touching the step indicator, so it advances the
-            # identification progress bar per window and can detect a stalled
-            # provider — including while classification is still running.
-            # "detecting" step labels are emitted only once classification has
-            # finished (label=True), to avoid thrashing the step transition.
-            nonlocal reaped
-            reaped += 1
-            detection_results_by_idx[idx] = (chunk_seg, detection)
-            progress(
-                "identified",
-                json.dumps(
-                    {
-                        "start": round(chunk_seg.start_time, 3),
-                        "end": round(chunk_seg.end_time, 3),
-                        "title": detection.title,
-                        "artist": detection.artist,
-                        "reaped": reaped,
-                        "total": total_chunks if classification_done else None,
-                    }
-                ),
-            )
-            if label:
-                prefix = f"[{reaped}/{total_chunks}]"
-                if detection.title:
-                    det_detail = f"{prefix} {detection.title} - {detection.artist}"
-                else:
-                    start, end = chunk_seg.start_time, chunk_seg.end_time
-                    det_detail = f"{prefix} {start:.0f}s-{end:.0f}s: no match"
-                print(f"  {det_detail}")
-                progress("detecting", det_detail)
-
-        def drain_finished() -> None:
-            # Reap already-completed futures without blocking, so identification
-            # keeps overlapping the still-running classification loop.
-            for fut in [f for f in pending if f.done()]:
-                idx, chunk_seg = pending.pop(fut)
-                emit_reaped(idx, chunk_seg, reap(fut, chunk_seg), label=False)
-
-        # Every window's top classes, so a wrong music verdict can be traced.
-        windows: list[dict] = []
-
-        def classified_stream():
-            for chunk in self.chunker.chunk(audio, sample_rate):
-                result = self.classifier.classify(chunk)
-                windows.append(
-                    {
-                        "start": chunk.start_time,
-                        "end": chunk.end_time,
-                        "music": round(result.confidence, 4),
-                        "is_music": result.is_music,
-                        "classes": top_classes(result.probs, self.classifier.labels, 3),
-                    }
-                )
-                status = "MUSIC" if result.is_music else "-----"
-                detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
-                print(f"  {detail}")
-                progress("classifying", detail)
-                yield result
-
-        # The aggregator gets gap-free hop-sized slots instead of the overlapping
-        # windows; the slots are also kept for the classification spans.
-        slots: list[ClassificationResult] = []
-
-        def slot_stream():
-            hop = self.chunker.chunk_duration - self.chunker.overlap
-            for slot in stream_slots(classified_stream(), audio, sample_rate, hop):
-                slots.append(slot)
-                yield slot
-
+        classification = _Classification(
+            self.chunker, self.classifier, self.threshold, progress
+        )
+        identification = _Identification(
+            self.detection_client, self.detection_concurrency, progress
+        )
         try:
             # Windows are emitted as soon as each is fully classified (even mid
             # cue), so identification of early windows overlaps classification of
             # later audio. Isolation stays on this driver thread (a no-op for the
             # default DummyIsolator; the optional GPU DemucsIsolator is per-window).
             for window in self.aggregator.stream_windows(
-                slot_stream(), audio, sample_rate, window_duration=max_segment_duration
+                classification.slots_of(audio, sample_rate),
+                audio,
+                sample_rate,
+                window_duration=max_segment_duration,
             ):
-                iso_audio = self.isolator.isolate(window.audio, window.sample_rate)
-                chunk_seg = MusicSegment(
-                    audio=iso_audio,
-                    start_time=window.start_time,
-                    end_time=window.end_time,
-                    sample_rate=window.sample_rate,
-                )
-                idx = total_chunks
-                total_chunks += 1
-                if rate_limited:
-                    # Provider is throttled; don't burn more calls. Record the
-                    # remaining windows as unidentified so they can be resumed.
-                    emit_reaped(idx, chunk_seg, empty_result(chunk_seg), label=False)
-                else:
-                    pending[executor.submit(detect_one, chunk_seg)] = (idx, chunk_seg)
-                drain_finished()
-
-            # Classification is complete: the total chunk count is now known, so
-            # switch to the "detecting" step and reap the remaining futures.
-            classification_done = True
-            progress("detecting", f"Identifying {total_chunks} chunk(s)...")
-            # Reap with a timeout so we can emit a "waiting" heartbeat while blocked
-            # on the identification provider (e.g. Shazam rate-limiting delays the
-            # response) — otherwise the UI would sit silent with no feedback.
-            waited = 0.0
-            remaining = set(pending)
-            while remaining:
-                done_set, remaining = wait(
-                    remaining, timeout=5.0, return_when=FIRST_COMPLETED
-                )
-                if not done_set:
-                    waited += 5.0
-                    progress(
-                        "ident_waiting",
-                        json.dumps(
-                            {
-                                "reaped": reaped,
-                                "total": total_chunks,
-                                "seconds": int(waited),
-                            }
-                        ),
+                identification.submit(
+                    MusicSegment(
+                        audio=self.isolator.isolate(window.audio, window.sample_rate),
+                        start_time=window.start_time,
+                        end_time=window.end_time,
+                        sample_rate=window.sample_rate,
                     )
-                    continue
-                waited = 0.0
-                for fut in done_set:
-                    idx, chunk_seg = pending.pop(fut)
-                    emit_reaped(idx, chunk_seg, reap(fut, chunk_seg), label=True)
+                )
+            detection_results = identification.finish()
         except BaseException:
-            executor.shutdown(wait=False, cancel_futures=True)
+            identification.abort()
             raise
-        executor.shutdown(wait=True)
 
-        detection_results: list[tuple[MusicSegment, DetectionResult]] = [
-            detection_results_by_idx[i] for i in range(total_chunks)
-        ]
         found = sum(1 for _, d in detection_results if d.title)
-        progress("detecting", f"{found}/{total_chunks} chunks identified")
+        progress("detecting", f"{found}/{len(detection_results)} chunks identified")
 
         progress("writing")
-        output = self.output_writer.write(
-            video_path,
-            detection_results,
-            waveform=waveform_data,
+        cues, pending_audio = build_cues(detection_results, self.bridge_gap)
+        return ResultsOutput(
+            source=video_path.name,
+            cues=cues,
+            waveform=waveform,
             film=container_tags or None,
-            classification=merge_spans(slots, self.classifier.labels),
-            classification_windows=windows,
+            classification=merge_spans(classification.slots, self.classifier.labels),
+            classification_windows=classification.windows,
+            pending_audio=pending_audio,
         )
-        output.rate_limited = rate_limited
-        return output
 
 
-if __name__ == "__main__":
-    import argparse
+def build_pipeline(
+    classifier: BaseClassifier,
+    api: str,
+    threshold: float = MUSIC_THRESHOLD,
+    hop: float = CLASSIFICATION_HOP_S,
+    window: float | None = None,
+    bridge_gap: float = BRIDGE_GAP_S,
+    isolation: bool = False,
+) -> Pipeline:
+    """The pipeline the app and the CLI analyze with.
 
+    `api` names the detection provider(s), comma-separated to let them vote.
+    A window is music above `threshold`, the classifier's music probability.
+    `window` is the length of a classified window, by default the classifier's
+    own (no padding); `isolation` removes the vocals before identification
+    (Demucs).
+    """
+    # Imported here, so tests can replace the provider.
     from soundtrackID.detection import build_detection_client
 
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
-    parser = argparse.ArgumentParser(
-        description="Run the film music detection pipeline on a video file."
-    )
-    parser.add_argument("video_path", type=Path, help="Path to the video file")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("./output"),
-        help="Output directory (default: ./output)",
-    )
-    parser.add_argument(
-        "--api",
-        default="acrcloud",
-        help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-        "list for ensemble majority voting (default: acrcloud)",
-    )
-    parser.add_argument(
-        "--classifier",
-        choices=("onnx", "hf"),
-        default="onnx",
-        help="Music classifier backend (default: onnx)",
-    )
-    parser.add_argument(
-        "--no-isolation",
-        action="store_true",
-        help="Skip vocal isolation (use DummyIsolator)",
-    )
-    parser.add_argument(
-        "--chunk-duration",
-        type=float,
-        default=10.0,
-        help="Chunk duration in seconds (default: 10.0)",
-    )
-    parser.add_argument(
-        "--hop",
-        type=float,
-        default=CLASSIFICATION_HOP_S,
-        help=(
-            "Step between overlapping chunks in seconds "
-            f"(default: {CLASSIFICATION_HOP_S})"
-        ),
-    )
-    parser.add_argument(
-        "--max-segment",
-        type=float,
-        default=None,
-        help="Split segments into chunks of at most N seconds before detection",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.2,
-        help="Music classification threshold (default: 0.2)",
-    )
-
-    args = parser.parse_args()
-
-    # Create components
-    loader = VideoLoader()
-    chunker = AudioChunker(
-        chunk_duration=args.chunk_duration, overlap=args.chunk_duration - args.hop
-    )
-
-    if args.classifier == "hf":
-        from soundtrackID.classifiers import HuggingFaceClassifier
-
-        classifier: BaseClassifier = HuggingFaceClassifier(
-            music_labels=["Music"], threshold=args.threshold
-        )
-    else:
-        from soundtrackID.classifiers import OnnxClassifier
-
-        onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
-        classifier = OnnxClassifier(
-            model_dir=str(onnx_model_dir),
-            music_labels=["Music"],
-            threshold=args.threshold,
-        )
-
-    aggregator = ChunkAggregator(gap_tolerance=1.0)
-
-    if args.no_isolation:
-        isolator: BaseMusicIsolator = DummyIsolator()
-    else:
+    window = window or classifier.window_duration
+    if isolation:
         from soundtrackID.isolators import DemucsIsolator
 
-        isolator = DemucsIsolator()
-
-    detection_client = build_detection_client(args.api)
-
-    # Create and run pipeline
-    pipeline = Pipeline(
-        loader=loader,
-        chunker=chunker,
+        isolator: BaseMusicIsolator = DemucsIsolator()
+    else:
+        isolator = DummyIsolator()
+    return Pipeline(
+        loader=VideoLoader(),
+        chunker=AudioChunker(chunk_duration=window, overlap=window - hop),
         classifier=classifier,
-        aggregator=aggregator,
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=isolator,
-        detection_client=detection_client,
-        output_dir=args.output_dir,
+        detection_client=build_detection_client(api),
+        bridge_gap=bridge_gap,
+        threshold=threshold,
     )
-
-    results = pipeline.run(args.video_path, max_segment_duration=args.max_segment)
-
-    print("\nPipeline complete!")
-    print(f"  Segments: {len(results.segments)}")
-    print(f"  Identifications: {len(results.identifications)}")
-    print(f"  Output: {args.output_dir / args.video_path.stem}")

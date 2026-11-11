@@ -61,6 +61,16 @@ Strengths: zero setup, good precision (few false positives), rich metadata
 (YouTube/Spotify/Apple Music links, ISRC, cover art). Weakness: recall on film
 cues is lower than ACRCloud, and it depends on an unofficial endpoint.
 
+**Shazam hears only about 12 s of each clip.** shazamio fingerprints a stretch
+from the middle of a longer clip: 12 s in the app (`segment_duration_seconds`
+in `detection.py`; shazamio's own default is 10 s). Longer doesn't help: Shazam
+matches nothing from 15 s on
+([ShazamIO issue #150](https://github.com/shazamio/ShazamIO/issues/150)). The
+native ShazamKit helper takes the first 10 s instead, since ShazamKit rejects
+signatures over about 12 s (error 201). So a chunk longer than that, a whole
+music segment included, gets one answer from about 12 s of it. The runs above
+used 15 s chunks, so Shazam may have heard less of each chunk than ACRCloud did.
+
 ---
 
 ## ACRCloud — best for film music
@@ -177,7 +187,7 @@ favour of ACRCloud.**
 ## Credentials summary
 
 ```
-# .env
+# .env.dev
 ACRCLOUD_HOST="identify-eu-west-1.acrcloud.com"
 ACRCLOUD_ACCESS_KEY="..."
 ACRCLOUD_ACCESS_SECRET="..."

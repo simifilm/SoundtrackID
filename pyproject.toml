@@ -12,7 +12,6 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "pyacrcloud>=1.0",
-    "pyyaml>=6.0",
     "av>=10.0",
     "scipy>=1.10",
     "librosa>=0.10",
@@ -55,7 +54,10 @@ metadata = [
 
 [dependency-groups]
 dev = [
+    "playwright>=1.65.0",
+    "pyright>=1.1.414",
     "pytest>=7.0",
+    "pytest-playwright>=0.10.0",
     "ruff>=0.1",
 ]
 build = [
@@ -78,3 +80,9 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["browser: drives the page in a headless Chromium (tests/ui)"]
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"

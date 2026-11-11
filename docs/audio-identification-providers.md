@@ -18,17 +18,17 @@ to match against?"** Two very different product categories:
 
 ## Comparison
 
-| Service | Type | Music catalog? | Short-cue recognition | ISRC / metadata | Access & cost | Verdict |
-|---|---|---|---|---|---|---|
-| **ACRCloud** | Commercial API | Yes, huge | Yes (snippet fingerprint) | ISRC + Spotify/YT/MusicBrainz | REST, paid (trial tier) | ✅ Best — current default |
-| **AudD** | Commercial API | Yes, 160M+ | Yes (12s chunks; enterprise = full file + timestamps) | ISRC, UPC, label (Startup plan+) | REST, 300 free then $5→$2 / 1k | ✅ Strong alternative / cross-check |
-| **Shazam (ShazamKit)** | Apple framework | Yes, full Shazam catalog | Excellent | ISRC + Apple Music id | Free w/ Apple Dev; native Swift framework, not REST | ✅ Usable (we use unofficial `shazamio`); official = native effort |
-| **Gracenote** | Commercial API | Yes, huge | Yes | ISRC (must request in query) | Dev license non-commercial only; commercial = enterprise sales | ⚠️ Maybe — heavy onboarding/licensing |
-| **AcoustID** | Open / MusicBrainz | Yes (via MusicBrainz) | No — needs ~full track (exact-file fingerprint) | MBID → ISRC/composer via MB | Free / open | ⚠️ Limited — free, chains into PD logic, but weak on short cues |
-| **EmySound** | Self-host ACR engine | No (bring-your-own DB) | n/a | No | Free (non-commercial) / self-host | ❌ No commercial catalog |
-| **Veritone (aiWARE)** | Enterprise ACR platform | No (your libraries) | n/a | No | Enterprise | ❌ Wrong tool (known-content monitoring) |
-| **Audioneex** | Open-source engine (MPL-2.0) | No (bring-your-own DB) | n/a | No | Free/open + commercial SDK | ❌ Engine only; no catalog |
-| **MADCAT** (Oxford Wave) | Forensic dedup/sync | No | n/a — matches overlapping content between *your* recordings | No | Commercial | ❌ Not a music-ID service |
+| Service | Type | Music catalog? | Short-cue recognition | Audio heard per clip | ISRC / metadata | Access & cost | Verdict |
+|---|---|---|---|---|---|---|---|
+| **ACRCloud** | Commercial API | Yes, huge | Yes (snippet fingerprint) | The whole clip, fingerprinted locally; ACRCloud suggests under 15 s | ISRC + Spotify/YT/MusicBrainz | REST, paid (trial tier) | ✅ Best — current default |
+| **AudD** | Commercial API | Yes, 160M+ | Yes (one best match per clip; enterprise splits long files into 12 s chunks, with timestamps) | Not documented; the standard endpoint takes files up to 10 MB (about 5 min of the app's 16 kHz mono WAV) | ISRC, UPC, label (Startup plan+) | REST, 300 free then $5→$2 / 1k | ✅ Strong alternative / cross-check |
+| **Shazam (ShazamKit)** | Apple framework | Yes, full Shazam catalog | Excellent | About 12 s: the middle 12 s (`shazamio`), the first 10 s (ShazamKit); no matches from 15 s on | ISRC + Apple Music id | Free w/ Apple Dev; native Swift framework, not REST | ✅ Usable (we use unofficial `shazamio`); official = native effort |
+| **Gracenote** | Commercial API | Yes, huge | Yes | Not checked | ISRC (must request in query) | Dev license non-commercial only; commercial = enterprise sales | ⚠️ Maybe — heavy onboarding/licensing |
+| **AcoustID** | Open / MusicBrainz | Yes (via MusicBrainz) | No — needs ~full track (exact-file fingerprint) | Not checked | MBID → ISRC/composer via MB | Free / open | ⚠️ Limited — free, chains into PD logic, but weak on short cues |
+| **EmySound** | Self-host ACR engine | No (bring-your-own DB) | n/a | n/a | No | Free (non-commercial) / self-host | ❌ No commercial catalog |
+| **Veritone (aiWARE)** | Enterprise ACR platform | No (your libraries) | n/a | n/a | No | Enterprise | ❌ Wrong tool (known-content monitoring) |
+| **Audioneex** | Open-source engine (MPL-2.0) | No (bring-your-own DB) | n/a | n/a | No | Free/open + commercial SDK | ❌ Engine only; no catalog |
+| **MADCAT** (Oxford Wave) | Forensic dedup/sync | No | n/a — matches overlapping content between *your* recordings | n/a | No | Commercial | ❌ Not a music-ID service |
 
 ## Recommendation
 
@@ -46,7 +46,9 @@ to match against?"** Two very different product categories:
 
 ## Sources
 
-- AudD — https://audd.io/ , pricing https://audd.io/resources/articles/music-recognition-api-pricing.html
+- AudD — https://audd.io/ , pricing https://audd.io/resources/articles/music-recognition-api-pricing.html , API docs (10 MB limit) https://docs.audd.io/
+- ACRCloud identification API (under 15 s suggested) — https://docs.acrcloud.com/reference/identification-api/identification-api
+- Shazam matching nothing from 15 s on — https://github.com/shazamio/ShazamIO/issues/150
 - EmySound — https://emysound.com/
 - Audioneex licensing — https://www.audioneex.com/licensing/
 - MADCAT — https://oxfordwaveresearch.com/products/madcat/

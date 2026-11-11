@@ -40,6 +40,27 @@ def test_swaps_to_period_plausible_alternative():
     assert cue["temporal_pick"] is True
 
 
+def test_swap_clears_what_only_the_replaced_match_had():
+    """The cover, Apple Music link and provider agreement were the 2022 track's."""
+    cue = _cue(2022, [(1817, 70.0)])
+    votes = [{"provider": "acrcloud", "title": "Top"}, {"provider": "shazam"}]
+    cue.update(
+        photo_url="https://img/top.jpg",
+        apple_music_url="https://music.apple.com/top",
+        agreement={"count": 2, "total": 2, "providers": ["acrcloud", "shazam"]},
+        votes=votes,
+    )
+
+    temporal_rerank({"cues": [cue]}, film_year=1971)
+
+    assert (cue["title"], cue["isrc"]) == ("Alt0", "ALT0")
+    assert cue["photo_url"] is None
+    assert cue["apple_music_url"] is None
+    assert cue["agreement"] is None
+    assert cue["votes"] == votes  # still what each provider answered
+    assert len(cue["candidates"]) == 2
+
+
 def test_no_swap_when_primary_is_plausible():
     # Top hit predates the film: leave it alone even if an older alt exists.
     results = {"cues": [_cue(1965, [(1817, 90.0)])]}
