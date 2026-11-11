@@ -1,5 +1,10 @@
 // The video preview and its filmstrip, synced to the waveform.
 
+let filmstripSprite   = null;   // loaded sprite Image
+let filmstripMeta     = null;   // {count, thumb_width, thumb_height}
+let hasVideo          = false;
+let activeSegmentEnd  = null;   // when playing a cue, pause the video at this time
+
 // Collapse / expand the video preview (chevron rotation handled in CSS).
 function setVideoCollapsed(collapsed) {
   videoWrap.classList.toggle('collapsed', collapsed);

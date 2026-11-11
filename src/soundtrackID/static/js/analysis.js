@@ -1,5 +1,13 @@
 // Running an analysis: its steps, its progress events, a stall, cancelling.
 
+let currentRunId      = null;    // POST /cancel/{currentRunId} cancels the run
+let streaming         = false;   // until done, error or cancelled ends the run
+let identFarthestEnd  = 0;       // farthest processed window end (identification frontier)
+let identReaped       = 0;       // identification windows processed so far
+let identTotal        = 0;       // total identification windows (known once classification finishes)
+let lastEventAt       = 0;       // timestamp of the last SSE event (stall detection)
+let stallTimer        = null;
+
 // Steps helper
 const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing', 'enriching'];
 let currentStep = null;
@@ -35,14 +43,9 @@ function selectedProviders() {
 
 // rerunVideo: name of a run whose stored video is analyzed again (no upload).
 function startAnalysis(stagingId, film, rerunVideo = null) {
-  wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
-  detectingInitialized = false;
+  resetWaveform();
   setupVideo(null, null);
   identFarthestEnd = 0; identReaped = 0; identTotal = 0;
-  wfZoom = 1;
-  if (waveformScroll) waveformScroll.scrollLeft = 0;
-  if (wfMarker) wfMarker.classList.remove('active');
-  if (markerTimer) { clearTimeout(markerTimer); markerTimer = null; }
   classFill.style.width = '0%'; identFill.style.width = '0%';
   classFill.classList.remove('waiting'); identFill.classList.remove('waiting');
   progBars.style.display = '';
@@ -100,51 +103,32 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
         errorArea.style.display = 'block';
         return;
       }
-      const reader = res.body.getReader();
-      activeReader = reader;
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            // Stream ended. If no terminal event (done/error/cancelled) cleared
-            // the run, the server dropped the connection mid-analysis.
-            if (activeReader) {
-              finishRun();
-              errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
-              errorArea.style.display = 'block';
-            }
-            return;
-          }
-          buf += decoder.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop();
-          parts.forEach(part => {
-            if (!part.startsWith('data: ')) return;
-            try {
-              handleEvent(JSON.parse(part.slice(6)));
-            } catch (err) {
-              // A bug handling one event: keep reading the stream, but show it
-              // (also after "done", which hides the progress view).
-              console.error('Could not handle server event', part, err);
-              errorArea.textContent = 'Could not display an update from the server: ' + err.message;
-              errorArea.style.display = 'block';
-              progressView.style.display = 'block';
-            }
-          });
-          pump();
-        }).catch(err => {
-          // Abrupt drop mid-stream (server killed, network offline): read()
-          // rejects rather than resolving done. Surface it instead of hanging.
-          if (activeReader) {
-            finishRun();
-            errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
-            errorArea.style.display = 'block';
-          }
+      streaming = true;
+      try {
+        await readEvents(res, handleEvent, (err, text) => {
+          // A bug handling one event: keep reading the stream, but show it
+          // (also after "done", which hides the progress view).
+          console.error('Could not handle server event', text, err);
+          errorArea.textContent = 'Could not display an update from the server: ' + err.message;
+          errorArea.style.display = 'block';
+          progressView.style.display = 'block';
         });
+        // Stream ended. If no terminal event (done/error/cancelled) ended the
+        // run, the server dropped the connection mid-analysis.
+        if (streaming) {
+          finishRun();
+          errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
+          errorArea.style.display = 'block';
+        }
+      } catch (err) {
+        // Abrupt drop mid-stream (server killed, network offline). Surface it
+        // instead of hanging.
+        if (streaming) {
+          finishRun();
+          errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
+          errorArea.style.display = 'block';
+        }
       }
-      pump();
     })
     .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
 }
@@ -179,7 +163,7 @@ function checkStall() {
 function finishRun() {
   cancelBtn.style.display = 'none';
   currentRunId = null;
-  activeReader = null;
+  streaming = false;
   clearStall();
 }
 
@@ -212,11 +196,7 @@ function handleEvent(ev) {
   }
 
   if (step === 'waveform') {
-    wfSamples = ev.samples;
-    wfDuration = ev.duration;
-    waveformContainer.style.display = 'block';
-    applyZoomVisibility();
-    redrawAll();
+    showWaveform(ev.samples, ev.duration);
     return;
   }
 
@@ -227,12 +207,7 @@ function handleEvent(ev) {
     identReaped = ev.reaped || identReaped + 1;
     if (ev.total) identTotal = ev.total;
     identFarthestEnd = Math.max(identFarthestEnd, ev.end);
-    if (ev.title) {
-      // Concurrent identification can arrive out of order: push then coalesce
-      // the whole array (sort + merge same-title neighbours).
-      wfIdentified.push({ start: ev.start, end: ev.end, title: ev.title, artist: ev.artist || null });
-      wfIdentified = coalesceIdentified(wfIdentified);
-    }
+    if (ev.title) addIdentifiedWindow(ev.start, ev.end, ev.title, ev.artist || null);
     // Identification bar: exact reaped/total once the total is known (after
     // classification), otherwise the processed-window frontier over the audio.
     const frac = identTotal
@@ -263,20 +238,7 @@ function handleEvent(ev) {
 
   if (step === 'done') {
     finishRun();
-    wfCues = (results.cues || []).map(c => ({
-      segment_id: c.segment_id,
-      start: c.start,
-      end: c.start + c.duration,
-      duration: c.duration,
-      title: c.title || null,
-      artist: c.artist || null,
-    }));
-    wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
-    // Re-derive the purple music bands from the server-merged cues (mirrors the
-    // history-reload path) so a single long cue renders as one contiguous band
-    // instead of the raw per-window classification splitting it into pieces.
-    wfChunks = (results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
-    if (wfSamples) redrawAll();
+    showCuesOnWaveform(results.cues || []);
     classFill.style.width = '100%'; identFill.style.width = '100%';
     setTimeout(() => { progBars.style.display = 'none'; }, 400);
     markAllDone();
@@ -299,7 +261,6 @@ function handleEvent(ev) {
     // Identification overlaps classification and its bar is driven by the
     // "identified" events, so here we only update the step label (and capture
     // the now-known window total for an exact identification-bar fraction).
-    detectingInitialized = true;
     if ('title' in ev) {
       // One identification window's result.
       identTotal = ev.total;
@@ -312,9 +273,8 @@ function handleEvent(ev) {
   }
 
   if (step === 'classifying' && 'start' in ev) {
-    wfChunks.push({ start: ev.start, end: ev.end, isMusic: ev.is_music });
+    addClassifiedWindow(ev.start, ev.end, ev.is_music);
     updateStepDetail(step, ev.is_music ? 'Music' : 'No music');
-    if (wfSamples) redrawAll();
     // Classification bar tracks how far through the audio classification has run.
     if (wfDuration > 0) classFill.style.width = (ev.end / wfDuration * 100) + '%';
   }

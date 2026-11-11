@@ -44,9 +44,9 @@ waveformCanvas.addEventListener('mousemove', e => {
 });
 waveformCanvas.addEventListener('mouseleave', hideWfTooltip);
 
-// Waveform
+// Waveform. Its state is this file's: the other scripts set it through the
+// functions below and only read it.
 let wfSamples = null, wfDuration = 0, wfChunks = [], wfIdentified = [], wfCues = [];
-let detectingInitialized = false;
 
 // Zoom & pan state
 let wfZoom = 1;
@@ -56,6 +56,69 @@ let cachedMergedMusic = [];   // recomputed inside redrawAll
 let markerTimer = null;
 let suppressNextClick = false;
 let resizeTimer = null;
+
+// Empty, for a new analysis: its waveform comes with its first events.
+function resetWaveform() {
+  wfSamples = null; wfDuration = 0; wfChunks = []; wfIdentified = []; wfCues = [];
+  resetWaveformView();
+}
+
+// A run's waveform, shown whole.
+function showWaveform(samples, duration) {
+  wfSamples = samples;
+  wfDuration = duration;
+  resetWaveformView();
+  waveformContainer.style.display = 'block';
+  applyZoomVisibility();
+  redrawAll();
+}
+
+// One classified window of the analysis under way.
+function addClassifiedWindow(start, end, isMusic) {
+  wfChunks.push({ start, end, isMusic });
+  if (wfSamples) redrawAll();
+}
+
+// One window identified during the analysis; they can arrive out of order.
+function addIdentifiedWindow(start, end, title, artist) {
+  wfIdentified = coalesceIdentified([...wfIdentified, { start, end, title, artist }]);
+}
+
+// The run's cues, in place of the windows seen during the analysis: one
+// contiguous band per cue, rather than the per-window classification's pieces.
+function showCuesOnWaveform(cues) {
+  wfCues = cues.map(c => ({
+    segment_id: c.segment_id,
+    start: c.start,
+    end: c.start + c.duration,
+    duration: c.duration,
+    title: c.title || null,
+    artist: c.artist || null,
+  }));
+  wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
+  wfChunks = cues.map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
+  if (wfSamples) redrawAll();
+}
+
+function resetWaveformView() {
+  wfZoom = 1;
+  if (waveformScroll) waveformScroll.scrollLeft = 0;
+  if (wfMarker) wfMarker.classList.remove('active');
+  if (markerTimer) { clearTimeout(markerTimer); markerTimer = null; }
+}
+
+// Resize observer for debounced redraw + zoom-cap re-clamp
+window.addEventListener('resize', () => {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    drawFilmstrip();
+    if (!wfSamples) return;
+    const max = effectiveMaxZoom();
+    if (wfZoom > max) wfZoom = max;
+    redrawAll();
+  }, 100);
+});
 
 function rebuildMergedMusic() {
   cachedMergedMusic = [];

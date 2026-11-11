@@ -1,4 +1,6 @@
-// The page's elements and the state its scripts share. Loaded first.
+// The page's elements and the state its scripts share. Loaded first. State only
+// one script uses is declared there (e.g. the analysis's progress in
+// analysis.js, the waveform's in waveform.js).
 
 const dropZone        = document.getElementById('drop-zone');
 const fileInput       = document.getElementById('file-input');
@@ -17,11 +19,6 @@ const filmstripCanvas = document.getElementById('filmstrip-canvas');
 const overviewPlayhead = document.getElementById('overview-playhead');
 const wfPlayhead      = document.getElementById('wf-playhead');
 const videoToggle     = document.getElementById('video-toggle');
-let filmstripSprite   = null;   // loaded sprite Image
-let filmstripMeta     = null;   // {count, thumb_width, thumb_height}
-let hasVideo          = false;
-let activeSegmentEnd  = null;   // when playing a cue, pause the video at this time
-
 
 const wfMarker        = document.getElementById('wf-marker');
 const zoomControls    = document.getElementById('wf-zoom-controls');
@@ -33,11 +30,6 @@ const classFill       = document.getElementById('class-fill');
 const identFill       = document.getElementById('ident-fill');
 const progBars        = document.getElementById('prog-bars');
 const stallNotice     = document.getElementById('stall-notice');
-let identFarthestEnd  = 0;   // farthest processed window end (identification frontier)
-let identReaped       = 0;   // identification windows processed so far
-let identTotal        = 0;   // total identification windows (known once classification finishes)
-let lastEventAt       = 0;   // timestamp of the last SSE event (stall detection)
-let stallTimer        = null;
 const errorArea       = document.getElementById('error-area');
 const resultsBody     = document.getElementById('results-body');
 const resultsTable    = document.getElementById('results-table');
@@ -46,10 +38,8 @@ const resetBtn        = document.getElementById('reset-btn');
 const cancelBtn       = document.getElementById('cancel-btn');
 const downloadBtn     = document.getElementById('download-btn');
 
-let currentRunId  = null;
-let activeReader  = null;
+// The run shown: its results, which the tracks, the timeline and the exports
+// read and edits change.
 let currentResults = null;
 let currentVideoName = null;
-let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
-let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
 let resumeRunning = false;     // its results replace the table: no edits meanwhile

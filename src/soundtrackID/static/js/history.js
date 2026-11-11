@@ -36,25 +36,9 @@ async function loadHistory() {
         resultsView.style.display = 'block';
         const wf = timeline.waveform;
         if (wf) {
-          wfSamples    = wf.samples;
-          wfDuration   = wf.duration;
-          wfChunks     = (results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
-          wfCues       = (results.cues || []).map(c => ({
-            segment_id: c.segment_id,
-            start: c.start,
-            end: c.start + c.duration,
-            duration: c.duration,
-            title: c.title || null,
-            artist: c.artist || null,
-          }));
-          wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
-          wfZoom = 1;
-          if (waveformScroll) waveformScroll.scrollLeft = 0;
-          if (wfMarker) wfMarker.classList.remove('active');
           progBars.style.display = 'none';
-          waveformContainer.style.display = 'block';
-          applyZoomVisibility();
-          redrawAll();
+          showWaveform(wf.samples, wf.duration);
+          showCuesOnWaveform(results.cues || []);
         }
         showResults(results);
         renderClasses(timeline.classification_windows);

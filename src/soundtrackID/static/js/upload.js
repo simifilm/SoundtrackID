@@ -1,5 +1,8 @@
 // Choosing a file and confirming the film before the analysis.
 
+let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
+let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
+
 // ── Pre-analysis film confirmation ────────────────────────────────────────────
 const filmConfirm = document.getElementById('film-confirm');
 const fcStatus     = document.getElementById('fc-status');

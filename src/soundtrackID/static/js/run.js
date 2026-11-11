@@ -87,42 +87,37 @@ function resumeDetection() {
       setResumeRunning(false);
       return;
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '', finished = false;
-    (function pump() {
-      reader.read().then(({ done, value }) => {
-        if (done) {
-          // Ended without "done"/"error": the server dropped the connection.
-          if (!finished) {
-            text.textContent = 'Resume failed: the server closed the connection before finishing.';
-            btn.disabled = false;
-            setResumeRunning(false);
-          }
-          return;
-        }
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split('\n\n'); buf = parts.pop();
-        parts.forEach(part => {
-          if (!part.startsWith('data: ')) return;
-          let ev; try { ev = JSON.parse(part.slice(6)); } catch (_) { return; }
-          if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
-          else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
-          else if (ev.step === 'done') {
-            finished = true;
-            setResumeRunning(false);
-            currentResults = ev.results;
-            showResults(ev.results);   // re-renders + refreshes the banner
-          } else if (ev.step === 'error') {
-            finished = true;
-            text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
-            btn.disabled = false;
-            setResumeRunning(false);
-          }
-        });
-        pump();
-      }).catch(err => { text.textContent = 'Resume connection lost: ' + err.message; btn.disabled = false; setResumeRunning(false); });
-    })();
+    let finished = false;
+    const onEvent = ev => {
+      if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
+      else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
+      else if (ev.step === 'done') {
+        finished = true;
+        setResumeRunning(false);
+        showResults(ev.results);   // re-renders + refreshes the banner
+      } else if (ev.step === 'error') {
+        finished = true;
+        text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
+        btn.disabled = false;
+        setResumeRunning(false);
+      }
+    };
+    try {
+      await readEvents(res, onEvent, (err, part) => {
+        console.error('Could not handle server event', part, err);
+        text.textContent = 'Could not display an update from the server: ' + err.message;
+      });
+      // Ended without "done"/"error": the server dropped the connection.
+      if (!finished) {
+        text.textContent = 'Resume failed: the server closed the connection before finishing.';
+        btn.disabled = false;
+        setResumeRunning(false);
+      }
+    } catch (err) {
+      text.textContent = 'Resume connection lost: ' + err.message;
+      btn.disabled = false;
+      setResumeRunning(false);
+    }
   }).catch(err => { text.textContent = 'Resume failed: ' + err.message; btn.disabled = false; setResumeRunning(false); });
 }
 document.getElementById('resume-btn').addEventListener('click', resumeDetection);
