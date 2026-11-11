@@ -43,6 +43,7 @@ function setupVideo(results, videoName) {
     wfPlayhead.style.display = 'none';
     overviewPlayhead.style.display = 'none';
   }
+  updatePlayhead();   // the time readout follows this run's video (or its absence)
 }
 
 function seekVideo(t, play = true) {
@@ -62,13 +63,24 @@ function playSegment(cue) {
   activeSegmentEnd = cue.start + cue.duration;
 }
 
+// Player-style clock: m:ss, or h:mm:ss from an hour on.
+function fmtClock(secs) {
+  const s = Math.floor(secs);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 function updatePlayhead() {
   if (!hasVideo || !wfSamples || wfDuration === 0) {
+    wfTime.textContent = wfDuration ? fmtClock(wfDuration) : '';   // no video: total only
     wfPlayhead.style.display = 'none';
     overviewPlayhead.style.display = 'none';
     return;
   }
-  const frac = Math.min(videoEl.currentTime, wfDuration) / wfDuration;
+  const t = Math.min(videoEl.currentTime, wfDuration);
+  wfTime.textContent = `${fmtClock(t)} / ${fmtClock(wfDuration)}`;
+  const frac = t / wfDuration;
   wfPlayhead.style.left = (frac * waveformCanvas.clientWidth) + 'px';
   wfPlayhead.style.display = 'block';
   // Overview playhead spans the minimap + filmstrip (both full-width = duration).

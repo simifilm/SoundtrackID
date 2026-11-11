@@ -208,7 +208,8 @@ footer a { color: inherit; }
 #wf-zoom-controls button:hover { background: #f0ebff; color: #7c3aed; }
 #wf-zoom-controls button:disabled { opacity: 0.4; cursor: default; }
 #wf-zoom-label { margin-left: 0.4rem; font-variant-numeric: tabular-nums; min-width: 3rem; }
-#wf-zoom-hint { margin-left: auto; font-size: 0.72rem; color: #a09cb8; }
+#wf-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+#wf-zoom-hint { margin-left: 0.75rem; font-size: 0.72rem; color: #a09cb8; }
 
 #waveform-scroll {
   position: relative;

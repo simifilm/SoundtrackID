@@ -26,6 +26,7 @@ const zoomInBtn       = document.getElementById('wf-zoom-in');
 const zoomOutBtn      = document.getElementById('wf-zoom-out');
 const zoomResetBtn    = document.getElementById('wf-zoom-reset');
 const zoomLabel       = document.getElementById('wf-zoom-label');
+const wfTime          = document.getElementById('wf-time');
 const classFill       = document.getElementById('class-fill');
 const identFill       = document.getElementById('ident-fill');
 const progBars        = document.getElementById('prog-bars');
