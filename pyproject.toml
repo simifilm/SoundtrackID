@@ -55,6 +55,7 @@ metadata = [
 [dependency-groups]
 dev = [
     "playwright>=1.65.0",
+    "pyright>=1.1.414",
     "pytest>=7.0",
     "pytest-playwright>=0.10.0",
     "ruff>=0.1",
@@ -80,3 +81,8 @@ select = ["E", "F", "I", "W"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = ["browser: drives the page in a headless Chromium (tests/ui)"]
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"

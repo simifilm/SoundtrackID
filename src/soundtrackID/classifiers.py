@@ -8,6 +8,10 @@ from soundtrackID.models import AudioChunk, ClassificationResult
 
 
 class BaseClassifier(ABC):
+    threshold: float
+    labels: list[str]
+    window_duration: float
+
     @abstractmethod
     def classify(self, chunk: AudioChunk) -> ClassificationResult:
         """Classify an audio chunk for music presence."""
