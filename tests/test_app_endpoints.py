@@ -24,6 +24,14 @@ def test_page_is_served_uncached():
     assert "no-store" in r.headers["cache-control"]
 
 
+@pytest.mark.parametrize("path", ["/static/app.css", "/static/js/main.js"])
+def test_the_pages_styles_and_scripts_are_checked_for_changes(path):
+    """So an update shows on a normal reload, not a stale cached script."""
+    r = client.get(path)
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+
+
 # ── /film/lookup ───────────────────────────────────────────────────────────
 
 

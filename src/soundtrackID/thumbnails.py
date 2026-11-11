@@ -1,7 +1,7 @@
 """Video thumbnail filmstrip extraction.
 
 Produces a single horizontal sprite of evenly-spaced frames from a video, used
-by the web UI as a scrubbable timeline below the waveform (see static/index.html).
+by the web UI as a scrubbable timeline below the waveform (see static/js/video.js).
 """
 
 from pathlib import Path

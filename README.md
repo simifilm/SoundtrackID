@@ -227,7 +227,9 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── __main__.py             Entry point for `python -m soundtrackID`
 │   ├── main.py                 Starts the web server
 │   ├── app.py                  FastAPI endpoints: upload, film lookup, analysis, history
-│   ├── pipeline.py             Runs the full pipeline; also the CLI entry point
+│   ├── cli.py                  Command line: analyze a video, resume a run
+│   ├── analysis.py             The analysis the app and the CLI share, and resume
+│   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models and the results.json output format
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks
@@ -241,11 +243,15 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
 │   │   ├── music.py            Composer lookup: MusicBrainz → Wikidata
 │   │   └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
-│   └── static/index.html       The complete web UI, in one file
+│   └── static/                 The web UI
+│       ├── index.html          The page's markup
+│       ├── app.css             Its styles
+│       └── js/                 Its scripts, one per part of the page, run in the order
+│                               index.html lists them (state.js first, main.js last)
 ├── src-tauri/                  Desktop shell (Rust / Tauri)
 ├── assets/ast_model/           ONNX classifier model (Git LFS)
 ├── scripts/                    macOS signing script and entitlements
-├── tests/                      pytest suite
+├── tests/                      pytest suite; tests/ui drives the page in a headless browser
 ├── docs/                       Detailed documentation
 ├── fiwi-server.spec            PyInstaller spec for bundling the server
 └── pyproject.toml              Python dependencies and optional extras

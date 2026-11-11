@@ -1,0 +1,66 @@
+// Recent runs.
+
+async function loadHistory() {
+  const panel = document.getElementById('history-panel');
+  const list = document.getElementById('history-list');
+  try {
+    const items = await fetch('/history').then(r => r.json());
+    if (!items.length) { panel.style.display = 'none'; return; }
+    list.innerHTML = '';
+    items.forEach(item => {
+      const d = new Date(item.timestamp * 1000);
+      const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const meta = `${dateStr}, ${timeStr} · ${item.total} seg${item.total !== 1 ? 's' : ''}` +
+        (item.identified > 0 ? ` · ${item.identified} identified` : '');
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <span class="history-name">${fmt(item.video_name)}</span>
+        <span class="history-meta">${meta}</span>
+        <button class="history-delete-btn" title="Delete run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg></button>
+        <span class="history-chevron">›</span>`;
+      div.querySelector('.history-delete-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await fetch('/history/' + encodeURIComponent(item.video_name), { method: 'DELETE' }); } catch (_) {}
+        loadHistory();
+      });
+      div.addEventListener('click', async () => {
+        const res = await fetch('/results/' + encodeURIComponent(item.video_name));
+        if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return; }
+        const results = await res.json();
+        const timeline = await loadTimeline(item.video_name);
+        dropZone.style.display = 'none';
+        panel.style.display = 'none';
+        progressView.style.display = 'none';
+        resultsView.style.display = 'block';
+        const wf = timeline.waveform;
+        if (wf) {
+          wfSamples    = wf.samples;
+          wfDuration   = wf.duration;
+          wfChunks     = (results.cues || []).map(c => ({ start: c.start, end: c.start + c.duration, isMusic: true }));
+          wfCues       = (results.cues || []).map(c => ({
+            segment_id: c.segment_id,
+            start: c.start,
+            end: c.start + c.duration,
+            duration: c.duration,
+            title: c.title || null,
+            artist: c.artist || null,
+          }));
+          wfIdentified = wfCues.filter(c => c.title).map(c => ({ start: c.start, end: c.end }));
+          wfZoom = 1;
+          if (waveformScroll) waveformScroll.scrollLeft = 0;
+          if (wfMarker) wfMarker.classList.remove('active');
+          progBars.style.display = 'none';
+          waveformContainer.style.display = 'block';
+          applyZoomVisibility();
+          redrawAll();
+        }
+        showResults(results);
+        renderClasses(timeline.classification_windows);
+      });
+      list.appendChild(div);
+    });
+    panel.style.display = 'block';
+  } catch (_) { panel.style.display = 'none'; }
+}

@@ -1,4 +1,4 @@
-"""Browser tests of the page (static/index.html).
+"""Browser tests of the page (static/: index.html, app.css, js/).
 
 A headless Chromium drives the real app, which runs in this process with fakes
 for the model, the video loader, the providers and the online lookups. The tests

@@ -206,8 +206,18 @@ async def lifespan(app: FastAPI):
     yield
 
 
+class _RevalidatedStaticFiles(StaticFiles):
+    """The page's styles and scripts, checked for changes on every load (a 304
+    when unchanged), so an edit or an update shows on a normal reload."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(title="SoundtrackID", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+app.mount("/static", _RevalidatedStaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.get("/settings")
@@ -242,8 +252,8 @@ async def save_settings(payload: dict = Body(...)) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> FileResponse:
-    # No-store so CSS/JS edits are picked up on a normal reload (the page is a
-    # single self-contained file, so stale caching otherwise hides UI changes).
+    # No-store, like the styles and scripts it loads (revalidated), so UI
+    # changes show on a normal reload instead of a stale cached page.
     return FileResponse(
         _STATIC_DIR / "index.html",
         headers={"Cache-Control": "no-store, must-revalidate"},
