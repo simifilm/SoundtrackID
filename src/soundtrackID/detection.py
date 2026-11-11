@@ -1,6 +1,7 @@
 """Music detection API."""
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -11,6 +12,8 @@ import numpy as np
 from scipy.io import wavfile
 
 from soundtrackID.models import DetectionResult, MusicSegment
+
+log = logging.getLogger(__name__)
 
 
 def _find_shazamkit_helper() -> str | None:
@@ -230,8 +233,8 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
         if data.get("code") == 202 or data.get("error"):
             if data.get("code") == 202 and not ShazamDetectionClient._warned:
                 ShazamDetectionClient._warned = True
-                print(
-                    "[shazam] ShazamKit unavailable (202: no entitlement/profile yet) "
+                log.warning(
+                    "ShazamKit unavailable (202: no entitlement/profile yet) "
                     "— falling back to shazamio until it is activated."
                 )
             return None, False
@@ -689,20 +692,21 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
             except RateLimitError as exc:
                 return name, None, str(exc), True
             except Exception as exc:  # one provider failing must not sink the run
+                log.warning("%s failed", name, exc_info=True)
                 return name, None, str(exc), False
 
         with ThreadPoolExecutor(max_workers=len(self._clients)) as ex:
             raw = [f.result() for f in [ex.submit(run, n, c) for n, c in self._clients]]
 
-        # If no provider answered and at least one was rate-limited (the others
-        # failed otherwise), nobody listened to this window, so the ensemble is
-        # throttled: propagate so the pipeline can save partial results and offer
-        # a resume, instead of recording the window as "no match".
-        answered = any(r is not None for _, r, _, _ in raw)
-        if not answered and any(rl for _, _, _, rl in raw):
-            raise RateLimitError(
-                "no provider answered: " + "; ".join(e for _, _, e, _ in raw if e)
-            )
+        # If no provider answered, nobody listened to this window: propagate, so
+        # the pipeline keeps it pending for a resume instead of recording it as
+        # "no match". With one rate-limited, the ensemble is throttled and the
+        # pipeline stops calling it; when all failed otherwise, it asks on.
+        if not any(r is not None for _, r, _, _ in raw):
+            errors = "no provider answered: " + "; ".join(e for _, _, e, _ in raw if e)
+            if any(rl for _, _, _, rl in raw):
+                raise RateLimitError(errors)
+            raise RuntimeError(errors)
         raw = [(n, r, e) for n, r, e, _ in raw]
 
         # Keep providers in the configured priority order.

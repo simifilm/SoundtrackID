@@ -1,10 +1,13 @@
 """Music isolation."""
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
+
+log = logging.getLogger(__name__)
 
 
 class BaseMusicIsolator(ABC):
@@ -46,12 +49,12 @@ class DemucsIsolator(BaseMusicIsolator):
         from demucs.pretrained import get_model
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Loading Demucs model '{model_name}'...")
+        log.info("Loading Demucs model '%s'...", model_name)
         self.model = get_model(model_name)
         self.model.to(self.device)
         self.model.eval()
         self.model_name = model_name
-        print(f"Demucs ready on {self.device}")
+        log.info("Demucs ready on %s", self.device)
 
     def isolate(
         self, audio: NDArray[np.float32], sample_rate: int

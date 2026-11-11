@@ -5,14 +5,16 @@ run's results.json, saved once the run is complete. resume: identify the cues a
 provider left pending, from their saved audio.
 """
 
+import logging
 import shutil
 import threading
-import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from soundtrackID.models import CUE_METADATA_KEYS, load_results, save_json
+
+log = logging.getLogger(__name__)
 
 ProgressCb = Callable[..., None]
 
@@ -135,6 +137,7 @@ def resume(
         except RateLimitError:
             break  # still refused: the rest stays pending
         except Exception:
+            log.exception("Identifying %s failed", cue.get("segment_id"))
             continue  # stays pending: a later resume tries again
         if det.title:
             _apply_detection_to_cue(cue, det)
@@ -169,7 +172,7 @@ def _checked(
 
 
 def _report(progress: ProgressCb, step: str, detail: str) -> None:
-    print(f"[{step}] {detail}")
+    log.info("[%s] %s", step, detail)
     progress(step, detail=detail)
 
 
@@ -184,7 +187,7 @@ def _rerank_and_look_up_composers(
 
         temporal_rerank({"cues": cues}, (film or {}).get("year"))
     except Exception:
-        print("temporal rerank failed:\n" + traceback.format_exc())
+        log.exception("Temporal rerank failed")
 
     def on_lookup(step: str, **fields: Any) -> None:
         if step == "music_start":
@@ -202,7 +205,7 @@ def _rerank_and_look_up_composers(
     except Cancelled:
         raise
     except Exception:
-        print("composer lookup failed:\n" + traceback.format_exc())
+        log.exception("Composer lookup failed")
 
 
 def _keep_video(video: Path, run_dir: Path, results: dict[str, Any]) -> None:
@@ -217,7 +220,7 @@ def _keep_video(video: Path, run_dir: Path, results: dict[str, Any]) -> None:
         filmstrip = extract_filmstrip(dest, run_dir / "filmstrip.jpg")
         results["video"] = {"file": dest.name, "filmstrip": filmstrip}
     except Exception:
-        print("video/filmstrip persist failed:\n" + traceback.format_exc())
+        log.exception("Keeping the video and its filmstrip failed")
 
 
 def _apply_detection_to_cue(cue: dict, det) -> None:

@@ -1,6 +1,7 @@
 """Pipeline orchestrator."""
 
 import json
+import logging
 import os
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -25,6 +26,8 @@ from soundtrackID.models import (
 )
 from soundtrackID.slots import merge_spans, stream_slots, top_classes
 
+log = logging.getLogger(__name__)
+
 # Seconds between the starts of overlapping classification windows.
 CLASSIFICATION_HOP_S = 5.0
 
@@ -44,7 +47,8 @@ def _group_detections(
 
     Pass 1: consecutive same-key runs (None==None so unidentified also merge),
     as long as a clip starts <= gap_tolerance_s after the previous one ended.
-    Clips skipped at a rate limit stay alone, so a resume identifies each one.
+    Clips the provider didn't answer (a rate limit or an error) stay alone, so
+    a resume identifies each one.
     Pass 2: bridge unidentified groups between identical tracks when the later
     track starts <= gap_tolerance_s after the earlier one ended.
     """
@@ -270,7 +274,7 @@ class Pipeline:
 
         def progress(step: str, detail: str = "", **fields) -> None:
             text = detail or (json.dumps(fields) if fields else "")
-            print(f"[{step}] {text}" if text else f"[{step}]")
+            log.info("[%s] %s", step, text)
             if on_progress:
                 on_progress(step, detail=detail, **fields)
 
@@ -336,13 +340,21 @@ class Pipeline:
             )
 
         def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
-            """Return a detection, converting a provider rate-limit into a
-            skipped window (and flagging the run) instead of aborting everything."""
+            """Return a detection, converting a provider rate-limit (which also
+            flags the run) or error into a skipped window instead of aborting
+            everything: a resume asks for it again."""
             nonlocal rate_limited
             try:
                 return fut.result()
             except RateLimitError:
                 rate_limited = True
+                return skipped_result(chunk_seg)
+            except Exception:
+                log.exception(
+                    "Identifying %.1f-%.1f s failed",
+                    chunk_seg.start_time,
+                    chunk_seg.end_time,
+                )
                 return skipped_result(chunk_seg)
 
         def emit_reaped(
@@ -378,7 +390,7 @@ class Pipeline:
                 else:
                     start, end = chunk_seg.start_time, chunk_seg.end_time
                     det_detail = f"{prefix} {start:.0f}s-{end:.0f}s: no match"
-                print(f"  {det_detail}")
+                log.info("  %s", det_detail)
                 progress(
                     "detecting",
                     det_detail,
@@ -411,7 +423,7 @@ class Pipeline:
                 )
                 status = "MUSIC" if result.is_music else "-----"
                 detail = f"{chunk.start_time:5.1f}s - {chunk.end_time:5.1f}s: {status}"
-                print(f"  {detail}")
+                log.info("  %s", detail)
                 progress(
                     "classifying",
                     detail,

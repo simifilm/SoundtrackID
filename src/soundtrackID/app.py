@@ -4,6 +4,7 @@ import asyncio
 import copy
 import io
 import json
+import logging
 import mimetypes
 import os
 import shutil
@@ -23,6 +24,8 @@ from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
 from soundtrackID.models import load_results, load_timeline, results_to_csv, save_json
+
+log = logging.getLogger(__name__)
 
 # Load .env early so TMDb credentials are available downstream
 try:
@@ -54,6 +57,9 @@ if getattr(_sys, "frozen", False):
     )
 else:
     _OUTPUT_DIR = Path("./output/cache")
+
+# The server's log (main.py), next to the runs.
+LOG_PATH = _OUTPUT_DIR.parent / "soundtrackid.log"
 
 # ── API-key settings (managed via the UI, persisted to settings.json) ─────────
 # Maps a UI field name → the environment variable the clients read. Values entered
@@ -297,6 +303,7 @@ async def identify(file: UploadFile) -> dict:
 
         film = read_mp4_tags(staged_path) or {}
     except Exception:
+        log.warning("Could not read the tags of %s", original_name, exc_info=True)
         film = {}
 
     return {"staging_id": staging_id, "original_name": original_name, "film": film}
@@ -493,6 +500,7 @@ async def _sse(
         except analysis.Cancelled:
             put({"step": "cancelled"})
         except Exception as exc:
+            log.exception("Run %s failed", run_id)
             put(
                 {
                     "step": "error",
@@ -563,7 +571,7 @@ async def history() -> list[dict]:
                     }
                 )
             except Exception:
-                pass
+                log.warning("Could not list %s", results_path, exc_info=True)
     return items
 
 

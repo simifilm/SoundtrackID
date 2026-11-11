@@ -93,6 +93,19 @@ class ThrottledClient:
         return DetectionResult(segment=segment, title=None, artist=None, confidence=0)
 
 
+class FailingClient:
+    """Fails with an unexpected error on clips starting at `fail_at`, as on a
+    provider's malformed answer; matches "X" otherwise."""
+
+    def __init__(self, fail_at):
+        self.fail_at = fail_at
+
+    def detect(self, segment):
+        if segment.start_time in self.fail_at:
+            raise ValueError("malformed answer")
+        return DetectionResult(segment=segment, title="X", artist=None, confidence=1.0)
+
+
 def test_classification_spans_cover_whole_audio(tmp_path):
     """The results get gap-free music / no-music spans with every class."""
     pipeline = Pipeline(
@@ -267,6 +280,31 @@ def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
         (20.0, 5.0, True),
         (25.0, 5.0, True),
     ]
+
+
+def test_a_window_the_provider_failed_on_stays_pending(tmp_path, caplog):
+    """The run goes on and keeps what was identified; a resume asks again."""
+    pipeline = Pipeline(
+        loader=FakeLoader(),
+        chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0)),
+        aggregator=ChunkAggregator(gap_tolerance=1.0),
+        isolator=DummyIsolator(),
+        detection_client=FailingClient(fail_at=(10.0,)),
+        output_dir=tmp_path,
+        detection_concurrency=1,
+    )
+
+    results = pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
+
+    cues = results.to_dict()["cues"]
+    assert [(c["start"], c["duration"], c["title"], c["pending"]) for c in cues] == [
+        (0.0, 10.0, "X", False),
+        (10.0, 5.0, None, True),
+        (15.0, 15.0, "X", False),
+    ]
+    assert cues[1]["audio_file"] == "segments/seg_002.wav"
+    assert "malformed answer" in caplog.text
 
 
 def test_progress_events_carry_their_data_as_fields(tmp_path):

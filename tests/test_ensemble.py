@@ -223,6 +223,20 @@ def test_ensemble_is_rate_limited_when_no_provider_answered(other):
         ens.detect(_segment())
 
 
+def test_ensemble_fails_when_every_provider_failed():
+    # Nobody listened to the window either, so it stays pending like a window a
+    # single provider failed on; not a rate limit, so the next window is asked.
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient(None, raises=True)),
+            ("audd", _FakeClient(None, raises=True)),
+        ]
+    )
+    with pytest.raises(RuntimeError) as exc:
+        ens.detect(_segment())
+    assert not isinstance(exc.value, RateLimitError)
+
+
 @pytest.mark.parametrize("answer", ["Abyss", None], ids=["match", "no-match"])
 def test_ensemble_carries_on_when_another_provider_answers(answer):
     ens = EnsembleDetectionClient(

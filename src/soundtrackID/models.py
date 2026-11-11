@@ -43,7 +43,7 @@ class DetectionResult:
     confidence: float
     provider: str = "shazam"
     metadata: dict[str, Any] = field(default_factory=dict)
-    skipped: bool = False  # not identified: the provider was rate-limiting
+    skipped: bool = False  # not identified: the provider didn't answer (limit, error)
 
 
 @dataclass
@@ -55,7 +55,7 @@ class SegmentOutput:
     duration: float
     audio_file: str | None  # only while pending: a resume sends it again
     confidence: float | None  # None: nothing identified
-    pending: bool = False  # skipped at a rate limit; a resume identifies it
+    pending: bool = False  # the provider didn't answer; a resume identifies it
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 
 from soundtrackID.aggregator import ChunkAggregator
-from soundtrackID.analysis import Cancelled, analyze
+from soundtrackID.analysis import Cancelled, analyze, resume
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.isolators import DummyIsolator
 from soundtrackID.pipeline import Pipeline
 from tests.test_pipeline import (
+    FailingClient,
     FakeClassifier,
     FakeLoader,
     NoMatchClient,
@@ -75,3 +76,47 @@ def test_a_cancelled_run_leaves_no_folder(tmp_path, monkeypatch):
         )
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failing_composer_lookup_is_logged(tmp_path, monkeypatch, caplog):
+    """The run is saved without composers, and the log says why."""
+
+    def enrich(**kwargs):
+        raise ValueError("MusicBrainz is down")
+
+    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", enrich)
+
+    analyze(
+        _pipeline(tmp_path, NoMatchClient()),
+        Path("film.mp4"),
+        "acrcloud",
+        film={"title": "F"},
+    )
+
+    [run_dir] = tmp_path.iterdir()
+    assert (run_dir / "results.json").exists()
+    assert "MusicBrainz is down" in caplog.text
+
+
+def test_a_resume_logs_a_cue_the_provider_failed_on(tmp_path, monkeypatch, caplog):
+    """The cue stays pending, with its audio, for the next resume."""
+    results = analyze(
+        _pipeline(tmp_path, ThrottledClient(answers=2)),
+        Path("film.mp4"),
+        "acrcloud",
+        film={"title": "F"},
+        max_segment_duration=5.0,
+    )
+    pending = [c["segment_id"] for c in results["cues"] if c["pending"]]
+    monkeypatch.setattr(
+        "soundtrackID.detection.build_detection_client",
+        lambda api: FailingClient(fail_at=(0.0,)),  # resumed clips start at 0 s
+    )
+
+    [run_dir] = tmp_path.iterdir()
+    resumed = resume(run_dir, "acrcloud")
+
+    still = [c for c in resumed["cues"] if c["pending"]]
+    assert [c["segment_id"] for c in still] == pending
+    assert all((run_dir / c["audio_file"]).exists() for c in still)
+    assert "malformed answer" in caplog.text

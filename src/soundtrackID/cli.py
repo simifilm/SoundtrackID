@@ -8,6 +8,7 @@ re-ranking, composer lookup, one results.json per run.
 """
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,10 @@ def main(argv: list[str] | None = None) -> None:
         load_dotenv()
     except ImportError:
         pass
+    # The analysis's progress and what went wrong, on the console; other
+    # libraries only their warnings (httpx logs request URLs, maybe with a key).
+    logging.basicConfig(format="%(message)s")
+    logging.getLogger("soundtrackID").setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser(
         prog="python -m soundtrackID.cli",

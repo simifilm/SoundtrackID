@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -94,7 +97,9 @@ class FilmLookup:
     ) -> FilmInfo:
         info = FilmInfo(imdb_id=imdb_id, tmdb_id=tmdb_id)
 
-        if self._has_tmdb_creds() and (tmdb_id or imdb_id or title):
+        if not self._has_tmdb_creds():
+            log.info("No TMDb key (FIWI_TMDB_API_TOKEN, FIWI_TMDB_KEY): TMDb skipped")
+        elif tmdb_id or imdb_id or title:
             try:
                 tmdb = self._lookup_tmdb(
                     tmdb_id=tmdb_id, imdb_id=imdb_id, title=title, year=year
@@ -102,7 +107,7 @@ class FilmLookup:
                 if tmdb:
                     info.merge(tmdb, "tmdb")
             except (httpx.HTTPError, ValueError):
-                pass
+                log.warning("TMDb lookup failed", exc_info=True)
 
         if not info.is_complete():
             try:
@@ -114,7 +119,7 @@ class FilmLookup:
                 if wd:
                     info.merge(wd, "wikidata")
             except (httpx.HTTPError, ValueError):
-                pass
+                log.warning("Wikidata film lookup failed", exc_info=True)
 
         if not info.is_complete() and (info.imdb_id or imdb_id):
             try:
@@ -122,7 +127,7 @@ class FilmLookup:
                 if im:
                     info.merge(im, "imdbapi")
             except (httpx.HTTPError, ValueError):
-                pass
+                log.warning("imdbapi.dev lookup failed", exc_info=True)
 
         return info
 
@@ -166,6 +171,8 @@ class FilmLookup:
             params=full,
         )
         if r.status_code != 200:
+            # The path only: the parameters can hold the key.
+            log.warning("TMDb answered HTTP %s for %s", r.status_code, path)
             return None
         return r.json()
 
@@ -225,6 +232,7 @@ class FilmLookup:
                 f"https://api.imdbapi.dev/titles/{imdb_id}", timeout=8.0
             )
         except httpx.HTTPError:
+            log.warning("imdbapi.dev lookup failed", exc_info=True)
             return None
         if r.status_code != 200:
             return None
