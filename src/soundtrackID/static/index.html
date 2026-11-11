@@ -598,6 +598,10 @@
   }
   #tracks-body tr:hover .track-remove { opacity: 1; }
   .track-remove:hover { color: #ef4444; }
+  /* While a resume runs (its results replace the table), nothing is editable */
+  #tracks-body.locked td.editable { cursor: default; }
+  #tracks-body.locked tr:hover td.editable:hover { background: none; box-shadow: none; }
+  #tracks-body.locked .track-remove { visibility: hidden; }
 
   .track-link {
     display: inline-flex;
@@ -752,6 +756,21 @@
     color: #6b7280;
   }
   button.download-btn:hover { background: #f0ebff; color: #7c3aed; }
+
+  /* Download results: a menu of formats, opening upwards (the page ends here) */
+  .download-menu { position: relative; }
+  .download-options {
+    position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 10;
+    display: flex; flex-direction: column; min-width: 100%;
+    background: #ffffff; border: 1px solid #ddd6fe; border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(60, 30, 120, 0.12); overflow: hidden;
+  }
+  .download-options[hidden] { display: none; }
+  .download-options button {
+    padding: 0.45rem 1.25rem; border: none; background: none; text-align: left;
+    font-size: 0.85rem; color: #6b7280; cursor: pointer; white-space: nowrap;
+  }
+  .download-options button:hover { background: #f0ebff; color: #7c3aed; }
 
   button.cancel-btn {
     display: none;
@@ -915,44 +934,6 @@
     text-align: right;
   }
 
-  .toggle-row {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    font-size: 0.85rem;
-    font-weight: normal;
-    text-transform: none;
-    letter-spacing: normal;
-    color: #6b7280;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .toggle-row input[type="checkbox"] { display: none; }
-
-  .toggle-track {
-    width: 32px;
-    height: 18px;
-    background: #7c3aed;
-    border-radius: 9px;
-    position: relative;
-    transition: background 0.2s;
-    flex-shrink: 0;
-  }
-
-  .toggle-track::after {
-    content: '';
-    position: absolute;
-    top: 3px; left: 3px;
-    width: 12px; height: 12px;
-    border-radius: 50%;
-    background: #cbd5e1;
-    transition: transform 0.2s, background 0.2s;
-  }
-
-  .toggle-row input:checked + .toggle-track { background: #7c3aed; }
-  .toggle-row input:checked + .toggle-track::after { transform: translateX(14px); background: #fff; }
 </style>
 </head>
 <body>
@@ -1023,16 +1004,6 @@
           <option value="2">2 hops</option>
           <option value="3">3 hops</option>
         </select>
-      </div>
-
-      <div class="setting-group">
-        <label>Export</label>
-        <label class="toggle-row">
-          <span id="json-label" style="color:#6b7280">JSON</span>
-          <input type="checkbox" id="opt-csv">
-          <span class="toggle-track"></span>
-          <span id="csv-label" style="color:#c4b5fd">CSV</span>
-        </label>
       </div>
     </div>
 
@@ -1232,7 +1203,13 @@
     <div class="results-actions">
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="reset-btn" id="rerun-btn" title="Analyze this video again with the current settings, without uploading it again">Re-run with current settings</button>
-      <button class="download-btn" id="download-btn">Download results</button>
+      <div class="download-menu">
+        <button class="download-btn" id="download-btn" aria-haspopup="menu" aria-expanded="false">Download results ▾</button>
+        <div class="download-options" id="download-options" role="menu" hidden>
+          <button type="button" role="menuitem" data-format="json">JSON</button>
+          <button type="button" role="menuitem" data-format="csv">CSV (spreadsheet)</button>
+        </div>
+      </div>
       <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
     </div>
   </div>
@@ -1305,6 +1282,7 @@ let currentResults = null;
 let currentVideoName = null;
 let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
 let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
+let resumeRunning = false;     // its results replace the table: no edits meanwhile
 
 // ── Pre-analysis film confirmation ────────────────────────────────────────────
 const filmConfirm = document.getElementById('film-confirm');
@@ -1434,10 +1412,6 @@ document.getElementById('fc-start').addEventListener('click', () => {
 // Settings wiring
 document.getElementById('opt-threshold').addEventListener('input', function() {
   document.getElementById('opt-threshold-val').textContent = this.value + '%';
-});
-document.getElementById('opt-csv').addEventListener('change', function() {
-  document.getElementById('json-label').style.color = this.checked ? '#c4b5fd' : '#6b7280';
-  document.getElementById('csv-label').style.color  = this.checked ? '#6b7280' : '#c4b5fd';
 });
 
 // Drag & Drop
@@ -1785,7 +1759,6 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
   formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
   formData.append('hop', document.getElementById('opt-hop').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
-  formData.append('export_csv', document.getElementById('opt-csv').checked ? '1' : '0');
 
   const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
   fetch(url, { method: 'POST', body: formData })
@@ -2038,37 +2011,6 @@ async function triggerDownload(content, filename, type) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(url);
-}
-
-function buildCSV(results) {
-  const header = ['segment_id','start','duration','conditioning','confidence','provider','agreement','title','artist','album','original_year','release_year','anachronistic','composer','authors','latest_author_death_year','public_domain'];
-  const pdStr = pd => pd === true ? 'yes' : pd === false ? 'no' : 'unknown';
-  const authorsStr = enr => (enr.authors || []).map(a => `${a.name} [${(a.roles || []).join('/')}] b.${a.birth_year ?? '?'} d.${a.death_year ?? '?'}`).join('; ');
-  const rows = (results.cues || []).map(cue => {
-    const enr = cue.enrichment || {};
-    return [
-      cue.segment_id,
-      cue.start,
-      cue.duration,
-      cue.conditioning ?? '',
-      cue.confidence ?? '',
-      cue.provider ?? '',
-      cue.agreement ? `${cue.agreement.count}/${cue.agreement.total}` : '',
-      cue.title ?? '',
-      cue.artist ?? '',
-      cue.album ?? '',
-      enr.original_year ?? '',
-      cue.release_year ?? '',
-      isAnachronistic(cue) ? '1' : '0',
-      enr.composer ?? '',
-      authorsStr(enr),
-      enr.latest_author_death_year ?? '',
-      pdStr(enr.public_domain),
-    ];
-  });
-  return [header, ...rows]
-    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
-    .join('\r\n');
 }
 
 // Results
@@ -2386,6 +2328,7 @@ function applyTrackEdit(group, field, raw) {
 }
 
 function removeTrack(group) {
+  if (resumeRunning) return;
   const ids = new Set(group.cues.map(c => c.segment_id));
   currentResults.cues = (currentResults.cues || []).filter(c => !ids.has(c.segment_id));
   persistAndRerender();
@@ -2393,7 +2336,7 @@ function removeTrack(group) {
 
 // Turn a cell into an inline text editor; Enter/blur commits, Esc cancels.
 function startCellEdit(td, group) {
-  if (td.querySelector('input')) return;
+  if (resumeRunning || td.querySelector('input')) return;
   const field = td.dataset.field;
   const input = document.createElement('input');
   input.type = 'text';
@@ -2682,14 +2625,17 @@ function updateRateLimitBanner(results) {
   if (!banner) return;
   const cues = results.cues || [];
   const identified = cues.filter(c => c.title).length;
-  // Runs saved before skipped cues were marked: any unidentified cue may be pending.
-  const marked = cues.some(c => 'pending' in c);
-  const pending = cues.filter(c => (marked ? c.pending : !c.title)).length;
+  const pending = cues.filter(c => c.pending).length;
   if (!results.rate_limited) { banner.style.display = 'none'; return; }
   document.getElementById('ratelimit-text').textContent =
     `Detection stopped early: a provider hit its limit or couldn't be reached. ${identified} of ${cues.length} identified; ${pending} still pending.`;
   banner.style.display = 'flex';
   document.getElementById('resume-btn').disabled = false;
+}
+
+function setResumeRunning(on) {
+  resumeRunning = on;
+  document.getElementById('tracks-body').classList.toggle('locked', on);
 }
 
 function resumeDetection() {
@@ -2706,6 +2652,7 @@ function resumeDetection() {
     return;
   }
   btn.disabled = true;
+  setResumeRunning(true);
   fetch(`/resume/${encodeURIComponent(currentVideoName)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api: providers.join(',') || 'acrcloud' }),
@@ -2715,6 +2662,7 @@ function resumeDetection() {
       const { detail } = await res.json().catch(() => ({}));
       text.textContent = 'Resume failed: ' + (typeof detail === 'string' ? detail : `HTTP ${res.status}`);
       btn.disabled = false;
+      setResumeRunning(false);
       return;
     }
     const reader = res.body.getReader();
@@ -2727,6 +2675,7 @@ function resumeDetection() {
           if (!finished) {
             text.textContent = 'Resume failed: the server closed the connection before finishing.';
             btn.disabled = false;
+            setResumeRunning(false);
           }
           return;
         }
@@ -2739,18 +2688,20 @@ function resumeDetection() {
           else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
           else if (ev.step === 'done') {
             finished = true;
+            setResumeRunning(false);
             currentResults = ev.results;
             showResults(ev.results);   // re-renders + refreshes the banner
           } else if (ev.step === 'error') {
             finished = true;
             text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
             btn.disabled = false;
+            setResumeRunning(false);
           }
         });
         pump();
-      }).catch(err => { text.textContent = 'Resume connection lost: ' + err.message; btn.disabled = false; });
+      }).catch(err => { text.textContent = 'Resume connection lost: ' + err.message; btn.disabled = false; setResumeRunning(false); });
     })();
-  }).catch(err => { text.textContent = 'Resume failed: ' + err.message; btn.disabled = false; });
+  }).catch(err => { text.textContent = 'Resume failed: ' + err.message; btn.disabled = false; setResumeRunning(false); });
 }
 document.getElementById('resume-btn').addEventListener('click', resumeDetection);
 
@@ -2796,14 +2747,26 @@ resetBtn.addEventListener('click', () => {
   loadHistory();
 });
 
-downloadBtn.addEventListener('click', async () => {
-  if (!currentResults) return;
-  const stem = currentResults.video_name || 'results';
-  // Sequential, so the desktop app shows one save dialog after the other.
-  await triggerDownload(JSON.stringify(currentResults, null, 2), stem + '_results.json', 'application/json');
-  if (document.getElementById('opt-csv').checked) {
-    await triggerDownload(buildCSV(currentResults), stem + '_results.csv', 'text/csv');
-  }
+// Download results as JSON or CSV. Both come from the run's saved results, so
+// they hold the same data, also after edits and a resume.
+const downloadOptions = document.getElementById('download-options');
+function showDownloadOptions(show) {
+  downloadOptions.hidden = !show;
+  downloadBtn.setAttribute('aria-expanded', String(show));
+}
+downloadBtn.addEventListener('click', e => {
+  e.stopPropagation();  // the document's click handler would close it again
+  showDownloadOptions(downloadOptions.hidden);
+});
+document.addEventListener('click', () => showDownloadOptions(false));
+downloadOptions.addEventListener('click', async e => {
+  const format = e.target.closest('[data-format]')?.dataset.format;
+  if (!format || !currentVideoName) return;
+  const name = encodeURIComponent(currentVideoName);
+  const res = await fetch(format === 'csv' ? `/output/${name}/csv` : `/results/${name}`);
+  if (!res.ok) { alert(`Download failed (HTTP ${res.status})`); return; }
+  const content = format === 'csv' ? await res.blob() : JSON.stringify(await res.json(), null, 2);
+  await triggerDownload(content, `${currentVideoName}_results.${format}`, 'application/json');
 });
 
 document.getElementById('mava-export-btn').addEventListener('click', async () => {

@@ -91,12 +91,10 @@ class OutputWriter:
         self,
         output_dir: Path,
         conditioning: str = "original",
-        export_csv: bool = False,
         bridge_gap: float = 2.0,
     ) -> None:
         self.output_dir = output_dir
         self.conditioning = conditioning
-        self.export_csv = export_csv
         self.bridge_gap = bridge_gap
 
     def write(
@@ -111,16 +109,17 @@ class OutputWriter:
     ) -> ResultsOutput:
         """Write detection results to disk.
 
-        Consecutive detections with the same identification are concatenated
-        into a single WAV file. Creates:
+        Consecutive detections with the same identification are merged into one
+        cue. Creates:
         - output_dir/<video_name>/results.json
-        - output_dir/<video_name>/segments/seg_001.wav
+        - output_dir/<video_name>/segments/seg_001.wav, the audio of each pending
+          cue, which a resume sends again
         where video_name is `run_name`, by default the video's file name.
         """
         video_name = run_name or video_path.stem
         video_output_dir = self.output_dir / video_name
         segments_dir = video_output_dir / "segments"
-        segments_dir.mkdir(parents=True, exist_ok=True)
+        video_output_dir.mkdir(parents=True, exist_ok=True)
 
         groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
 
@@ -129,21 +128,17 @@ class OutputWriter:
 
         for i, group in enumerate(groups):
             segment_id = f"seg_{i + 1:03d}"
-            audio_filename = f"{segment_id}.wav"
-            audio_path = segments_dir / audio_filename
-
-            # A run's last clip is anchored to the run's end and can overlap the
-            # clip before it; keep only the part after the previous clip ended.
-            parts = [group[0][0].audio]
-            for (prev, _), (seg, _) in zip(group, group[1:]):
-                overlap = max(
-                    0, round((prev.end_time - seg.start_time) * seg.sample_rate)
+            pending = all(d.skipped for _, d in group)
+            audio_file = None
+            if pending:
+                # A pending cue is a single clip: skipped clips are never joined.
+                seg = group[0][0]
+                audio_file = f"segments/{segment_id}.wav"
+                segments_dir.mkdir(exist_ok=True)
+                audio_int16 = (np.clip(seg.audio, -1.0, 1.0) * 32767).astype(np.int16)
+                wavfile.write(
+                    video_output_dir / audio_file, seg.sample_rate, audio_int16
                 )
-                parts.append(seg.audio[overlap:])
-            combined_audio = np.concatenate(parts)
-            sample_rate = group[0][0].sample_rate
-            audio_int16 = (np.clip(combined_audio, -1.0, 1.0) * 32767).astype(np.int16)
-            wavfile.write(audio_path, sample_rate, audio_int16)
 
             first_seg, last_seg = group[0][0], group[-1][0]
             identified = [d for _, d in group if d.title]
@@ -159,9 +154,9 @@ class OutputWriter:
                     start=first_seg.start_time,
                     duration=last_seg.end_time - first_seg.start_time,
                     conditioning=self.conditioning,
-                    audio_file=f"segments/{audio_filename}",
+                    audio_file=audio_file,
                     confidence=confidence,
-                    pending=all(d.skipped for _, d in group),
+                    pending=pending,
                 )
             )
 
@@ -210,43 +205,6 @@ class OutputWriter:
         results_path.write_text(results_output.to_json())
         print(f"  Results written to: {results_path}")
 
-        if self.export_csv:
-            import csv
-
-            ident_map = {id_.segment_id: id_ for id_ in identification_outputs}
-            csv_path = video_output_dir / "results.csv"
-            with csv_path.open("w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(
-                    [
-                        "segment_id",
-                        "start",
-                        "duration",
-                        "conditioning",
-                        "confidence",
-                        "provider",
-                        "title",
-                        "artist",
-                        "album",
-                    ]
-                )
-                for seg in segment_outputs:
-                    ident = ident_map.get(seg.id)
-                    writer.writerow(
-                        [
-                            seg.id,
-                            seg.start,
-                            seg.duration,
-                            seg.conditioning,
-                            seg.confidence,
-                            ident.provider if ident else "",
-                            ident.title if ident else "",
-                            ident.artist if ident else "",
-                            ident.album if ident else "",
-                        ]
-                    )
-            print(f"  CSV written to: {csv_path}")
-
         return results_output
 
 
@@ -260,7 +218,6 @@ class Pipeline:
         isolator: BaseMusicIsolator,
         detection_client: BaseMusicDetectionClient,
         output_dir: Path | None = None,
-        export_csv: bool = False,
         detection_concurrency: int = 4,
         bridge_gap: float = 2.0,
     ) -> None:
@@ -283,7 +240,6 @@ class Pipeline:
         self.output_writer = OutputWriter(
             self.output_dir,
             conditioning=conditioning,
-            export_csv=export_csv,
             bridge_gap=bridge_gap,
         )
 
@@ -623,6 +579,11 @@ if __name__ == "__main__":
         default=0.2,
         help="Music classification threshold (default: 0.2)",
     )
+    parser.add_argument(
+        "--csv",
+        action="store_true",
+        help="Also write results.csv: the same results as a spreadsheet",
+    )
 
     args = parser.parse_args()
 
@@ -671,6 +632,12 @@ if __name__ == "__main__":
     )
 
     results = pipeline.run(args.video_path, max_segment_duration=args.max_segment)
+
+    if args.csv:
+        csv_path = args.output_dir / args.video_path.stem / "results.csv"
+        # newline="": the CSV brings its own line endings.
+        csv_path.write_text(results.to_csv(), encoding="utf-8", newline="")
+        print(f"  CSV written to: {csv_path}")
 
     print("\nPipeline complete!")
     print(f"  Segments: {len(results.segments)}")

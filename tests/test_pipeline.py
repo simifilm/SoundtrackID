@@ -53,11 +53,6 @@ class NoMatchClient:
         return DetectionResult(segment=segment, title=None, artist=None, confidence=0.0)
 
 
-class SameTitleClient:
-    def detect(self, segment):
-        return DetectionResult(segment=segment, title="X", artist="A", confidence=1.0)
-
-
 class TitleByStartClient:
     """Matches "X" for clips starting at the given times, nothing otherwise."""
 
@@ -169,25 +164,40 @@ def test_unidentified_cue_has_no_confidence(tmp_path):
     assert [c["confidence"] for c in results.to_dict()["cues"]] == [None]
 
 
-def test_cue_audio_skips_overlap_of_anchored_clip(tmp_path):
-    """Clips 0-15 s and 5-20 s of one cue give 20 s of audio, not 30 s."""
+def test_only_pending_cues_keep_their_audio(tmp_path):
+    """A resume sends it again; nothing else reads it."""
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
-        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0)),  # run 0-20 s
+        classifier=FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0)),
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
-        detection_client=SameTitleClient(),
+        detection_client=ThrottledClient(answers=2),
         output_dir=tmp_path,
+        detection_concurrency=1,  # windows are asked in order
     )
 
-    results = pipeline.run(Path("film.mp4"), max_segment_duration=15.0)
+    results = pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
 
-    [cue] = results.segments
-    assert (cue.start, cue.duration) == (0.0, 20.0)
-    rate, wav = wavfile.read(tmp_path / "film" / cue.audio_file)
+    cues = results.to_dict()["cues"]
+    assert [c["audio_file"] for c in cues] == [
+        None,  # answered ("no match")
+        "segments/seg_002.wav",
+        "segments/seg_003.wav",
+        "segments/seg_004.wav",
+        "segments/seg_005.wav",
+    ]
+    segments = tmp_path / "film" / "segments"
+    assert sorted(p.name for p in segments.iterdir()) == [
+        "seg_002.wav",
+        "seg_003.wav",
+        "seg_004.wav",
+        "seg_005.wav",
+    ]
+    # The clip the provider would have heard: 10-15 s of the film.
+    rate, wav = wavfile.read(segments / "seg_002.wav")
     audio, _ = FakeLoader().load(None)
-    np.testing.assert_allclose(wav / 32767, audio[: 20 * SR], atol=1e-4)
+    np.testing.assert_allclose(wav / 32767, audio[10 * SR : 15 * SR], atol=1e-4)
 
 
 @pytest.mark.parametrize("bridge_gap, n_cues", [(10.0, 1), (5.0, 3)])

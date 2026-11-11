@@ -13,10 +13,12 @@ from soundtrackID import app as app_module
 from soundtrackID.detection import RateLimitError
 from soundtrackID.models import (
     CUE_METADATA_KEYS,
+    RESULTS_VERSION,
     DetectionResult,
     IdentificationOutput,
     ResultsOutput,
     SegmentOutput,
+    upgrade_results,
 )
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -99,14 +101,44 @@ def test_path_traversal_rejected(tmp_path, monkeypatch, name):
 # ── Reading runs: GET /results/{video_name} and the history list ───────────
 
 
-def test_get_returns_the_run_results(tmp_path, monkeypatch):
+def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)
+    run_dir = _make_run(tmp_path)  # saved without a version
 
     r = client.get("/results/myrun")
 
     assert r.status_code == 200
-    assert r.json() == json.loads((run_dir / "results.json").read_text())
+    saved = json.loads((run_dir / "results.json").read_text())
+    assert r.json() == upgrade_results(saved)
+    assert r.json()["version"] == RESULTS_VERSION
+
+
+def test_results_carry_their_format_version():
+    results = ResultsOutput("film.mp4", []).to_dict()
+
+    assert results["version"] == RESULTS_VERSION
+    assert "ID" not in results and "fiwi_id" not in results
+
+
+def test_older_results_are_upgraded_when_read():
+    """Saved before skipped cues were marked: in a rate-limited run any
+    unidentified cue may be one. Marks saved since are kept."""
+    limited = {
+        "ID": None,
+        "fiwi_id": None,
+        "rate_limited": True,
+        "cues": [{"title": "Song"}, {"title": None}],
+    }
+    finished = {"rate_limited": False, "cues": [{"title": None}]}
+    marked = {"rate_limited": True, "cues": [{"title": None, "pending": False}]}
+
+    assert upgrade_results(limited) == {
+        "version": RESULTS_VERSION,
+        "rate_limited": True,
+        "cues": [{"title": "Song", "pending": False}, {"title": None, "pending": True}],
+    }
+    assert upgrade_results(finished)["cues"] == [{"title": None, "pending": False}]
+    assert upgrade_results(marked)["cues"] == [{"title": None, "pending": False}]
 
 
 def test_get_missing_run_is_404(tmp_path, monkeypatch):
@@ -218,15 +250,18 @@ def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one():
     assert resumed == {key: analyzed[key] for key in detection_fields}
 
 
-def _resume(tmp_path, monkeypatch, detect, cues, **results):
+def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, **results):
     """POST /resume for a run with these cues (each with a short silent clip),
-    identifying them with `detect`; returns the saved results."""
+    identifying them with `detect` and looking up composers with `enrich` (by
+    default not at all); returns the saved results."""
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(
         "soundtrackID.detection.build_detection_client",
         lambda api: SimpleNamespace(detect=detect),
     )
-    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", lambda **kw: None)
+    monkeypatch.setattr(
+        "soundtrackID.metadata.enricher.enrich", enrich or (lambda **kw: None)
+    )
     run = tmp_path / "r"
     (run / "segments").mkdir(parents=True)
     for cue in cues:
@@ -295,3 +330,56 @@ def test_resume_of_an_older_run_keeps_its_unasked_cues_pending(tmp_path, monkeyp
 
     assert [c["pending"] for c in saved["cues"]] == [False, True, True]
     assert saved["rate_limited"] is True
+
+
+def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):
+    """The others keep their composers, e.g. one edited by hand."""
+
+    def detect(segment):
+        return DetectionResult(segment, "New", "B", 0.9, "acrcloud", {"isrc": "X2"})
+
+    def enrich(results, **kw):
+        for cue in results["cues"]:
+            cue["enrichment"] = {"composer": "Looked up"}
+
+    cues = [
+        {
+            "segment_id": "s1",
+            "title": "Old",
+            "isrc": "X1",
+            "pending": False,
+            "enrichment": {"composer": "Edited by hand"},
+        },
+        {"segment_id": "s2", "title": None, "pending": True},
+    ]
+    saved = _resume(
+        tmp_path, monkeypatch, detect, cues, enrich=enrich, rate_limited=True
+    )
+
+    assert [c["enrichment"]["composer"] for c in saved["cues"]] == [
+        "Edited by hand",
+        "Looked up",
+    ]
+
+
+def test_resume_removes_the_audio_of_answered_cues(tmp_path, monkeypatch):
+    """Only pending cues keep their audio, for the next resume."""
+    calls = []
+
+    def detect(segment):
+        calls.append(segment)
+        if len(calls) > 1:
+            raise RateLimitError("quota exceeded")
+        return DetectionResult(segment, None, None, 0.0)  # no match
+
+    cues = [
+        {"segment_id": "s1", "title": None, "pending": True},
+        {"segment_id": "s2", "title": None, "pending": True},
+    ]
+    saved = _resume(tmp_path, monkeypatch, detect, cues, rate_limited=True)
+
+    assert [(c["pending"], c["audio_file"]) for c in saved["cues"]] == [
+        (False, None),
+        (True, "segments/s2.wav"),
+    ]
+    assert [p.name for p in (tmp_path / "r" / "segments").iterdir()] == ["s2.wav"]

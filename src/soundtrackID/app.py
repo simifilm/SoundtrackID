@@ -22,6 +22,8 @@ from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from soundtrackID.models import load_results, results_to_csv
+
 # Load .env early so TMDb credentials are available downstream
 try:
     from dotenv import load_dotenv
@@ -184,7 +186,6 @@ def _get_classifier(threshold: float = 0.2):
 def _build_pipeline(
     output_dir: Path,
     threshold: float = 0.2,
-    export_csv: bool = False,
     api: str = "acrcloud",
     bridge_gap: float = 2.0,
     hop: float = 5.0,
@@ -206,7 +207,6 @@ def _build_pipeline(
         isolator=DummyIsolator(),
         detection_client=build_detection_client(api),
         output_dir=output_dir,
-        export_csv=export_csv,
         bridge_gap=bridge_gap,
     )
 
@@ -355,7 +355,6 @@ async def analyze(
     bridge_gap: float = Form(2.0),
     hop: float = Form(5.0),
     max_segment: float = Form(0.0),
-    export_csv: str = Form("0"),
 ) -> StreamingResponse:
     """Analyze a staged upload and stream SSE progress events.
 
@@ -394,7 +393,6 @@ async def analyze(
             bridge_gap=bridge_gap,
             hop=hop,
             max_segment_duration=max_segment or None,
-            export_csv=export_csv == "1",
             api=api,
             film_override=film_override,
         ),
@@ -414,7 +412,6 @@ async def rerun(
     bridge_gap: float = Form(2.0),
     hop: float = Form(5.0),
     max_segment: float = Form(0.0),
-    export_csv: str = Form("0"),
 ) -> StreamingResponse:
     """Analyze a run's stored source video again with new settings, as a new run.
 
@@ -425,7 +422,7 @@ async def rerun(
     if not sources:
         raise HTTPException(status_code=404, detail="No stored video for this run")
     results_path = run_dir / "results.json"
-    results = json.loads(results_path.read_text()) if results_path.exists() else {}
+    results = load_results(results_path) if results_path.exists() else {}
     # The new run is named after the film's file, not after this run.
     file_name = Path(results.get("source") or video_name).stem + sources[0].suffix
     # Hard-linked, so both runs share the video on disk; copied where the drive
@@ -444,7 +441,6 @@ async def rerun(
             bridge_gap=bridge_gap,
             hop=hop,
             max_segment_duration=max_segment or None,
-            export_csv=export_csv == "1",
             api=api,
             film_override=results.get("film"),
         ),
@@ -463,7 +459,6 @@ async def _run_pipeline_sse(
     bridge_gap: float = 2.0,
     hop: float = 5.0,
     max_segment_duration: float | None = None,
-    export_csv: bool = False,
     api: str = "acrcloud",
     film_override: dict | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -498,7 +493,6 @@ async def _run_pipeline_sse(
             pipeline = _build_pipeline(
                 _OUTPUT_DIR,
                 threshold=threshold,
-                export_csv=export_csv,
                 api=api,
                 bridge_gap=bridge_gap,
                 hop=hop,
@@ -672,7 +666,7 @@ async def history() -> list[dict]:
             if not results_path.exists():
                 continue
             try:
-                data = json.loads(results_path.read_text())
+                data = load_results(results_path)
                 cues = data.get("cues", [])
                 items.append(
                     {
@@ -701,12 +695,12 @@ def _safe_run_dir(video_name: str) -> Path:
 
 
 @app.get("/results/{video_name}")
-async def get_results(video_name: str) -> FileResponse:
-    """A run's results.json."""
+async def get_results(video_name: str) -> dict:
+    """A run's results.json, in the current format."""
     results_path = _safe_run_dir(video_name) / "results.json"
     if not results_path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
-    return FileResponse(results_path, media_type="application/json")
+    return load_results(results_path)
 
 
 @app.post("/results/{video_name}")
@@ -722,7 +716,7 @@ async def save_results(video_name: str, payload: dict = Body(...)) -> dict:
     if not results_path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        data = json.loads(results_path.read_text())
+        data = load_results(results_path)
     except (OSError, ValueError) as exc:
         raise HTTPException(
             status_code=500, detail=f"Failed to read results.json: {exc}"
@@ -744,6 +738,27 @@ async def serve_video(video_name: str) -> FileResponse:
     return FileResponse(video_path, media_type=media_type)
 
 
+@app.get("/output/{video_name}/csv")
+async def export_csv(video_name: str) -> Response:
+    """This run's results as CSV, built from its results.json as it is now."""
+    results_path = _safe_run_dir(video_name) / "results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        data = load_results(results_path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read results.json: {exc}"
+        )
+
+    filename = f"{video_name}_results.csv"
+    return Response(
+        content=results_to_csv(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/output/{video_name}/mava")
 async def export_mava(video_name: str) -> Response:
     """Export this run's cues as a MAVA/VIAN-Export compatible TSV + mapping JSON.
@@ -757,7 +772,7 @@ async def export_mava(video_name: str) -> Response:
     if not results_path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
     try:
-        data = json.loads(results_path.read_text())
+        data = load_results(results_path)
     except (OSError, ValueError) as exc:
         raise HTTPException(
             status_code=500, detail=f"Failed to read results.json: {exc}"
@@ -837,7 +852,7 @@ async def _run_resume_sse(
         from soundtrackID.models import MusicSegment
 
         try:
-            results = json.loads(results_path.read_text())
+            results = load_results(results_path)
         except Exception as exc:
             ev_queue.put(
                 {"step": "error", "detail": f"Failed to load results.json: {exc}"}
@@ -845,11 +860,6 @@ async def _run_resume_sse(
             return
 
         cues = results.get("cues") or []
-        if not any("pending" in c for c in cues):
-            # Saved before skipped cues were marked: they can't be told apart
-            # from "no match", so every unidentified cue is retried.
-            for c in cues:
-                c["pending"] = not c.get("title")
         todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
         total = len(todo)
         if total == 0:
@@ -868,6 +878,8 @@ async def _run_resume_sse(
         ev_queue.put({"step": "resuming", "detail": f"0/{total}"})
         still_limited = False
         done_n = 0
+        identified = []  # the cues this resume identifies
+        answered_audio = []  # of cues no longer pending
         for cue in todo:
             wav_path = run_dir / cue["audio_file"]
             if not wav_path.exists():
@@ -894,19 +906,26 @@ async def _run_resume_sse(
                 continue
             if det.title:
                 _apply_detection_to_cue(cue, det)
+                identified.append(cue)
             cue["pending"] = False  # answered, a match or not
+            cue["audio_file"] = None  # only pending cues keep their audio
+            answered_audio.append(wav_path)
             done_n += 1
             ev_queue.put({"step": "resuming", "detail": f"{done_n}/{total}"})
+
+        # Re-rank and enrich only the cues identified just now: the others keep
+        # what they have, e.g. a composer edited by hand.
+        new_cues = {"cues": identified}
 
         # Temporal re-rank the freshly-identified cues before enriching.
         try:
             from soundtrackID.temporal import temporal_rerank
 
-            temporal_rerank(results, (results.get("film") or {}).get("year"))
+            temporal_rerank(new_cues, (results.get("film") or {}).get("year"))
         except Exception:
             pass
 
-        # Enrich the (now) identified cues, best-effort.
+        # Enrich the freshly-identified cues, best-effort.
         try:
             import httpx
 
@@ -927,7 +946,7 @@ async def _run_resume_sse(
 
             with httpx.Client(timeout=15.0) as _c:
                 _enrich(
-                    results=results,
+                    results=new_cues,
                     http_client=_c,
                     progress_cb=_cb,
                 )
@@ -944,6 +963,10 @@ async def _run_resume_sse(
                 {"step": "error", "detail": f"Failed to write results.json: {exc}"}
             )
             return
+        # Only once saved: until then the saved cues are still pending, and a
+        # resume needs their audio.
+        for wav_path in answered_audio:
+            wav_path.unlink(missing_ok=True)
         results_lean = {k: v for k, v in results.items() if k != "waveform"}
         ev_queue.put({"step": "done", "results": results_lean})
 

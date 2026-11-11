@@ -71,7 +71,6 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 | Hop Size | 5 s | Step between the overlapping windows scored for music — smaller places cue boundaries more precisely but takes longer |
 | Sensitivity | 20 % | Lower values catch more music, but also more false positives |
 | Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
-| Export | JSON | Switch to CSV to get a spreadsheet file alongside the results |
 
 Long films take a while: every cue has to be looked up individually, and the music
 services answer one request at a time.
@@ -81,8 +80,8 @@ services answer one request at a time.
 Detected cues appear in a list, with a minimap and a filmstrip of the whole film below
 it. Hovering a cue shows a preview of that moment in the video.
 
-When the analysis is done, a **Download results** button appears — click it to save
-`results.json` (and `results.csv` if you enabled the CSV export). Earlier analyses stay
+When the analysis is done, a **Download results** button appears — choose JSON or CSV
+(a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
 listed under **Recent runs** and can be downloaded again at any time.
 
 ### Metadata enrichment
@@ -169,6 +168,7 @@ uv run --extra app python -m soundtrackID.pipeline path/to/video.mp4 --no-isolat
 --hop SEC             Step between overlapping classifier chunks (default: 5)
 --max-segment SEC     Split segments into chunks of at most N seconds before detection
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
+--csv                 Also write results.csv: the same results as a spreadsheet
 ```
 
 ACRCloud and AudD read their keys from the environment or a `.env` file:
@@ -182,10 +182,9 @@ Results are written to `output/<video_name>/`:
 output/
   My Film (2024)/
     results.json        # all segments and identifications
-    results.csv         # optional CSV export
+    results.csv         # with --csv: the same results as a spreadsheet
     segments/
-      seg_001.wav       # extracted audio for each music cue
-      seg_002.wav
+      seg_004.wav       # audio of a cue left pending at a rate limit, for Resume
 ```
 
 ## Tests
