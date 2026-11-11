@@ -242,11 +242,13 @@ function renderClasses(windows) {
       <td>${fmtTime(w.end)}</td>
       <td>${w.is_music ? `<span class="badge music">${pct(w.music)}</span>` : pct(w.music)}</td>
       <td>${Object.entries(w.classes).map(([name, p]) => `${fmt(name)} ${pct(p)}`).join(' · ')}</td>`;
-    // Like a timeline row: show the window on the timeline and play it.
+    // Like a timeline row: show the window on the timeline and play it, then
+    // scroll up to the player so its picture is in view.
     tr.addEventListener('click', () => {
       const span = { start: w.start, end: w.end, duration: w.end - w.start };
       focusCueOnTimeline(span);
       playSegment(span);
+      videoWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     body.appendChild(tr);
   });

@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 
 import pytest
 from playwright.sync_api import expect
@@ -35,6 +36,22 @@ def test_opening_a_run_shows_its_results_waveform_and_classes(page, runs):
     expect(page.locator("#waveform-container")).to_be_visible()
     page.locator('.results-tab[data-view="classes"]').click()
     expect(page.locator("#classes-body tr")).to_have_count(5)
+
+
+def test_clicking_a_class_window_scrolls_up_to_the_video(page, runs, video):
+    run = make_run(runs, [cue(1)], video={"file": "source.mp4", "filmstrip": None})
+    shutil.copy(video, run / "source.mp4")
+    page.set_viewport_size({"width": 1280, "height": 400})
+    open_run(page)
+    page.locator('.results-tab[data-view="classes"]').click()
+    row = page.locator("#classes-body tr").last
+    row.scroll_into_view_if_needed()
+    player = page.locator("#video-preview")
+    expect(player).not_to_be_in_viewport()
+
+    row.click()
+
+    expect(player).to_be_in_viewport()
 
 
 def test_deleting_a_run(page, runs):
