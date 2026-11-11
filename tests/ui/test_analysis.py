@@ -134,6 +134,24 @@ def test_the_analysis_uses_the_chosen_settings(page, fakes, video, runs):
     assert settings["max_segment_duration"] == 15.0
 
 
+def test_whole_music_segment_identifies_each_stretch_of_music_in_one_piece(
+    page, fakes, video, runs
+):
+    fakes.tracks = {0.0: MOONLIGHT}
+
+    analyze(page, video, chunk="0")
+
+    [run] = runs.iterdir()
+    results = saved(run)
+    assert results["settings"]["max_segment_duration"] is None
+    [cue] = results["cues"]
+    assert (cue["title"], cue["start"], cue["duration"]) == (
+        "Moonlight Serenade",
+        0.0,
+        30.0,
+    )
+
+
 def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):
     fakes.classifying.clear()  # the analysis waits after its first window
     page.goto("/")
