@@ -38,6 +38,7 @@ function showResults(results) {
 
   updateAnachronismToolbar(cues);
   updateRateLimitBanner(results);
+  loadHistory();   // lists a run just analyzed, and its counts after a resume
 }
 
 // Show a resume prompt while cues are pending: a provider hit its limit,
@@ -58,6 +59,8 @@ function updateRateLimitBanner(results) {
 function setResumeRunning(on) {
   resumeRunning = on;
   document.getElementById('tracks-body').classList.toggle('locked', on);
+  // Opening or deleting a run would pull the page from under the resume.
+  document.getElementById('history-panel').classList.toggle('locked', on);
 }
 
 function resumeDetection() {
@@ -153,7 +156,7 @@ document.getElementById('rerun-btn').addEventListener('click', () => {
   startAnalysis(null, null, currentVideoName);
 });
 
-resetBtn.addEventListener('click', () => {
+function showStartPage() {
   filmConfirm.style.display = 'none';
   dropZone.style.display = 'block';
   progressView.style.display = 'none';
@@ -162,4 +165,5 @@ resetBtn.addEventListener('click', () => {
   setupVideo(null, null);
   fileInput.value = '';
   loadHistory();
-});
+}
+resetBtn.addEventListener('click', showStartPage);

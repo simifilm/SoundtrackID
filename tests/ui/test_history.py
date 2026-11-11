@@ -54,6 +54,56 @@ def test_clicking_a_class_window_scrolls_up_to_the_video(page, runs, video):
     expect(player).to_be_in_viewport()
 
 
+def test_recent_runs_are_under_the_results_buttons(page, runs):
+    make_run(runs, [cue(1, "Song")])
+
+    open_run(page)
+
+    buttons = page.locator(".results-actions").bounding_box()
+    panel = page.locator("#history-panel").bounding_box()
+    assert panel["y"] >= buttons["y"] + buttons["height"]
+
+
+def test_another_run_opens_from_the_results(page, runs):
+    make_run(runs, [cue(1, "First Song")])
+    make_run(runs, [cue(1, "Second Song")], name="other_2026-11-11_11-00-00")
+    open_run(page)
+
+    page.locator("#history-panel > summary").click()
+    page.locator(".history-item", has_text="other_").click()
+
+    expect(page.locator("#tracks-body tr")).to_have_text([re.compile("Second Song")])
+    expect(page.locator("#history-panel > summary")).to_be_visible()
+
+
+def test_a_run_without_a_waveform_shows_none_of_the_last_one(page, runs):
+    make_run(runs, [cue(1)])
+    other = make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")
+    (other / "timeline.json").unlink()
+    open_run(page)
+    expect(page.locator("#waveform-container")).to_be_visible()
+
+    page.locator("#history-panel > summary").click()
+    page.locator(".history-item", has_text="other_").click()
+
+    expect(page.locator("#waveform-container")).to_be_hidden()
+
+
+def test_deleting_the_open_run_goes_back_to_the_start(page, runs):
+    shown = make_run(runs, [cue(1)])
+    make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")
+    open_run(page)
+    page.locator("#history-panel > summary").click()
+
+    item = page.locator(".history-item", has_text=shown.name)
+    item.hover()
+    item.locator(".history-delete-btn").click()
+
+    expect(page.locator("#results-view")).to_be_hidden()
+    expect(page.locator("#drop-zone")).to_be_visible()
+    expect(page.locator(".history-item")).to_have_text([re.compile("other_")])
+
+
 def test_deleting_a_run(page, runs):
     gone = make_run(runs, [cue(1)], name="film_2026-11-11_10-00-00")
     make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")

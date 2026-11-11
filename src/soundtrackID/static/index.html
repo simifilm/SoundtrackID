@@ -132,15 +132,6 @@
     </div>
   </div>
 
-  <!-- History Panel -->
-  <details id="history-panel" style="display:none">
-    <summary>Recent runs</summary>
-    <div id="history-list"></div>
-    <div class="history-footer">
-      <button type="button" id="delete-all-runs" class="history-delete-all">Delete all runs</button>
-    </div>
-  </details>
-
   <!-- Progress View -->
   <div id="progress-view">
     <div class="steps" id="steps-list">
@@ -288,6 +279,15 @@
       <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
     </div>
   </div>
+
+  <!-- History Panel (under the results' buttons; alone under the drop zone on the start page) -->
+  <details id="history-panel" style="display:none">
+    <summary>Recent runs</summary>
+    <div id="history-list"></div>
+    <div class="history-footer">
+      <button type="button" id="delete-all-runs" class="history-delete-all">Delete all runs</button>
+    </div>
+  </details>
 
 
 </div>

@@ -23,7 +23,8 @@ async function loadHistory() {
       div.querySelector('.history-delete-btn').addEventListener('click', async (e) => {
         e.stopPropagation();
         try { await fetch('/history/' + encodeURIComponent(item.video_name), { method: 'DELETE' }); } catch (_) {}
-        loadHistory();
+        // The run on screen is gone: back to the start page.
+        if (item.video_name === currentVideoName) showStartPage(); else loadHistory();
       });
       div.addEventListener('click', async () => {
         const res = await fetch('/results/' + encodeURIComponent(item.video_name));
@@ -31,7 +32,7 @@ async function loadHistory() {
         const results = await res.json();
         const timeline = await loadTimeline(item.video_name);
         dropZone.style.display = 'none';
-        panel.style.display = 'none';
+        panel.open = false;
         progressView.style.display = 'none';
         resultsView.style.display = 'block';
         const wf = timeline.waveform;
@@ -39,6 +40,8 @@ async function loadHistory() {
           progBars.style.display = 'none';
           showWaveform(wf.samples, wf.duration);
           showCuesOnWaveform(results.cues || []);
+        } else {
+          waveformContainer.style.display = 'none';   // not the previous run's
         }
         showResults(results);
         renderClasses(timeline.classification_windows);
@@ -53,5 +56,5 @@ document.getElementById('delete-all-runs').addEventListener('click', async () =>
   const n = document.querySelectorAll('.history-item').length;
   if (!confirm(`Delete ${n === 1 ? 'the 1 run' : `all ${n} runs`}? This can't be undone.`)) return;
   try { await fetch('/history', { method: 'DELETE' }); } catch (_) {}
-  loadHistory();
+  showStartPage();
 });

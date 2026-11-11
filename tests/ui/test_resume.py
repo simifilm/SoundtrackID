@@ -54,6 +54,26 @@ def test_resume_identifies_the_pending_cues(page, fakes, run):
     ]
 
 
+def test_no_other_run_opens_while_resuming(page, fakes, run, runs):
+    """The resumed run would come back over it when the resume finishes."""
+    make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")
+    fakes.identifying.clear()  # the provider doesn't answer yet
+    open_run(page)
+    page.locator("#history-panel > summary").click()
+    requested = []
+    page.on("request", lambda r: requested.append(r.url) if "other_" in r.url else None)
+
+    page.locator("#resume-btn").click()
+    expect(page.locator("#ratelimit-text")).to_have_text(
+        "Resuming identification... 0/2"
+    )
+    page.locator(".history-item", has_text="other_").click(force=True)
+    fakes.identifying.set()
+
+    expect(page.locator("#ratelimit-banner")).to_be_hidden()
+    assert requested == []
+
+
 def test_the_table_is_read_only_while_resuming(page, fakes, run):
     """Its results replace the table, so an edit meanwhile would be lost."""
     fakes.identifying.clear()  # the provider doesn't answer yet

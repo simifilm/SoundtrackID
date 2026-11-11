@@ -649,6 +649,8 @@ input.cell-edit {
 #history-panel summary:hover { color: #7c3aed; }
 
 #history-list { border-top: 1px solid #ede9fe; }
+#history-panel.locked #history-list,
+#history-panel.locked .history-footer { opacity: 0.5; pointer-events: none; }
 
 .history-item {
   display: flex;

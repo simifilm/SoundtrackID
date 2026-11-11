@@ -152,6 +152,14 @@ def test_whole_music_segment_identifies_each_stretch_of_music_in_one_piece(
     )
 
 
+def test_the_finished_run_is_in_recent_runs(page, fakes, video, runs):
+    analyze(page, video)
+
+    [run] = runs.iterdir()
+    page.locator("#history-panel > summary").click()
+    expect(page.locator(".history-item")).to_have_text([re.compile(run.name)])
+
+
 def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):
     fakes.classifying.clear()  # the analysis waits after its first window
     page.goto("/")
