@@ -69,7 +69,7 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 | Detection providers | Shazam | Which music services identify the cues; tick two or more to let them vote (see [Detection providers](#detection-providers)) |
 | Chunk Duration | 30 s | Longest piece of a cue sent for identification — long cues are split, so a change of track inside a cue is caught; shorter means more requests |
 | Hop Size | 5 s | Step between the overlapping windows scored for music — smaller places cue boundaries more precisely but takes longer |
-| Sensitivity | 20 % | Lower values catch more music, but also more false positives |
+| Music Threshold | 20 % | How likely a window must be music to count as music; lower values catch more music, but also more false positives |
 | Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 
 Long films take a while: every cue has to be looked up individually, and the music
