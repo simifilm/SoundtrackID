@@ -136,7 +136,7 @@ class Fakes:
         self._calls = 0
         self._lock = threading.Lock()
 
-    def get_classifier(self, threshold):
+    def get_classifier(self):
         fakes = self
 
         class Classifier(FakeClassifier):
@@ -145,9 +145,7 @@ class Fakes:
                     fakes.classifying.wait(timeout=10)
                 return super().classify(chunk)
 
-        classifier = Classifier(music_starts=MUSIC_STARTS)
-        classifier.threshold = threshold
-        return classifier
+        return Classifier(music_starts=MUSIC_STARTS)
 
     def detect(self, segment):
         self.identifying.wait(timeout=10)

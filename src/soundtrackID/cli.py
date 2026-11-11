@@ -128,8 +128,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "analyze":
         pipeline = build_pipeline(
-            _classifier(args.classifier, args.threshold),
+            _classifier(args.classifier),
             args.api,
+            threshold=args.threshold,
             hop=args.hop,
             window=args.chunk_duration,
             bridge_gap=args.bridge_gap,
@@ -159,17 +160,16 @@ def main(argv: list[str] | None = None) -> None:
     _summarize(results, run_dir)
 
 
-def _classifier(name: str, threshold: float):
+def _classifier(name: str):
     if name == "hf":
         from soundtrackID.classifiers import HuggingFaceClassifier
 
-        return HuggingFaceClassifier(music_labels=["Music"], threshold=threshold)
+        return HuggingFaceClassifier(music_labels=["Music"])
     from soundtrackID.classifiers import OnnxClassifier
 
     return OnnxClassifier(
         model_dir=str(Path(__file__).parents[2] / "assets" / "ast_model"),
         music_labels=["Music"],
-        threshold=threshold,
     )
 
 

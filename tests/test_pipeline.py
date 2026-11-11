@@ -14,12 +14,7 @@ from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.detection import ProviderAuthError, RateLimitError
 from soundtrackID.isolators import DummyIsolator
-from soundtrackID.models import (
-    MATCH_KEYS,
-    ClassificationResult,
-    DetectionResult,
-    MusicSegment,
-)
+from soundtrackID.models import MATCH_KEYS, DetectionResult, MusicSegment
 from soundtrackID.pipeline import Pipeline, _group_detections, waveform_peaks
 
 SR = 1000
@@ -32,10 +27,10 @@ class FakeLoader:
 
 
 class FakeClassifier:
-    """Only the windows starting at `music_starts` are music."""
+    """Only the windows starting at `music_starts` are music: they score 0.6,
+    the others 0.05."""
 
     labels = LABELS
-    threshold = 0.2
     window_duration = 10.0
 
     def __init__(self, music_starts=(10.0,)):
@@ -47,9 +42,7 @@ class FakeClassifier:
             [0.3, 0.6, 0.06, 0.04] if is_music else [0.9, 0.05, 0.03, 0.02],
             dtype=np.float32,
         )
-        return ClassificationResult(
-            chunk=chunk, is_music=is_music, confidence=float(probs[1]), probs=probs
-        )
+        return float(probs[1]), probs
 
 
 class NoMatchClient:
@@ -146,7 +139,7 @@ def test_classification_spans_cover_whole_audio():
         (20.0, 30.0, False),
     ]
     assert all(set(s["classes"]) == set(LABELS) for s in spans)
-    assert spans[1]["classes"]["Music"] > FakeClassifier.threshold
+    assert spans[1]["classes"]["Music"] > pipeline.threshold
 
 
 def test_classification_windows_list_top_three_classes():
@@ -411,12 +404,7 @@ def fake_components(monkeypatch, client=None, classifier=None):
         lambda api: client or NoMatchClient(),
     )
 
-    def get_classifier(threshold):
-        run_classifier = classifier or FakeClassifier()
-        run_classifier.threshold = threshold
-        return run_classifier
-
-    return get_classifier
+    return lambda: classifier or FakeClassifier()
 
 
 def _analyze(tmp_path, monkeypatch, video=b"video", **form):
@@ -597,7 +585,7 @@ def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
     """The bridge gap and hop from the UI reach the writer and the chunker."""
     from soundtrackID import app
 
-    monkeypatch.setattr(app, "_get_classifier", lambda threshold: FakeClassifier())
+    monkeypatch.setattr(app, "_get_classifier", FakeClassifier)
     monkeypatch.setattr(
         "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
     )
@@ -609,14 +597,24 @@ def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
     assert pipeline.chunker.chunk_duration - pipeline.chunker.overlap == 2.5
 
 
-def test_each_run_classifies_with_its_own_threshold(monkeypatch):
-    """Two analyses at the same time share the loaded model, not the threshold."""
-    from soundtrackID import app
+def test_each_run_classifies_with_its_own_threshold():
+    """Runs share the loaded model, not the threshold: the classifier only scores
+    the windows, the run decides which are music."""
+    classifier = FakeClassifier()  # the window at 10 s scores 0.6, the rest 0.05
 
-    monkeypatch.setattr(app, "_classifier", FakeClassifier())
+    def music_windows(threshold):
+        pipeline = Pipeline(
+            loader=FakeLoader(),
+            chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
+            classifier=classifier,
+            aggregator=ChunkAggregator(gap_tolerance=1.0),
+            isolator=DummyIsolator(),
+            detection_client=NoMatchClient(),
+            threshold=threshold,
+        )
+        windows = pipeline.run(Path("film.mp4")).classification_windows
+        return [w["start"] for w in windows if w["is_music"]]
 
-    first = app._get_classifier(threshold=0.2)
-    second = app._get_classifier(threshold=0.8)  # starts while the first runs
-
-    assert (first.threshold, second.threshold) == (0.2, 0.8)
-    assert first.music_starts is second.music_starts  # the same model underneath
+    assert music_windows(0.5) == [10.0]
+    assert music_windows(0.7) == []
+    assert music_windows(0.01) == [0.0, 5.0, 10.0, 15.0, 20.0]

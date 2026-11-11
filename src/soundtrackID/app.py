@@ -1,7 +1,6 @@
 """FastAPI web application for the SoundtrackID pipeline."""
 
 import asyncio
-import copy
 import io
 import json
 import logging
@@ -179,7 +178,7 @@ def _prune_staging() -> None:
         pass
 
 
-def _get_classifier(threshold: float = 0.2):
+def _get_classifier():
     global _classifier
     if _classifier is None:
         with _classifier_lock:
@@ -190,7 +189,6 @@ def _get_classifier(threshold: float = 0.2):
                     _classifier = OnnxClassifier(
                         model_dir=str(Path(_sys._MEIPASS) / "ast_model"),
                         music_labels=["Music"],
-                        threshold=threshold,
                     )
                 else:
                     onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
@@ -198,22 +196,15 @@ def _get_classifier(threshold: float = 0.2):
                     if use_hf:
                         from soundtrackID.classifiers import HuggingFaceClassifier
 
-                        _classifier = HuggingFaceClassifier(
-                            music_labels=["Music"], threshold=threshold
-                        )
+                        _classifier = HuggingFaceClassifier(music_labels=["Music"])
                     else:
                         from soundtrackID.classifiers import OnnxClassifier
 
                         _classifier = OnnxClassifier(
                             model_dir=str(onnx_model_dir),
                             music_labels=["Music"],
-                            threshold=threshold,
                         )
-    # A copy per run sharing the loaded model: setting the threshold on the
-    # shared classifier changed it for analyses already running, too.
-    run_classifier = copy.copy(_classifier)
-    run_classifier.threshold = threshold
-    return run_classifier
+    return _classifier
 
 
 def _build_pipeline(
@@ -225,8 +216,9 @@ def _build_pipeline(
     from soundtrackID.pipeline import build_pipeline
 
     return build_pipeline(
-        _get_classifier(threshold=threshold),
+        _get_classifier(),
         api,
+        threshold=threshold,
         hop=hop,
         bridge_gap=bridge_gap,
     )

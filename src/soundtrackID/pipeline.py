@@ -171,6 +171,7 @@ def waveform_peaks(audio: np.ndarray, sample_rate: int) -> dict:
 class _Classification:
     """A run's audio, classified window by window as the aggregator asks for it.
 
+    A window is music if the classifier scores it above the run's threshold.
     Keeps what the results show of it: every window's top classes, so a wrong
     music verdict can be traced, and the gap-free hop-sized slots the aggregator
     gets instead of the overlapping windows, which make the classification's
@@ -178,10 +179,15 @@ class _Classification:
     """
 
     def __init__(
-        self, chunker: AudioChunker, classifier: BaseClassifier, progress: Progress
+        self,
+        chunker: AudioChunker,
+        classifier: BaseClassifier,
+        threshold: float,
+        progress: Progress,
     ) -> None:
         self._chunker = chunker
         self._classifier = classifier
+        self._threshold = threshold
         self._progress = progress
         self.windows: list[dict] = []
         self.slots: list[ClassificationResult] = []
@@ -200,14 +206,20 @@ class _Classification:
         self, audio: np.ndarray, sample_rate: int
     ) -> Iterator[ClassificationResult]:
         for chunk in self._chunker.chunk(audio, sample_rate):
-            result = self._classifier.classify(chunk)
+            music, probs = self._classifier.classify(chunk)
+            result = ClassificationResult(
+                chunk=chunk,
+                is_music=music > self._threshold,
+                confidence=music,
+                probs=probs,
+            )
             self.windows.append(
                 {
                     "start": chunk.start_time,
                     "end": chunk.end_time,
-                    "music": round(result.confidence, 4),
+                    "music": round(music, 4),
                     "is_music": result.is_music,
-                    "classes": top_classes(result.probs, self._classifier.labels, 3),
+                    "classes": top_classes(probs, self._classifier.labels, 3),
                 }
             )
             status = "MUSIC" if result.is_music else "-----"
@@ -393,6 +405,7 @@ class Pipeline:
         detection_client: BaseMusicDetectionClient,
         detection_concurrency: int = 4,
         bridge_gap: float = 2.0,
+        threshold: float = 0.2,
     ) -> None:
         self.loader = loader
         self.chunker = chunker
@@ -405,13 +418,15 @@ class Pipeline:
         # (ACRCloud is metered).
         self.detection_concurrency = max(1, detection_concurrency)
         self.bridge_gap = bridge_gap
+        # How likely a window must be music, by the classifier, to count as music.
+        self.threshold = threshold
 
     @property
     def settings(self) -> dict:
         """What this pipeline analyzes with, as saved with a run's results."""
         return {
             "classifier": type(self.classifier).__name__,
-            "threshold": self.classifier.threshold,
+            "threshold": self.threshold,
             "window": self.chunker.chunk_duration,
             "hop": self.chunker.chunk_duration - self.chunker.overlap,
             "bridge_gap": self.bridge_gap,
@@ -462,7 +477,9 @@ class Pipeline:
             on_progress("waveform", **waveform)
 
         progress("classifying", "Starting chunk classification...")
-        classification = _Classification(self.chunker, self.classifier, progress)
+        classification = _Classification(
+            self.chunker, self.classifier, self.threshold, progress
+        )
         identification = _Identification(
             self.detection_client, self.detection_concurrency, progress
         )
@@ -509,6 +526,7 @@ class Pipeline:
 def build_pipeline(
     classifier: BaseClassifier,
     api: str,
+    threshold: float = 0.2,
     hop: float = CLASSIFICATION_HOP_S,
     window: float | None = None,
     bridge_gap: float = 2.0,
@@ -517,6 +535,7 @@ def build_pipeline(
     """The pipeline the app and the CLI analyze with.
 
     `api` names the detection provider(s), comma-separated to let them vote.
+    A window is music above `threshold`, the classifier's music probability.
     `window` is the length of a classified window, by default the classifier's
     own (no padding); `isolation` removes the vocals before identification
     (Demucs).
@@ -539,4 +558,5 @@ def build_pipeline(
         isolator=isolator,
         detection_client=build_detection_client(api),
         bridge_gap=bridge_gap,
+        threshold=threshold,
     )

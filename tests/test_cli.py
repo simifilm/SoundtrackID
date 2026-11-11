@@ -16,9 +16,7 @@ def _analyze(tmp_path, monkeypatch, *options, client=None):
     """Run `cli analyze film.mp4` on 30 s of music; returns the run's folder."""
     classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
     get_classifier = fake_components(monkeypatch, client, classifier)
-    monkeypatch.setattr(
-        cli, "_classifier", lambda name, threshold: get_classifier(threshold)
-    )
+    monkeypatch.setattr(cli, "_classifier", lambda name: get_classifier())
 
     cli.main(["analyze", "film.mp4", "--output-dir", str(tmp_path)] + list(options))
 
@@ -74,6 +72,15 @@ def test_analyze_saves_a_run_like_the_app(tmp_path, monkeypatch):
     with (run_dir / "results.csv").open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert [r["segment_id"] for r in rows] == [c["segment_id"] for c in results["cues"]]
+
+
+def test_threshold_decides_what_is_music(tmp_path, monkeypatch):
+    """The film's windows all score 0.6: at a threshold of 0.7, none is music."""
+    run_dir = _analyze(tmp_path, monkeypatch, "--threshold", "0.7")
+
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["settings"]["threshold"] == 0.7
+    assert results["cues"] == []
 
 
 def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
