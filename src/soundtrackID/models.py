@@ -122,7 +122,6 @@ class ResultsOutput:
     identifications: list[IdentificationOutput] = field(default_factory=list)
     waveform: dict | None = None
     film: dict[str, Any] | None = None
-    rate_limited: bool = False  # detection stopped early on a provider quota
     classification: list[dict[str, Any]] | None = None
     classification_windows: list[dict[str, Any]] | None = None
 
@@ -151,18 +150,23 @@ class ResultsOutput:
         return cues
 
     def to_dict(self) -> dict[str, Any]:
+        """The run's results.json."""
         result: dict[str, Any] = {
             "version": RESULTS_VERSION,
             "source": self.source,
             "video_name": self.video_name,
             "film": self.film,
             "cues": self._build_cues(),
+        }
+        return result
+
+    def timeline(self) -> dict[str, Any]:
+        """The run's timeline.json: what the app draws the timeline from."""
+        return {
             "waveform": self.waveform,
             "classification": self.classification,
             "classification_windows": self.classification_windows,
-            "rate_limited": self.rate_limited,
         }
-        return result
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
@@ -178,7 +182,12 @@ class ResultsOutput:
 #      identifies it); only pending cues have an audio_file; no ID / fiwi_id.
 #   3: settings holds everything the run was analyzed with, also whether vocals
 #      were removed (isolation) instead of every cue's conditioning.
-RESULTS_VERSION = 3
+#   4: no rate_limited: a resume is due while any cue is pending. The waveform
+#      and the classification are in timeline.json (load_results moves them).
+RESULTS_VERSION = 4
+
+# What a run's timeline.json holds.
+TIMELINE_KEYS = ("waveform", "classification", "classification_windows")
 
 
 def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
@@ -197,19 +206,38 @@ def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
         if conditionings:
             settings = data.setdefault("settings", {})
             settings.setdefault("isolation", "vocals_removed" in conditionings)
+    if data.get("version", 1) < 4:
+        data.pop("rate_limited", None)
     data["version"] = RESULTS_VERSION
     return data
 
 
 def load_results(path: Path) -> dict[str, Any]:
     """Read a results.json, upgraded to the current format."""
-    return upgrade_results(json.loads(path.read_text()))
+    data = json.loads(path.read_text())
+    timeline = {k: data.pop(k) for k in TIMELINE_KEYS if k in data}
+    timeline_path = path.parent / "timeline.json"
+    if timeline and not timeline_path.exists():
+        # Saved before the timeline had a file of its own: moved there now, as
+        # the next save of these results leaves it out.
+        save_json(timeline_path, timeline)
+    return upgrade_results(data)
 
 
-def save_results(path: Path, results: dict[str, Any]) -> None:
-    """Write a results.json at once: replaced whole, never left half-written."""
+def load_timeline(run_dir: Path) -> dict[str, Any]:
+    """A run's timeline.json, also for a run saved before it had one."""
+    path = run_dir / "timeline.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    old = json.loads((run_dir / "results.json").read_text())
+    return {k: old[k] for k in TIMELINE_KEYS if k in old}
+
+
+def save_json(path: Path, data: dict[str, Any]) -> None:
+    """Write a run's results.json or timeline.json at once: replaced whole,
+    never left half-written."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(results, indent=2))
+    tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(path)
 
 

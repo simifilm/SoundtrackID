@@ -1955,6 +1955,7 @@ function handleEvent(ev) {
     // Analysis finished - hide the step checklist; results + waveform remain.
     progressView.style.display = 'none';
     showResults(results);
+    loadTimeline(results.video_name).then(t => renderClasses(t.classification_windows));
     return;
   }
 
@@ -2470,6 +2471,16 @@ function renderTimeline(cues, videoName) {
 
 // Classes: each classification window's music score and top 3 classes, to trace
 // where a wrong music / no-music verdict comes from. Music windows are badged.
+// A run's timeline (waveform, music classification) is a file of its own.
+async function loadTimeline(videoName) {
+  try {
+    const res = await fetch(`/output/${encodeURIComponent(videoName)}/timeline`);
+    return res.ok ? await res.json() : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function renderClasses(windows) {
   const body = document.getElementById('classes-body');
   if (!windows) {
@@ -2610,7 +2621,6 @@ function showResults(results) {
     tabs.style.display = 'flex';
     renderTracks(groupCues(cues), videoName);
     renderTimeline(cues, videoName);
-    renderClasses(results.classification_windows);
     switchResultsView(currentResultsView);
   }
 
@@ -2626,7 +2636,7 @@ function updateRateLimitBanner(results) {
   const cues = results.cues || [];
   const identified = cues.filter(c => c.title).length;
   const pending = cues.filter(c => c.pending).length;
-  if (!results.rate_limited) { banner.style.display = 'none'; return; }
+  if (!pending) { banner.style.display = 'none'; return; }
   document.getElementById('ratelimit-text').textContent =
     `Detection stopped early: a provider hit its limit or couldn't be reached. ${identified} of ${cues.length} identified; ${pending} still pending.`;
   banner.style.display = 'flex';
@@ -2813,11 +2823,12 @@ async function loadHistory() {
         const res = await fetch('/results/' + encodeURIComponent(item.video_name));
         if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return; }
         const results = await res.json();
+        const timeline = await loadTimeline(item.video_name);
         dropZone.style.display = 'none';
         panel.style.display = 'none';
         progressView.style.display = 'none';
         resultsView.style.display = 'block';
-        const wf = results.waveform;
+        const wf = timeline.waveform;
         if (wf) {
           wfSamples    = wf.samples;
           wfDuration   = wf.duration;
@@ -2840,6 +2851,7 @@ async function loadHistory() {
           redrawAll();
         }
         showResults(results);
+        renderClasses(timeline.classification_windows);
       });
       list.appendChild(div);
     });

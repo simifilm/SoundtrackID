@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from soundtrackID.models import CUE_METADATA_KEYS, load_results, save_results
+from soundtrackID.models import CUE_METADATA_KEYS, load_results, save_json
 
 ProgressCb = Callable[..., None]
 
@@ -69,7 +69,8 @@ def analyze(
         _rerank_and_look_up_composers(results.get("film"), results["cues"], progress)
         if keep_video:
             _keep_video(video, run_dir, results)
-        save_results(run_dir / "results.json", results)
+        save_json(run_dir / "timeline.json", output.timeline())
+        save_json(run_dir / "results.json", results)
         return results
     except BaseException:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -102,19 +103,19 @@ def resume(
     todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
     total = len(todo)
     if total == 0:
-        results["rate_limited"] = False
-        save_results(results_path, results)
         return results
 
     client = build_detection_client(api)
     _report(progress, "resuming", f"0/{total}")
-    still_limited = False
     done_n = 0
     identified = []  # the cues this resume identifies
     answered_audio = []  # of cues no longer pending
     for cue in todo:
         wav_path = run_dir / cue["audio_file"]
         if not wav_path.exists():
+            # Nothing left to send, so no resume can identify it.
+            cue["pending"] = False
+            cue["audio_file"] = None
             continue
         try:
             sr, audio = wavfile.read(wav_path)
@@ -132,10 +133,9 @@ def resume(
             )
             det = client.detect(seg)
         except RateLimitError:
-            still_limited = True
-            break
+            break  # still refused: the rest stays pending
         except Exception:
-            continue
+            continue  # stays pending: a later resume tries again
         if det.title:
             _apply_detection_to_cue(cue, det)
             identified.append(cue)
@@ -146,8 +146,7 @@ def resume(
         _report(progress, "resuming", f"{done_n}/{total}")
 
     _rerank_and_look_up_composers(results.get("film"), identified, progress)
-    results["rate_limited"] = still_limited
-    save_results(results_path, results)
+    save_json(results_path, results)
     # Only once saved: until then the saved cues are still pending, and a resume
     # needs their audio.
     for wav_path in answered_audio:

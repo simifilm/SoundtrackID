@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
-from soundtrackID.models import load_results, results_to_csv, save_results
+from soundtrackID.models import load_results, load_timeline, results_to_csv, save_json
 
 # Load .env early so TMDb credentials are available downstream
 try:
@@ -479,10 +479,7 @@ async def _sse(
     def run() -> None:
         try:
             results = work(lambda step, **fields: put({"step": step, **fields}), cancel)
-            # The waveform (up to ~60k points) was streamed with its own event
-            # and is saved in results.json: left out to keep the event small.
-            done = {k: v for k, v in results.items() if k != "waveform"}
-            put({"step": "done", "results": done})
+            put({"step": "done", "results": results})
         except analysis.Cancelled:
             put({"step": "cancelled"})
         except Exception as exc:
@@ -582,6 +579,16 @@ async def get_results(video_name: str) -> dict:
     return load_results(results_path)
 
 
+@app.get("/output/{video_name}/timeline")
+async def get_timeline(video_name: str) -> dict:
+    """A run's waveform and music classification, for the timeline and the
+    Classes view."""
+    run_dir = _safe_run_dir(video_name)
+    if not (run_dir / "results.json").exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    return load_timeline(run_dir)
+
+
 @app.post("/results/{video_name}")
 async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
     """Persist manual edits to a run's cues (fill-ins, corrections, removals).
@@ -601,7 +608,7 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
             status_code=500, detail=f"Failed to read results.json: {exc}"
         )
     data["cues"] = cues
-    save_results(results_path, data)
+    save_json(results_path, data)
     return {"status": "saved", "cues": len(cues)}
 
 

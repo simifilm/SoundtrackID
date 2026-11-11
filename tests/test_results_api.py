@@ -61,7 +61,9 @@ def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
     saved = json.loads((run_dir / "results.json").read_text())
     assert saved["cues"] == new_cues  # cues replaced
     assert saved["film"] == {"title": "Test", "year": 1950}  # preserved
-    assert saved["waveform"] == {"samples": [1, 2, 3]}  # preserved
+    # Preserved, in the timeline's own file now.
+    timeline = json.loads((run_dir / "timeline.json").read_text())
+    assert timeline == {"waveform": {"samples": [1, 2, 3]}}
 
 
 def test_save_can_remove_all_cues(tmp_path, monkeypatch):
@@ -110,6 +112,7 @@ def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch
 
     assert r.status_code == 200
     saved = json.loads((run_dir / "results.json").read_text())
+    del saved["waveform"]  # in the run's timeline
     assert r.json() == upgrade_results(saved)
     assert r.json()["version"] == RESULTS_VERSION
 
@@ -135,7 +138,6 @@ def test_older_results_are_upgraded_when_read():
 
     assert upgrade_results(limited) == {
         "version": RESULTS_VERSION,
-        "rate_limited": True,
         "cues": [{"title": "Song", "pending": False}, {"title": None, "pending": True}],
     }
     assert upgrade_results(finished)["cues"] == [{"title": None, "pending": False}]
@@ -158,6 +160,37 @@ def test_vocal_isolation_moves_from_the_cues_into_the_settings():
         "cues": [cue],
     }
     assert upgrade_results(original)["settings"] == {"hop": 5.0, "isolation": False}
+
+
+def test_rate_limit_flag_gives_way_to_the_pending_cues():
+    """A resume is due while any cue is pending; the run-wide flag could
+    disagree with the cues."""
+    data = {"version": 3, "rate_limited": True, "cues": [{"pending": False}]}
+
+    assert upgrade_results(data) == {
+        "version": RESULTS_VERSION,
+        "cues": [{"pending": False}],
+    }
+
+
+def test_timeline_of_a_run_saved_before_it_had_its_own_file(tmp_path, monkeypatch):
+    """Read from results.json, and moved into timeline.json once the results
+    are read, as their next save leaves it out."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    run_dir = _make_run(tmp_path)  # its waveform in results.json
+    timeline = {"waveform": {"samples": [1, 2, 3]}}
+
+    assert client.get("/output/myrun/timeline").json() == timeline
+    client.post("/results/myrun", json={"cues": []})  # an edit saves the results
+
+    assert "waveform" not in json.loads((run_dir / "results.json").read_text())
+    assert json.loads((run_dir / "timeline.json").read_text()) == timeline
+    assert client.get("/output/myrun/timeline").json() == timeline
+
+
+def test_timeline_of_a_missing_run_is_404(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    assert client.get("/output/nope/timeline").status_code == 404
 
 
 def test_get_missing_run_is_404(tmp_path, monkeypatch):
@@ -204,25 +237,21 @@ def test_resume_missing_run_404(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
-def test_resume_no_pending_clears_flag(tmp_path, monkeypatch):
+def test_resume_with_nothing_pending_changes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     run = tmp_path / "r"
     run.mkdir()
-    (run / "results.json").write_text(
-        json.dumps(
-            {
-                "rate_limited": True,
-                "cues": [
-                    {"segment_id": "s1", "title": "X", "audio_file": "segments/s1.wav"}
-                ],
-            }
-        )
-    )
+    results = {
+        "version": RESULTS_VERSION,
+        "cues": [{"segment_id": "s1", "title": "X", "pending": False}],
+    }
+    (run / "results.json").write_text(json.dumps(results))
+
     r = client.post("/resume/r", json={})
+
     assert r.status_code == 200
     assert '"step": "done"' in r.text
-    saved = json.loads((run / "results.json").read_text())
-    assert saved["rate_limited"] is False  # nothing pending -> resolved
+    assert json.loads((run / "results.json").read_text()) == results
 
 
 def test_apply_detection_to_cue_maps_fields():
@@ -348,7 +377,26 @@ def test_resume_of_an_older_run_keeps_its_unasked_cues_pending(tmp_path, monkeyp
     saved = _resume(tmp_path, monkeypatch, detect, cues, rate_limited=True)
 
     assert [c["pending"] for c in saved["cues"]] == [False, True, True]
-    assert saved["rate_limited"] is True
+
+
+def test_resume_gives_up_on_a_cue_whose_audio_is_gone(tmp_path, monkeypatch):
+    """No resume could identify it, so it no longer counts as pending."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "soundtrackID.detection.build_detection_client",
+        lambda api: SimpleNamespace(detect=lambda seg: pytest.fail("nothing to send")),
+    )
+    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", lambda **kw: None)
+    run = tmp_path / "r"
+    run.mkdir()
+    cue = {"segment_id": "s1", "pending": True, "audio_file": "segments/s1.wav"}
+    results = {"version": RESULTS_VERSION, "cues": [cue]}
+    (run / "results.json").write_text(json.dumps(results))
+
+    client.post("/resume/r", json={})
+
+    [saved] = json.loads((run / "results.json").read_text())["cues"]
+    assert (saved["pending"], saved["audio_file"]) == (False, None)
 
 
 def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):

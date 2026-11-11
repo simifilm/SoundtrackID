@@ -33,8 +33,8 @@ def _pipeline(tmp_path, client):
 
 
 def test_results_are_saved_once_the_run_is_complete(tmp_path):
-    """With what the analysis adds to the pipeline's results, e.g. the
-    rate-limit flag, which the pipeline sets only once its provider stopped."""
+    """The results, with what the analysis adds to the pipeline's, and the
+    timeline; the cues the provider's limit skipped are pending."""
     pipeline = _pipeline(tmp_path, ThrottledClient(answers=2))
 
     results = analyze(
@@ -48,8 +48,11 @@ def test_results_are_saved_once_the_run_is_complete(tmp_path):
     [run_dir] = tmp_path.iterdir()
     saved = json.loads((run_dir / "results.json").read_text())
     assert saved == results
-    assert saved["rate_limited"] is True
     assert (saved["providers"], saved["film"]) == (["acrcloud"], {"title": "F"})
+    assert any(c["pending"] for c in saved["cues"])
+    timeline = json.loads((run_dir / "timeline.json").read_text())
+    assert timeline["waveform"]["duration"] == 30.0
+    assert len(timeline["classification_windows"]) == 5
 
 
 def test_a_cancelled_run_leaves_no_folder(tmp_path, monkeypatch):

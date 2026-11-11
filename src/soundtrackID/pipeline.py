@@ -503,7 +503,6 @@ class Pipeline:
             classification_windows=windows,
             run_name=run_name,
         )
-        output.rate_limited = rate_limited
         return output
 
 

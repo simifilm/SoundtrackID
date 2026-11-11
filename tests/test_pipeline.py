@@ -239,8 +239,8 @@ def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
         Path("film.mp4"), on_progress=on_progress, max_segment_duration=5.0
     )
 
-    assert results.rate_limited
     assert throttled.calls == 1
+    assert results.segments and all(s.pending for s in results.segments)
     assert not any(i.title for i in results.identifications)
 
 

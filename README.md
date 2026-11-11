@@ -200,6 +200,7 @@ Each analysis is a run of its own, in `output/<video_name>_<date>_<time>/`:
 output/
   My Film_2026-11-11_10-15-00/
     results.json        # all segments and identifications
+    timeline.json       # waveform and music classification, for the app's timeline
     results.csv         # with --csv: the same results as a spreadsheet
     segments/
       seg_004.wav       # audio of a cue left pending at a rate limit, for Resume

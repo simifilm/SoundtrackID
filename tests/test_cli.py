@@ -88,7 +88,6 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
     cli.main(["resume", str(run_dir)])
 
     results = json.loads((run_dir / "results.json").read_text())
-    assert results["rate_limited"] is False
     assert [c["title"] for c in results["cues"] if c["segment_id"] in pending] == [
         "Song"
     ] * len(pending)
