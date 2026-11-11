@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from scipy.io import wavfile
 
-from soundtrackID.models import DetectionResult, MusicSegment
+from soundtrackID.models import MATCH_KEYS, DetectionResult, MusicSegment
 
 log = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
     def detect(self, segment: MusicSegment) -> DetectionResult:
         empty = DetectionResult(
-            segment=segment, title=None, artist=None, confidence=0.0, provider="shazam"
+            segment=segment, title=None, artist=None, provider="shazam"
         )
         # Try ShazamKit first (best source when available).
         if self._helper:
@@ -234,7 +234,6 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
                     segment=segment,
                     title=data.get("title"),
                     artist=data.get("artist"),
-                    confidence=1.0,  # ShazamKit gives no score
                     provider="shazam",
                     metadata={
                         "isrc": data.get("isrc"),
@@ -292,7 +291,6 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
                 segment=segment,
                 title=None,
                 artist=None,
-                confidence=0.0,
                 provider="shazam",
             )
 
@@ -326,7 +324,6 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
             segment=segment,
             title=track.get("title"),
             artist=track.get("subtitle"),
-            confidence=1.0,
             provider="shazam",
             metadata={
                 "album": album,
@@ -404,7 +401,6 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
             segment=segment,
             title=None,
             artist=None,
-            confidence=0.0,
             provider="acrcloud",
         )
 
@@ -453,7 +449,6 @@ class ACRCloudDetectionClient(BaseMusicDetectionClient):
             segment=segment,
             title=primary["title"],
             artist=primary["artist"],
-            confidence=primary["score"] / 100.0,  # ACRCloud score is 0-100
             provider="acrcloud",
             metadata=md,
         )
@@ -486,7 +481,7 @@ class AudDDetectionClient(BaseMusicDetectionClient):
         import httpx
 
         empty = DetectionResult(
-            segment=segment, title=None, artist=None, confidence=0.0, provider="audd"
+            segment=segment, title=None, artist=None, provider="audd"
         )
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -559,7 +554,6 @@ class AudDDetectionClient(BaseMusicDetectionClient):
             segment=segment,
             title=result.get("title"),
             artist=result.get("artist"),
-            confidence=1.0,  # AudD returns no score
             provider="audd",
             metadata={
                 "album": result.get("album"),
@@ -585,20 +579,12 @@ class AudDDetectionClient(BaseMusicDetectionClient):
 _PROVIDER_PRIORITY = ["acrcloud", "shazam", "audd"]
 
 # Metadata keys merged across a winning cluster (first non-null by priority),
-# so the consensus keeps the best ISRC + platform links any provider supplied.
-_MERGE_KEYS = (
-    "album",
-    "release_year",
-    "isrc",
-    "genre",
-    "photo_url",
-    "youtube_link",
-    "spotify_url",
-    "apple_music_url",
-    "musicbrainz_recording_id",
-    "musicbrainz_url",
-    "song_link",
-    "candidates",
+# so the consensus keeps the best ISRC + platform links any provider supplied:
+# every field a cue takes from an answer, but those the ensemble sets itself.
+_MERGE_KEYS = tuple(
+    key
+    for key in MATCH_KEYS
+    if key not in ("provider", "title", "artist", "agreement", "votes")
 )
 
 
@@ -660,20 +646,20 @@ def _cluster_votes(matched: list[dict]) -> list[list[int]]:
 
 def _consensus_from_votes(
     votes: list[dict], total: int
-) -> tuple[str | None, str | None, float, dict, dict]:
+) -> tuple[str | None, str | None, dict, dict]:
     """Pure voting core. `votes` is every provider's result in priority order
-    (each a dict with provider/title/artist/isrc/confidence/matched + metadata).
-    Returns (title, artist, confidence, merged_metadata, agreement)."""
+    (each a dict with provider/title/artist/isrc/matched + metadata).
+    Returns (title, artist, merged_metadata, agreement)."""
     matched = [v for v in votes if v.get("matched")]
     if not matched:
-        return None, None, 0.0, {}, {"count": 0, "total": total, "providers": []}
+        return None, None, {}, {"count": 0, "total": total, "providers": []}
 
     clusters = _cluster_votes(matched)
 
-    # Winner: most providers, then — since per-provider confidences aren't
-    # comparable across services (AudD/Shazam report a constant 1.0, ACRCloud a
-    # real score) — the cluster containing the highest-priority provider.
-    # `matched` is in priority order, so the smallest member index is best.
+    # Winner: most providers, then — since only ACRCloud scores its matches,
+    # and AudD and Shazam don't — the cluster containing the highest-priority
+    # provider. `matched` is in priority order, so the smallest member index is
+    # best.
     winner = max(clusters, key=lambda m: (len(m), -min(m)))
     members = [matched[i] for i in winner]
 
@@ -691,8 +677,7 @@ def _consensus_from_votes(
         "total": total,
         "providers": [m["provider"] for m in members],
     }
-    confidence = len(members) / total if total else 0.0
-    return rep.get("title"), rep.get("artist"), confidence, merged, agreement
+    return rep.get("title"), rep.get("artist"), merged, agreement
 
 
 class EnsembleDetectionClient(BaseMusicDetectionClient):
@@ -751,29 +736,20 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
                     "title": result.title if result else None,
                     "artist": result.artist if result else None,
                     "isrc": (result.metadata.get("isrc") if result else None),
-                    "confidence": result.confidence if result else 0.0,
                     "matched": matched,
                     "metadata": (result.metadata if result else {}),
                     "error": error,
                 }
             )
 
-        title, artist, confidence, merged, agreement = _consensus_from_votes(
+        title, artist, merged, agreement = _consensus_from_votes(
             votes, total=len(self._clients)
         )
 
         public_votes = [
             {
                 k: v[k]
-                for k in (
-                    "provider",
-                    "title",
-                    "artist",
-                    "isrc",
-                    "confidence",
-                    "matched",
-                    "error",
-                )
+                for k in ("provider", "title", "artist", "isrc", "matched", "error")
             }
             for v in votes
         ]
@@ -782,7 +758,6 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
             segment=segment,
             title=title,
             artist=artist,
-            confidence=confidence,
             provider="ensemble",
             metadata={**merged, "agreement": agreement, "votes": public_votes},
         )
@@ -873,7 +848,6 @@ if __name__ == "__main__":
         if result.title:
             print(f"  Title:      {result.title}")
             print(f"  Artist:     {result.artist}")
-            print(f"  Confidence: {result.confidence}")
             if result.metadata.get("album"):
                 print(f"  Album:      {result.metadata['album']}")
             if result.metadata.get("genre"):

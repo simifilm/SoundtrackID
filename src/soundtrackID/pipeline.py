@@ -22,11 +22,11 @@ from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackID.loaders import VideoLoader
 from soundtrackID.models import (
     ClassificationResult,
+    Cue,
     DetectionResult,
-    IdentificationOutput,
     MusicSegment,
     ResultsOutput,
-    SegmentOutput,
+    match_fields,
 )
 from soundtrackID.slots import merge_spans, stream_slots, top_classes
 
@@ -126,9 +126,7 @@ class OutputWriter:
 
         groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
 
-        segment_outputs: list[SegmentOutput] = []
-        identification_outputs: list[IdentificationOutput] = []
-
+        cues: list[Cue] = []
         for i, group in enumerate(groups):
             segment_id = f"seg_{i + 1:03d}"
             pending = all(d.skipped for _, d in group)
@@ -145,25 +143,16 @@ class OutputWriter:
 
             first_seg, last_seg = group[0][0], group[-1][0]
             identified = [d for _, d in group if d.title]
-            confidence = (
-                sum(d.confidence for d in identified) / len(identified)
-                if identified
-                else None
-            )
-
-            segment_outputs.append(
-                SegmentOutput(
-                    id=segment_id,
-                    start=first_seg.start_time,
-                    duration=last_seg.end_time - first_seg.start_time,
-                    audio_file=audio_file,
-                    confidence=confidence,
-                    pending=pending,
-                )
-            )
-
-            first_detection = next((d for _, d in group if d.title), None)
-            if first_detection:
+            cue: Cue = {
+                "segment_id": segment_id,
+                "start": first_seg.start_time,
+                "duration": last_seg.end_time - first_seg.start_time,
+                "audio_file": audio_file,
+                "pending": pending,
+                **match_fields(identified[0] if identified else None),
+                "enrichment": None,
+            }
+            if identified:
                 # Canonical album for the merged cue: the most frequent album name
                 # among the group's identified windows (ties → first seen), so a
                 # single piece doesn't inherit whichever album the first window
@@ -173,30 +162,15 @@ class OutputWriter:
                     alb = d.metadata.get("album")
                     if alb:
                         album_counts[alb] = album_counts.get(alb, 0) + 1
-                album = (
+                cue["album"] = (
                     max(album_counts, key=album_counts.get) if album_counts else None
                 )
-                identification_outputs.append(
-                    IdentificationOutput(
-                        segment_id=segment_id,
-                        provider=first_detection.provider,
-                        title=first_detection.title,
-                        artist=first_detection.artist,
-                        album=album,
-                        confidence=first_detection.confidence,
-                        metadata={
-                            k: v
-                            for k, v in first_detection.metadata.items()
-                            if k != "album" and v is not None
-                        },
-                    )
-                )
+            cues.append(cue)
 
         results_output = ResultsOutput(
             source=video_path.name,
             video_name=video_name,
-            segments=segment_outputs,
-            identifications=identification_outputs,
+            cues=cues,
             waveform=waveform,
             film=film,
             classification=classification,
@@ -339,9 +313,7 @@ class Pipeline:
                 raise
 
         def skipped_result(seg: MusicSegment) -> DetectionResult:
-            return DetectionResult(
-                segment=seg, title=None, artist=None, confidence=0.0, skipped=True
-            )
+            return DetectionResult(segment=seg, title=None, artist=None, skipped=True)
 
         def reap(fut, chunk_seg: MusicSegment) -> DetectionResult:
             """Return a detection, converting a provider rate-limit (which also

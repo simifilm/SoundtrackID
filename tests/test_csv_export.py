@@ -11,12 +11,7 @@ import json
 from fastapi.testclient import TestClient
 
 from soundtrackID import app as app_module
-from soundtrackID.models import (
-    IdentificationOutput,
-    ResultsOutput,
-    SegmentOutput,
-    results_to_csv,
-)
+from soundtrackID.models import ResultsOutput, results_to_csv
 
 client = TestClient(app_module.app)
 
@@ -25,7 +20,6 @@ CUES = [
         "segment_id": "seg_001",
         "start": 12.5,
         "duration": 30.0,
-        "confidence": 0.9,
         "provider": "ensemble",
         "agreement": {"count": 2, "total": 3},
         "title": "Diane",
@@ -76,7 +70,6 @@ def test_csv_has_a_column_for_every_field_of_the_json():
         "segment_id",
         "start",
         "duration",
-        "confidence",
         "provider",
         "agreement.count",
         "agreement.total",
@@ -100,9 +93,8 @@ def test_csv_has_a_column_for_every_field_of_the_json():
 
 def test_pipeline_results_as_csv():
     """What the CLI writes with --csv."""
-    segment = SegmentOutput("seg_001", 0.0, 10.0, None, 0.8)
-    identification = IdentificationOutput("seg_001", "acrcloud", "T", "A", "Al", 0.8)
-    results = ResultsOutput("film.mp4", [segment], identifications=[identification])
+    cue = {"segment_id": "seg_001", "title": "T", "artist": "A", "album": "Al"}
+    results = ResultsOutput("film.mp4", [cue])
 
     [row] = _rows(results.to_csv())
 

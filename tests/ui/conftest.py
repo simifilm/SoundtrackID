@@ -157,8 +157,7 @@ class Fakes:
         if refused:
             raise RateLimitError("quota exceeded")
         title, artist, metadata = self.tracks.get(segment.start_time, (None, None, {}))
-        confidence = 0.9 if title else 0.0
-        return DetectionResult(segment, title, artist, confidence, "acrcloud", metadata)
+        return DetectionResult(segment, title, artist, "acrcloud", metadata)
 
     def enrich(self, results, http_client=None, progress_cb=None):
         cues = [c for c in results["cues"] if c.get("isrc") in self.composers]
@@ -229,7 +228,6 @@ def cue(n, title=None, **fields):
         "start": 10.0 * (n - 1),
         "duration": 10.0,
         "audio_file": None,
-        "confidence": 0.9 if title else None,
         "pending": False,
         "provider": "acrcloud" if title else None,
         "title": title,

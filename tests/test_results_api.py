@@ -12,18 +12,18 @@ import pytest
 from fastapi.testclient import TestClient
 from scipy.io import wavfile
 
-from soundtrackID import analysis
 from soundtrackID import app as app_module
 from soundtrackID.detection import RateLimitError
 from soundtrackID.models import (
-    CUE_METADATA_KEYS,
+    ANALYSIS_KEYS,
+    MATCH_KEYS,
     RESULTS_VERSION,
     DetectionResult,
-    IdentificationOutput,
+    MusicSegment,
     ResultsOutput,
-    SegmentOutput,
     upgrade_results,
 )
+from soundtrackID.pipeline import OutputWriter
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app_module.app)
@@ -62,11 +62,67 @@ def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
     assert r.json()["cues"] == 1
 
     saved = json.loads((run_dir / "results.json").read_text())
-    assert saved["cues"] == new_cues  # cues replaced
+    [cue] = saved["cues"]  # replaced
+    assert {key: cue[key] for key in new_cues[0]} == new_cues[0]
     assert saved["film"] == {"title": "Test", "year": 1950}  # preserved
     # Preserved, in the timeline's own file now.
     timeline = json.loads((run_dir / "timeline.json").read_text())
     assert timeline == {"waveform": {"samples": [1, 2, 3]}}
+
+
+def test_an_edit_keeps_where_a_cue_is_and_whether_it_is_pending(tmp_path, monkeypatch):
+    """Those are the analysis's: a resume reads and removes the audio_file."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    run_dir = tmp_path / "myrun"
+    run_dir.mkdir()
+    cue = {
+        "segment_id": "seg_001",
+        "start": 10.0,
+        "duration": 5.0,
+        "audio_file": "segments/seg_001.wav",
+        "pending": True,
+        "title": None,
+    }
+    (run_dir / "results.json").write_text(json.dumps({"cues": [cue]}))
+    edited = {
+        **cue,
+        "start": 0.0,
+        "audio_file": "../../elsewhere.wav",
+        "pending": False,
+        "title": "Typed in",
+    }
+
+    r = client.post("/results/myrun", json={"cues": [edited]})
+
+    assert r.status_code == 200
+    [saved] = json.loads((run_dir / "results.json").read_text())["cues"]
+    assert {key: saved[key] for key in ANALYSIS_KEYS} == {
+        key: cue[key] for key in ANALYSIS_KEYS
+    }
+    assert saved["title"] == "Typed in"
+
+
+@pytest.mark.parametrize(
+    "cues",
+    [
+        [{"segment_id": "seg_999", "title": "Not of this run"}],
+        [{"segment_id": "seg_001"}, {"segment_id": "seg_001"}],
+        ["not a cue"],
+        [{"segment_id": "seg_001", "title": 42}],
+        [{"segment_id": "seg_001", "enrichment": "not an object"}],
+    ],
+    ids=["unknown", "twice", "not-an-object", "title-number", "enrichment-text"],
+)
+def test_an_edit_that_doesnt_fit_the_run_is_refused(tmp_path, monkeypatch, cues):
+    """And nothing is saved."""
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+    run_dir = _make_run(tmp_path)
+    before = (run_dir / "results.json").read_text()
+
+    r = client.post("/results/myrun", json={"cues": cues})
+
+    assert r.status_code == 422
+    assert (run_dir / "results.json").read_text() == before
 
 
 def test_save_can_remove_all_cues(tmp_path, monkeypatch):
@@ -219,6 +275,20 @@ def test_rate_limit_flag_gives_way_to_the_pending_cues():
     }
 
 
+def test_older_results_lose_their_confidence():
+    """It meant something else for each provider (a constant 1.0 for Shazam and
+    AudD), and nothing used it."""
+    vote = {"provider": "shazam", "title": "Song", "confidence": 1.0}
+    data = {
+        "version": 4,
+        "cues": [{"title": "Song", "confidence": 1.0, "votes": [vote]}],
+    }
+
+    assert upgrade_results(data)["cues"] == [
+        {"title": "Song", "votes": [{"provider": "shazam", "title": "Song"}]}
+    ]
+
+
 def test_timeline_of_a_run_saved_before_it_had_its_own_file(tmp_path, monkeypatch):
     """Read from results.json, and moved into timeline.json once the results
     are read, as their next save leaves it out."""
@@ -300,48 +370,29 @@ def test_resume_with_nothing_pending_changes_nothing(tmp_path, monkeypatch):
     assert json.loads((run / "results.json").read_text()) == results
 
 
-def test_apply_detection_to_cue_maps_fields():
-    from types import SimpleNamespace
-
-    cue = {"segment_id": "s1", "title": None}
-    det = SimpleNamespace(
-        provider="acrcloud",
-        title="Diane",
-        artist="Rapee",
-        confidence=0.8,
-        metadata={
-            "album": "OST",
-            "isrc": "US123",
-            "release_year": 1927,
-            "agreement": {"count": 1, "total": 3},
-            "votes": [],
-        },
-    )
-    analysis._apply_detection_to_cue(cue, det)
-    assert cue["title"] == "Diane" and cue["artist"] == "Rapee"
-    assert cue["album"] == "OST" and cue["isrc"] == "US123"
-    assert cue["release_year"] == 1927 and cue["agreement"] == {"count": 1, "total": 3}
-
-
-def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one():
+def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(tmp_path, monkeypatch):
     """E.g. its candidates, without which the date re-ranking skips it."""
-    metadata = {key: f"<{key}>" for key in CUE_METADATA_KEYS}
-    segment = SegmentOutput("s1", 0, 10, "segments/s1.wav", 0.9)
-    identification = IdentificationOutput(
-        "s1", "acrcloud", "T", "A", "Al", 0.9, metadata
-    )
-    results = ResultsOutput("film.mp4", [segment], identifications=[identification])
-    analyzed = results.to_dict()["cues"][0]
+    metadata = {
+        key: f"<{key}>"
+        for key in MATCH_KEYS
+        if key not in ("provider", "title", "artist")
+    }
 
-    resumed = {}
-    detection = DetectionResult(
-        None, "T", "A", 0.9, "acrcloud", {**metadata, "album": "Al"}
-    )
-    analysis._apply_detection_to_cue(resumed, detection)
+    def detect(segment):
+        return DetectionResult(segment, "T", "A", "acrcloud", dict(metadata))
 
-    segment_fields = {"segment_id", "start", "duration", "audio_file"}
-    detection_fields = set(analyzed) - segment_fields - {"pending", "enrichment"}
-    assert resumed == {key: analyzed[key] for key in detection_fields}
+    clip = MusicSegment(np.zeros(1000, np.float32), 0.0, 1.0, 1000)
+    analyzed = (
+        OutputWriter(tmp_path / "analyzed")
+        .write(tmp_path / "film.mp4", [(clip, detect(clip))])
+        .to_dict()["cues"][0]
+    )
+    cues = [{"segment_id": "s1", "title": None, "pending": True}]
+    [resumed] = _resume(tmp_path, monkeypatch, detect, cues)["cues"]
+
+    assert {key: resumed[key] for key in MATCH_KEYS} == {
+        key: analyzed[key] for key in MATCH_KEYS
+    }
 
 
 def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, **results):
@@ -378,7 +429,7 @@ def test_resume_reranks_newly_identified_cues(tmp_path, monkeypatch):
 
     def detect(segment):
         metadata = {"release_year": 2022, "candidates": candidates}
-        return DetectionResult(segment, "Sampler", "A", 0.9, "acrcloud", metadata)
+        return DetectionResult(segment, "Sampler", "A", "acrcloud", metadata)
 
     cues = [{"segment_id": "s1", "title": None}]
     saved = _resume(
@@ -394,7 +445,7 @@ def test_resume_asks_only_about_pending_cues(tmp_path, monkeypatch):
     """A cue the provider already answered with "no match" isn't asked again."""
 
     def detect(segment):
-        return DetectionResult(segment, "Song", "A", 0.9, "acrcloud", {})
+        return DetectionResult(segment, "Song", "A", "acrcloud", {})
 
     cues = [
         {"segment_id": "s1", "title": None, "pending": False},
@@ -449,7 +500,7 @@ def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):
     """The others keep their composers, e.g. one edited by hand."""
 
     def detect(segment):
-        return DetectionResult(segment, "New", "B", 0.9, "acrcloud", {"isrc": "X2"})
+        return DetectionResult(segment, "New", "B", "acrcloud", {"isrc": "X2"})
 
     def enrich(results, **kw):
         for cue in results["cues"]:
@@ -483,7 +534,7 @@ def test_resume_removes_the_audio_of_answered_cues(tmp_path, monkeypatch):
         calls.append(segment)
         if len(calls) > 1:
             raise RateLimitError("quota exceeded")
-        return DetectionResult(segment, None, None, 0.0)  # no match
+        return DetectionResult(segment, None, None)  # no match
 
     cues = [
         {"segment_id": "s1", "title": None, "pending": True},

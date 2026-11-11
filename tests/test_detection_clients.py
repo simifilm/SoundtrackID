@@ -103,7 +103,7 @@ def test_acrcloud_match_is_parsed(monkeypatch):
     r, _ = _acr_detect(monkeypatch, load("acrcloud_match.json"))
     assert r.title == "It's De-Lovely (Album Version)"
     assert r.artist == "Robbie Williams"
-    assert r.provider == "acrcloud" and r.confidence == 0.25
+    assert r.provider == "acrcloud" and r.metadata["candidates"][0]["score"] == 25
     assert r.metadata["isrc"] == "USSM10403979"
     assert r.metadata["album"] == "De-Lovely Music From The Motion Picture"
     assert r.metadata["release_year"] == 2004
@@ -128,7 +128,7 @@ def test_acrcloud_sends_the_segment_as_wav(monkeypatch):
 @pytest.mark.parametrize("fixture", ["acrcloud_no_match.json", "acrcloud_mute.json"])
 def test_acrcloud_no_match_is_empty(monkeypatch, fixture):
     r, _ = _acr_detect(monkeypatch, load(fixture))
-    assert r.title is None and r.confidence == 0.0 and r.provider == "acrcloud"
+    assert r.title is None and r.provider == "acrcloud"
 
 
 @pytest.mark.parametrize(
@@ -155,7 +155,7 @@ def test_acrcloud_limits_and_http_errors_stop_the_run(monkeypatch, code):
 def test_acrcloud_match_below_min_score_is_empty(monkeypatch):
     # The recorded match scores 25
     r, _ = _acr_detect(monkeypatch, load("acrcloud_match.json"), min_score=26)
-    assert r.title is None and r.confidence == 0.0
+    assert r.title is None
 
 
 def test_acrcloud_keeps_the_top_five_candidates(monkeypatch):
@@ -165,7 +165,7 @@ def test_acrcloud_keeps_the_top_five_candidates(monkeypatch):
         {**candidate, "title": f"Track {i}", "score": 90 - 10 * i} for i in range(6)
     ]
     r, _ = _acr_detect(monkeypatch, json.dumps(payload))
-    assert r.title == "Track 0" and r.confidence == 0.9
+    assert r.title == "Track 0" and r.metadata["candidates"][0]["score"] == 90
     assert [c["title"] for c in r.metadata["candidates"]] == [
         f"Track {i}" for i in range(5)
     ]
@@ -205,7 +205,7 @@ def test_audd_match_is_parsed(monkeypatch):
     r, _ = _audd_detect(monkeypatch, json.loads(load("audd_match.json")))
     assert r.title == "It's De-Lovely (Album Version)"
     assert r.artist == "Robbie Williams"
-    assert r.provider == "audd" and r.confidence == 1.0
+    assert r.provider == "audd"
     assert r.metadata["album"] == "De-Lovely Music From The Motion Picture"
     assert r.metadata["release_year"] == 2004
     assert r.metadata["song_link"] == "https://lis.tn/qvpMy"
@@ -260,7 +260,7 @@ def test_audd_sends_token_and_wav(monkeypatch):
 )
 def test_audd_no_match_is_empty(monkeypatch, fixture):
     r, _ = _audd_detect(monkeypatch, json.loads(load(fixture)))
-    assert r.title is None and r.confidence == 0.0 and r.provider == "audd"
+    assert r.title is None and r.provider == "audd"
 
 
 def test_audd_rejected_token_says_so(monkeypatch):

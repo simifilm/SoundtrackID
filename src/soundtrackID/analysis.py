@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from soundtrackID.models import CUE_METADATA_KEYS, load_results, save_json
+from soundtrackID.models import load_results, match_fields, save_json
 
 log = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ def resume(
             log.exception("Identifying %s failed", cue.get("segment_id"))
             continue  # stays pending: a later resume tries again
         if det.title:
-            _apply_detection_to_cue(cue, det)
+            cue.update(match_fields(det))
             identified.append(cue)
         cue["pending"] = False  # answered, a match or not
         cue["audio_file"] = None  # only pending cues keep their audio
@@ -227,15 +227,3 @@ def _keep_video(video: Path, run_dir: Path, results: dict[str, Any]) -> None:
         results["video"] = {"file": dest.name, "filmstrip": filmstrip}
     except Exception:
         log.exception("Keeping the video and its filmstrip failed")
-
-
-def _apply_detection_to_cue(cue: dict, det) -> None:
-    """Copy a DetectionResult onto an existing cue (same keys as models._build_cues)."""
-    md = det.metadata or {}
-    cue["provider"] = det.provider
-    cue["title"] = det.title
-    cue["artist"] = det.artist
-    cue["album"] = md.get("album")
-    cue["confidence"] = det.confidence
-    for key in CUE_METADATA_KEYS:
-        cue[key] = md.get(key)

@@ -15,7 +15,7 @@ from soundtrackID.detection import (
 from soundtrackID.models import DetectionResult, MusicSegment
 
 
-def _vote(provider, title, isrc=None, conf=1.0, matched=True, meta=None):
+def _vote(provider, title, isrc=None, matched=True, meta=None):
     m = dict(meta or {})
     if isrc:
         m["isrc"] = isrc
@@ -24,7 +24,6 @@ def _vote(provider, title, isrc=None, conf=1.0, matched=True, meta=None):
         "title": title,
         "artist": "Hans Zimmer",
         "isrc": isrc,
-        "confidence": conf,
         "matched": matched,
         "metadata": m,
     }
@@ -45,7 +44,7 @@ def test_normalize_strips_parenthetical_and_remaster():
 
 
 def test_unanimous_three_of_three():
-    title, _, conf, _, ag = _consensus_from_votes(
+    title, _, _, ag = _consensus_from_votes(
         [
             _vote("acrcloud", "Cornfield Chase"),
             _vote("shazam", 'Cornfield Chase (From "Interstellar")'),
@@ -55,11 +54,10 @@ def test_unanimous_three_of_three():
     )
     assert title == "Cornfield Chase"
     assert ag == {"count": 3, "total": 3, "providers": ["acrcloud", "shazam", "audd"]}
-    assert conf == 1.0
 
 
 def test_majority_two_of_three():
-    title, _, _, _, ag = _consensus_from_votes(
+    title, _, _, ag = _consensus_from_votes(
         [
             _vote("acrcloud", "Cornfield Chase"),
             _vote("shazam", "Cornfield Chase"),
@@ -72,7 +70,7 @@ def test_majority_two_of_three():
 
 
 def test_agreement_by_shared_isrc_across_different_titles():
-    _, _, _, _, ag = _consensus_from_votes(
+    _, _, _, ag = _consensus_from_votes(
         [
             _vote("acrcloud", "Cornfield Chase", isrc="USABC1234567"),
             _vote("audd", "Cornfield Chase - Remastered", isrc="USABC1234567"),
@@ -84,7 +82,7 @@ def test_agreement_by_shared_isrc_across_different_titles():
 
 
 def test_metadata_merge_fills_gaps_by_priority():
-    _, _, _, merged, _ = _consensus_from_votes(
+    _, _, merged, _ = _consensus_from_votes(
         [
             _vote("acrcloud", "Cornfield Chase", meta={"spotify_url": "s"}),
             _vote("audd", "Cornfield Chase", isrc="USX", meta={"isrc": "USX"}),
@@ -96,7 +94,7 @@ def test_metadata_merge_fills_gaps_by_priority():
 
 
 def test_single_provider_one_of_three():
-    title, _, conf, _, ag = _consensus_from_votes(
+    title, _, _, ag = _consensus_from_votes(
         [
             _vote("acrcloud", None, matched=False),
             _vote("shazam", None, matched=False),
@@ -105,40 +103,24 @@ def test_single_provider_one_of_three():
         total=3,
     )
     assert title == "Abyss"
-    assert ag["count"] == 1
-    assert round(conf, 2) == 0.33
+    assert ag == {"count": 1, "total": 3, "providers": ["audd"]}
 
 
 def test_no_match_anywhere():
-    title, _, conf, _, ag = _consensus_from_votes(
+    title, _, _, ag = _consensus_from_votes(
         [_vote("acrcloud", None, matched=False)], total=3
     )
     assert title is None
-    assert conf == 0.0
     assert ag == {"count": 0, "total": 3, "providers": []}
 
 
 def test_all_disagree_falls_back_to_priority():
-    title, _, _, _, ag = _consensus_from_votes(
+    title, _, _, ag = _consensus_from_votes(
         [_vote("acrcloud", "A"), _vote("shazam", "B"), _vote("audd", "C")],
         total=3,
     )
     assert title == "A"  # highest-priority provider wins the 1-1-1 tie
     assert ag["count"] == 1
-
-
-def test_disagreement_ignores_incomparable_confidence():
-    # AudD reports a constant 1.0; ACRCloud a real score. On a disagreement the
-    # higher-priority provider must win, not whoever reports the bigger number.
-    title, _, _, _, ag = _consensus_from_votes(
-        [
-            _vote("acrcloud", "Cornfield Chase", conf=0.7),
-            _vote("audd", "Murphys Law", conf=1.0),
-        ],
-        total=3,
-    )
-    assert title == "Cornfield Chase"
-    assert ag["providers"] == ["acrcloud"]
 
 
 # ── EnsembleDetectionClient.detect() ──────────────────────────────────────
@@ -161,7 +143,6 @@ class _FakeClient(BaseMusicDetectionClient):
             segment=segment,
             title=self._title,
             artist="Hans Zimmer" if self._title else None,
-            confidence=1.0 if self._title else 0.0,
             metadata=meta,
         )
 
@@ -193,6 +174,8 @@ def test_ensemble_detect_builds_consensus_and_votes():
     }
     votes = {v["provider"]: v["matched"] for v in res.metadata["votes"]}
     assert votes == {"acrcloud": True, "shazam": False, "audd": True}
+    # No score: only ACRCloud gives one, and it is in its candidates.
+    assert not any("confidence" in v for v in res.metadata["votes"])
 
 
 def test_ensemble_survives_a_raising_provider():

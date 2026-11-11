@@ -11,24 +11,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from soundtrackID.models import CUE_METADATA_KEYS
+from soundtrackID.models import MATCH_KEYS
 
 TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative
 
 # Cue fields describing the match, all taken from a chosen candidate: those it
 # lacks (cover, Apple Music link, provider agreement) belonged to the replaced
-# match and are cleared. The candidates and each provider's own answer (votes)
-# still hold for the segment.
-_APPLY_KEYS = ("title", "artist", "album") + tuple(
-    key for key in CUE_METADATA_KEYS if key not in ("candidates", "votes")
+# match and are cleared. The provider, its candidates and each provider's own
+# answer (votes) still hold for the segment.
+_APPLY_KEYS = tuple(
+    key for key in MATCH_KEYS if key not in ("provider", "candidates", "votes")
 )
 
 
 def _apply_candidate(cue: dict[str, Any], cand: dict[str, Any]) -> None:
     for key in _APPLY_KEYS:
         cue[key] = cand.get(key)
-    cue["confidence"] = (cand.get("score") or 0.0) / 100.0
     cue["temporal_pick"] = True
 
 

@@ -15,7 +15,12 @@ from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.detection import ProviderAuthError, RateLimitError
 from soundtrackID.isolators import DummyIsolator
-from soundtrackID.models import ClassificationResult, DetectionResult, MusicSegment
+from soundtrackID.models import (
+    MATCH_KEYS,
+    ClassificationResult,
+    DetectionResult,
+    MusicSegment,
+)
 from soundtrackID.pipeline import Pipeline, _group_detections
 
 SR = 1000
@@ -50,7 +55,7 @@ class FakeClassifier:
 
 class NoMatchClient:
     def detect(self, segment):
-        return DetectionResult(segment=segment, title=None, artist=None, confidence=0.0)
+        return DetectionResult(segment=segment, title=None, artist=None)
 
 
 class TitleByStartClient:
@@ -61,9 +66,7 @@ class TitleByStartClient:
 
     def detect(self, segment):
         title = "X" if segment.start_time in self.starts else None
-        return DetectionResult(
-            segment=segment, title=title, artist=None, confidence=1.0
-        )
+        return DetectionResult(segment=segment, title=title, artist=None)
 
 
 class ReleasedClient:
@@ -90,7 +93,7 @@ class ThrottledClient:
         self.calls += 1
         if self.calls > self.answers:
             raise RateLimitError("quota exceeded")
-        return DetectionResult(segment=segment, title=None, artist=None, confidence=0)
+        return DetectionResult(segment=segment, title=None, artist=None)
 
 
 class FailingClient:
@@ -103,7 +106,7 @@ class FailingClient:
     def detect(self, segment):
         if segment.start_time in self.fail_at:
             raise ValueError("malformed answer")
-        return DetectionResult(segment=segment, title="X", artist=None, confidence=1.0)
+        return DetectionResult(segment=segment, title="X", artist=None)
 
 
 def test_classification_spans_cover_whole_audio(tmp_path):
@@ -156,21 +159,43 @@ def test_classification_windows_list_top_three_classes(tmp_path):
     assert windows[2]["classes"] == {"Music": 0.6, "Speech": 0.3, "Applause": 0.06}
 
 
-def test_unidentified_cue_has_no_confidence(tmp_path):
-    """Not a made-up value that would show up in the CSV export."""
+class AudDLikeClient:
+    """Matches every clip, with each field a cue takes from an answer, as
+    AudD's (song_link only AudD has), but no score."""
+
+    metadata = {
+        key: f"<{key}>"
+        for key in MATCH_KEYS
+        if key not in ("provider", "title", "artist")
+    }
+
+    def detect(self, segment):
+        return DetectionResult(segment, "T", "A", "audd", dict(self.metadata))
+
+
+def test_a_cue_has_the_fields_of_its_answer_and_no_confidence(tmp_path):
+    """No made-up score: Shazam and AudD give none, ACRCloud's is in its
+    candidates. AudD's song_link is kept like any other field."""
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
         classifier=FakeClassifier(music_starts=(5.0, 10.0, 15.0)),
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
-        detection_client=NoMatchClient(),
+        detection_client=AudDLikeClient(),
         output_dir=tmp_path,
     )
 
-    results = pipeline.run(Path("film.mp4"))
+    [cue] = pipeline.run(Path("film.mp4")).to_dict()["cues"]
 
-    assert [c["confidence"] for c in results.to_dict()["cues"]] == [None]
+    assert "confidence" not in cue
+    assert cue["song_link"] == "<song_link>"
+    assert {key: cue[key] for key in MATCH_KEYS} == {
+        "provider": "audd",
+        "title": "T",
+        "artist": "A",
+        **AudDLikeClient.metadata,
+    }
 
 
 def test_only_pending_cues_keep_their_audio(tmp_path):
@@ -225,7 +250,7 @@ def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cu
 
     results = pipeline.run(Path("film.mp4"), max_segment_duration=10.0)
 
-    assert len(results.segments) == n_cues
+    assert len(results.cues) == n_cues
 
 
 def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
@@ -253,8 +278,8 @@ def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
     )
 
     assert throttled.calls == 1
-    assert results.segments and all(s.pending for s in results.segments)
-    assert not any(i.title for i in results.identifications)
+    assert results.cues and all(c["pending"] for c in results.cues)
+    assert not any(c["title"] for c in results.cues)
 
 
 def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
@@ -531,7 +556,7 @@ def clips(*specs):
             end_time=end,
             sample_rate=SR,
         )
-        det = DetectionResult(segment=seg, title=title, artist=None, confidence=1.0)
+        det = DetectionResult(segment=seg, title=title, artist=None)
         items.append((seg, det))
     return items
 

@@ -116,7 +116,7 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
     monkeypatch.setattr(
         "soundtrackID.detection.build_detection_client",
         lambda api: SimpleNamespace(
-            detect=lambda seg: DetectionResult(seg, "Song", "A", 0.9, "acrcloud")
+            detect=lambda seg: DetectionResult(seg, "Song", "A", "acrcloud")
         ),
     )
 

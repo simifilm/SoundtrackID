@@ -48,7 +48,7 @@ def test_shazamkit_match_is_parsed():
     with patch("subprocess.run", return_value=_run_returning(payload)):
         r = _client().detect(_segment())
     assert r.title == "Never Gonna Give You Up" and r.artist == "Rick Astley"
-    assert r.provider == "shazam" and r.confidence == 1.0
+    assert r.provider == "shazam"
     assert r.metadata["isrc"] == "GBARL9300135"
 
 
@@ -74,7 +74,6 @@ def test_202_falls_back_to_shazamio():
         segment=_segment(),
         title="From shazamio",
         artist="X",
-        confidence=1.0,
         provider="shazam",
     )
     with (
@@ -95,7 +94,6 @@ def test_no_helper_uses_shazamio():
         segment=_segment(),
         title="Fallback hit",
         artist="Y",
-        confidence=1.0,
         provider="shazam",
     )
     with (

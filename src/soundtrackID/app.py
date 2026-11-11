@@ -24,7 +24,13 @@ from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
 from soundtrackID.envfiles import load_env_files
-from soundtrackID.models import load_results, load_timeline, results_to_csv, save_json
+from soundtrackID.models import (
+    apply_edits,
+    load_results,
+    load_timeline,
+    results_to_csv,
+    save_json,
+)
 
 log = logging.getLogger(__name__)
 
@@ -654,6 +660,8 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
     """Persist manual edits to a run's cues (fill-ins, corrections, removals).
 
     Only the `cues` array is replaced; film/waveform/etc. on disk are preserved.
+    Each cue must be one of the run's; where it is and whether it is pending
+    (with its audio, which a resume reads and removes) stay as saved.
     """
     cues = payload.get("cues")
     if not isinstance(cues, list):
@@ -667,7 +675,10 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
         raise HTTPException(
             status_code=500, detail=f"Failed to read results.json: {exc}"
         )
-    data["cues"] = cues
+    try:
+        data["cues"] = apply_edits(data.get("cues") or [], cues)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     save_json(results_path, data)
     return {"status": "saved", "cues": len(cues)}
 
