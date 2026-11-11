@@ -6,15 +6,26 @@ from soundtrackID.temporal import temporal_rerank
 def _cue(primary_year, alts):
     """Build a cue whose top candidate has primary_year plus given alternatives
     (each a (release_year, score) tuple)."""
-    candidates = [{"title": "Top", "artist": "X", "release_year": primary_year, "score": 90.0}]
+    candidates = [
+        {"title": "Top", "artist": "X", "release_year": primary_year, "score": 90.0}
+    ]
     for i, (yr, score) in enumerate(alts):
-        candidates.append({
-            "title": f"Alt{i}", "artist": "Y", "release_year": yr, "score": score,
-            "isrc": f"ALT{i}", "album": "A",
-        })
+        candidates.append(
+            {
+                "title": f"Alt{i}",
+                "artist": "Y",
+                "release_year": yr,
+                "score": score,
+                "isrc": f"ALT{i}",
+                "album": "A",
+            }
+        )
     return {
-        "segment_id": "s1", "title": "Top", "artist": "X",
-        "release_year": primary_year, "candidates": candidates,
+        "segment_id": "s1",
+        "title": "Top",
+        "artist": "X",
+        "release_year": primary_year,
+        "candidates": candidates,
     }
 
 
@@ -27,6 +38,27 @@ def test_swaps_to_period_plausible_alternative():
     assert cue["title"] == "Alt0"
     assert cue["release_year"] == 1817
     assert cue["temporal_pick"] is True
+
+
+def test_swap_clears_what_only_the_replaced_match_had():
+    """The cover, Apple Music link and provider agreement were the 2022 track's."""
+    cue = _cue(2022, [(1817, 70.0)])
+    votes = [{"provider": "acrcloud", "title": "Top"}, {"provider": "shazam"}]
+    cue.update(
+        photo_url="https://img/top.jpg",
+        apple_music_url="https://music.apple.com/top",
+        agreement={"count": 2, "total": 2, "providers": ["acrcloud", "shazam"]},
+        votes=votes,
+    )
+
+    temporal_rerank({"cues": [cue]}, film_year=1971)
+
+    assert (cue["title"], cue["isrc"]) == ("Alt0", "ALT0")
+    assert cue["photo_url"] is None
+    assert cue["apple_music_url"] is None
+    assert cue["agreement"] is None
+    assert cue["votes"] == votes  # still what each provider answered
+    assert len(cue["candidates"]) == 2
 
 
 def test_no_swap_when_primary_is_plausible():

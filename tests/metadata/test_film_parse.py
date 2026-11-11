@@ -6,7 +6,8 @@ from soundtrackID.metadata.film import (
     _parse_imdbapi_title,
     _parse_tmdb_movie,
     _parse_wikidata_film,
-    _parse_year,
+    _sparql_film_by_imdb,
+    _sparql_film_by_title,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -72,10 +73,10 @@ def test_parse_imdbapi_title_missing_director():
     assert info.director_death_year is None
 
 
-def test_parse_year_variants():
-    assert _parse_year("1950-08-04") == 1950
-    assert _parse_year("1950") == 1950
-    assert _parse_year(1950) == 1950
-    assert _parse_year(None) is None
-    assert _parse_year("") is None
-    assert _parse_year("not a year") is None
+def test_wikidata_queries_keep_what_the_user_typed_inside_their_strings():
+    """A quote or a backslash in the title or the IMDb ID is escaped."""
+    title_query = _sparql_film_by_title('Say "No" \\ Yes', None)
+    imdb_query = _sparql_film_by_imdb('tt1" \\')
+
+    assert 'rdfs:label "Say \\"No\\" \\\\ Yes"@en.' in title_query
+    assert 'wdt:P345 "tt1\\" \\\\".' in imdb_query

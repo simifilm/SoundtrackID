@@ -1,20 +1,20 @@
 """Tests for video/audio loaders."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from soundtrackID.loaders import VideoLoader
+from tests.media import write_video
+
+VIDEO_SECONDS = 10
+TONE_HZ = 440
 
 
-@pytest.fixture
-def test_video_path():
-    """Path to test video file."""
-    path = Path(__file__).parent / "test_video.mp4"
-    if not path.exists():
-        pytest.skip("test_video.mp4 not found")
-    return path
+@pytest.fixture(scope="module")
+def test_video_path(tmp_path_factory):
+    """A small generated MP4 with a 440 Hz stereo tone at 48 kHz."""
+    path = tmp_path_factory.mktemp("video") / "tone.mp4"
+    return write_video(path, VIDEO_SECONDS, TONE_HZ)
 
 
 def test_loader_returns_audio_and_sample_rate(test_video_path):
@@ -51,5 +51,15 @@ def test_loader_duration(test_video_path):
     audio, sr = loader.load(test_video_path)
 
     duration = len(audio) / sr
-    # Test video is ~263 seconds
-    assert 260 < duration < 270
+    # AAC adds a few milliseconds of padding
+    assert duration == pytest.approx(VIDEO_SECONDS, abs=0.05)
+
+
+def test_loader_keeps_pitch(test_video_path):
+    """Test that downmixing 48 kHz stereo to 16 kHz mono keeps the tone's pitch."""
+    loader = VideoLoader(target_sample_rate=16000, mono=True)
+    audio, sr = loader.load(test_video_path)
+
+    spectrum = np.abs(np.fft.rfft(audio))
+    peak_hz = np.argmax(spectrum) * sr / len(audio)
+    assert peak_hz == pytest.approx(TONE_HZ, abs=1)

@@ -36,13 +36,3 @@ class VideoLoader:
         audio = audio.astype(np.float32) / 32768.0
 
         return audio, self.target_sample_rate
-
-
-if __name__ == "__main__":
-    import sys
-
-    path = sys.argv[1] if len(sys.argv) > 1 else "tests/test_video.mp4"
-    loader = VideoLoader()
-    audio, sr = loader.load(Path(path))
-    print(f"Loaded: {path}")
-    print(f"Duration: {len(audio) / sr:.1f}s, Sample rate: {sr} Hz")

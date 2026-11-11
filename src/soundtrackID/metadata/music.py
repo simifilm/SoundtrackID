@@ -10,8 +10,11 @@ from typing import Any, Literal
 
 import httpx
 
+from soundtrackID.metadata import USER_AGENT, escape_sparql_string
+from soundtrackID.metadata.rights import current_year, verdict
+from soundtrackID.models import parse_year
+
 MB_BASE = "https://musicbrainz.org/ws/2"
-MB_USER_AGENT = "SoundtrackID/0.1 (simon@simifilm.ch)"
 MB_RATE_LIMIT_SEC = 1.0
 WD_BASE = "https://query.wikidata.org/sparql"
 
@@ -22,18 +25,22 @@ class ComposerInfo:
     composer_birth_year: int | None = None
     composer_death_year: int | None = None
     work_title: str | None = None
-    original_year: int | None = None   # first publication/composition year of the work (Wikidata)
+    original_year: int | None = (
+        None  # first publication/composition year of the work (Wikidata)
+    )
     composer_match: Literal["isrc", "work", "search"] | None = None
     # All copyright-relevant authors of the work (Composer/Lyricist/Writer) with
     # their death years — the basis for public-domain assessment. Performers are
     # deliberately excluded (their 50-year related right is shorter than the
     # 70-year post-mortem term on the authors).
     authors: list[dict[str, Any]] = field(default_factory=list)
-    latest_author_death_year: int | None = None  # PD clock runs from the last surviving author
-    authors_complete: bool = False               # every author has a known death year
-    authors_partial: bool = False                # the author set itself may be incomplete
-    public_domain: bool | None = None            # None = cannot determine (unknown/living author)
-    pd_presumption: bool | None = None           # presumption rule; None = not applicable
+    latest_author_death_year: int | None = (
+        None  # PD clock runs from the last surviving author
+    )
+    authors_complete: bool = False  # every author has a known death year
+    authors_partial: bool = False  # the author set itself may be incomplete
+    public_domain: bool | None = None  # None = cannot determine (unknown/living author)
+    pd_presumption: bool | None = None  # presumption rule; None = not applicable
     sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,14 +111,9 @@ class MusicLookup:
         if original_year and "wikidata" not in info.sources:
             info.sources.append("wikidata")
 
-        info.latest_author_death_year, info.authors_complete, info.public_domain = _pd_status(
-            info.authors, _current_year(), partial=info.authors_partial
-        )
-        # The presumption rule concludes *towards* PD, so it needs the same whole
-        # author set the positive verdict does.
-        info.pd_presumption = (
-            None if info.authors_partial else _presumption_applies(info.authors, _current_year())
-        )
+        assessed = verdict(info.authors, info.authors_partial, current_year())
+        for key, value in assessed.items():
+            setattr(info, key, value)
         return info
 
     # ── MusicBrainz chain ────────────────────────────────────────────────
@@ -130,7 +132,9 @@ class MusicLookup:
             return None
         return self._build_from_authors(work, authors, used_wikidata, match="isrc")
 
-    def _lookup_via_work_title(self, title: str, artist: str | None) -> ComposerInfo | None:
+    def _lookup_via_work_title(
+        self, title: str, artist: str | None
+    ) -> ComposerInfo | None:
         """Find the work by title in MusicBrainz and pick the candidate whose
         authors best match the identified artist. Recovers the original piece
         when the ISRC of a reissue isn't in MusicBrainz."""
@@ -181,22 +185,25 @@ class MusicLookup:
                 # Life dates only for people: a band's begin/end are founding and
                 # break-up, and copyright lies with its individual members.
                 if kind == "Person":
-                    birth = _parse_year(_artist_birth(artist))
-                    death = _parse_year(_artist_death(artist))
-                # Date missing or type unknown — Wikidata has birth/death only for people.
+                    birth = parse_year(_artist_birth(artist))
+                    death = parse_year(_artist_death(artist))
+                # Date missing or type unknown
+                # Wikidata has birth/death only for people
                 if kind in ("Person", None) and (birth is None or death is None):
                     wd_birth, wd_death = self._wikidata_life_years_by_mbid(aid)
                     if birth is None and wd_birth:
                         birth, used_wikidata = wd_birth, True
                     if death is None and wd_death:
                         death, used_wikidata = wd_death, True
-            authors.append({
-                "name": entry["name"],
-                "roles": entry["roles"],
-                "birth_year": birth,
-                "death_year": death,
-                "wikidata_url": wikidata_url,
-            })
+            authors.append(
+                {
+                    "name": entry["name"],
+                    "roles": entry["roles"],
+                    "birth_year": birth,
+                    "death_year": death,
+                    "wikidata_url": wikidata_url,
+                }
+            )
         return authors, used_wikidata
 
     def _build_from_authors(
@@ -250,7 +257,14 @@ class MusicLookup:
             return cached or None
         data = self._mb_get(f"/recording/{recording_id}", params={"inc": "work-rels"})
         relations = (data or {}).get("relations") or []
-        work = next((r.get("work") for r in relations if r.get("type") == "performance" and r.get("work")), None)
+        work = next(
+            (
+                r.get("work")
+                for r in relations
+                if r.get("type") == "performance" and r.get("work")
+            ),
+            None,
+        )
         if not work:
             self._cache_work[recording_id] = {}
             return None
@@ -270,7 +284,7 @@ class MusicLookup:
     def _mb_get(self, path: str, params: dict | None = None) -> dict | None:
         full = {"fmt": "json", **(params or {})}
         url = f"{MB_BASE}{path}"
-        headers = {"user-agent": MB_USER_AGENT, "accept": "application/json"}
+        headers = {"user-agent": USER_AGENT, "accept": "application/json"}
         # The /work search endpoint is much slower than direct lookups and, under
         # load, MusicBrainz throttles with 503s — so use a generous timeout and
         # retry once on timeout/503 rather than silently yielding no result.
@@ -297,8 +311,11 @@ class MusicLookup:
 
     # ── Wikidata fallbacks ───────────────────────────────────────────────
 
-    def _wikidata_life_years_by_mbid(self, mb_artist_id: str) -> tuple[int | None, int | None]:
-        """Look up (birth, death) year via Wikidata's P434 (MusicBrainz artist ID) — avoids name collisions."""
+    def _wikidata_life_years_by_mbid(
+        self, mb_artist_id: str
+    ) -> tuple[int | None, int | None]:
+        """Look up (birth, death) year via Wikidata's P434 (MusicBrainz artist ID)
+        — avoids name collisions."""
         cache_key = f"mbid:{mb_artist_id}"
         if cache_key in self._cache_wikidata_life:
             return self._cache_wikidata_life[cache_key]
@@ -308,7 +325,9 @@ class MusicLookup:
         self._cache_wikidata_life[cache_key] = years
         return years
 
-    def _lookup_via_wikidata_search(self, title: str, artist: str) -> ComposerInfo | None:
+    def _lookup_via_wikidata_search(
+        self, title: str, artist: str
+    ) -> ComposerInfo | None:
         sparql = _sparql_work_by_title_artist(title, artist)
         data = self._wd_query(sparql)
         return _parse_wikidata_composer(data) if data else None
@@ -317,7 +336,9 @@ class MusicLookup:
         """Earliest publication/inception year of a musical work with this title,
         constrained to a composer/performer we already know (avoids matching the
         wrong same-titled work). Returns None when Wikidata has no such work."""
-        names = [n for n in dict.fromkeys(n.strip() for n in names if n and n.strip())][:4]
+        names = [n for n in dict.fromkeys(n.strip() for n in names if n and n.strip())][
+            :4
+        ]
         if not title or not names:
             return None
         key = (title.lower(), tuple(sorted(n.lower() for n in names)))
@@ -327,7 +348,7 @@ class MusicLookup:
         year = None
         if data:
             for b in (data.get("results") or {}).get("bindings") or []:
-                y = _parse_year((b.get("date") or {}).get("value"))
+                y = parse_year((b.get("date") or {}).get("value"))
                 if y:
                     year = y  # ORDER BY ASC → first bound date is the earliest
                     break
@@ -342,7 +363,7 @@ class MusicLookup:
                 params={"query": sparql, "format": "json"},
                 headers={
                     "accept": "application/sparql-results+json",
-                    "user-agent": MB_USER_AGENT,
+                    "user-agent": USER_AGENT,
                 },
                 timeout=15.0,
             )
@@ -406,55 +427,6 @@ def _score_work_authors(authors: list[dict[str, Any]], artist_str: str | None) -
     return score
 
 
-def _current_year() -> int:
-    from datetime import date
-
-    return date.today().year
-
-
-def _pd_status(
-    authors: list[dict[str, Any]], current_year: int, term: int = 70, partial: bool = False
-) -> tuple[int | None, bool, bool | None]:
-    """Public-domain assessment from a work's authors (PMLE, `term` years post
-    mortem auctoris — 70 in the EU/CH/US). Returns
-    (latest_author_death_year, authors_complete, public_domain).
-
-    The term runs from the *last surviving* author, so the two verdicts need
-    different evidence: an author we haven't found can only push the expiry later,
-    never earlier. "Protected" is therefore safe to assert from a known recent
-    death alone, while "public domain" additionally needs every author's death
-    year (`authors_complete`) and the set itself to be whole (`partial` False).
-    None = cannot be asserted."""
-    if not authors:
-        return None, False, None
-    deaths = [a.get("death_year") for a in authors]
-    known = [d for d in deaths if d]
-    complete = len(known) == len(authors)
-    latest = max(known) if known else None
-    if latest is not None and (current_year - latest) <= term:
-        return latest, complete, False
-    if partial or not complete or latest is None:
-        return latest, complete, None
-    return latest, complete, True
-
-
-def _presumption_applies(
-    authors: list[dict[str, Any]], current_year: int, term: int = 70, max_lifespan: int = 100
-) -> bool | None:
-    """Presumption rule for authors without a death year: if the last of them was
-    born more than `max_lifespan` + `term` years ago, they're presumed dead for at
-    least `term` years. None when not applicable: every death year is known, a
-    birth year is missing, or a known author died within `term` years (protected
-    either way)."""
-    unknown = [a for a in authors if not a.get("death_year")]
-    if not unknown or any(not a.get("birth_year") for a in unknown):
-        return None
-    if any(current_year - a["death_year"] <= term for a in authors if a.get("death_year")):
-        return None
-    latest_birth = max(a["birth_year"] for a in unknown)
-    return (current_year - latest_birth) > max_lifespan + term
-
-
 def _wikidata_entity_url(uri: str | None) -> str | None:
     """SPARQL returns entity URIs (…/entity/Q42); the readable page is …/wiki/Q42."""
     if not uri:
@@ -485,24 +457,13 @@ def _artist_death(artist: dict) -> str | None:
     return life.get("end")
 
 
-def _parse_year(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if not isinstance(value, str):
-        return None
-    m = re.search(r"\d{4}", value)
-    return int(m.group()) if m else None
-
-
 def _parse_life_years(data: dict) -> tuple[int | None, int | None]:
     """First (birth, death) years found in Wikidata result rows."""
     bindings = (data.get("results") or {}).get("bindings") or []
 
     def first(key: str) -> int | None:
         for b in bindings:
-            year = _parse_year((b.get(key) or {}).get("value"))
+            year = parse_year((b.get(key) or {}).get("value"))
             if year:
                 return year
         return None
@@ -519,8 +480,8 @@ def _parse_wikidata_composer(data: dict) -> ComposerInfo | None:
     if not composer:
         return None
     work = (b.get("workLabel") or {}).get("value")
-    birth = _parse_year((b.get("birth") or {}).get("value"))
-    death = _parse_year((b.get("death") or {}).get("value"))
+    birth = parse_year((b.get("birth") or {}).get("value"))
+    death = parse_year((b.get("death") or {}).get("value"))
     return ComposerInfo(
         composer=composer,
         composer_birth_year=birth,
@@ -529,26 +490,27 @@ def _parse_wikidata_composer(data: dict) -> ComposerInfo | None:
         composer_match="search",
         # This query asks for P86 (composer) only - a lyricist or co-writer may
         # exist and stay unseen, so the set is flagged partial and the PD verdict
-        # stays one-sided (see _pd_status).
-        authors=[{
-            "name": composer,
-            "roles": ["composer"],
-            "birth_year": birth,
-            "death_year": death,
-            "wikidata_url": _wikidata_entity_url((b.get("composer") or {}).get("value")),
-        }],
+        # stays one-sided (see rights._pd_status).
+        authors=[
+            {
+                "name": composer,
+                "roles": ["composer"],
+                "birth_year": birth,
+                "death_year": death,
+                "wikidata_url": _wikidata_entity_url(
+                    (b.get("composer") or {}).get("value")
+                ),
+            }
+        ],
         authors_partial=True,
         sources=["wikidata"],
     )
 
 
-def _escape_sparql_string(s: str) -> str:
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def _sparql_person_life_by_mbid(mb_artist_id: str) -> str:
-    """Find birth (P569) and death (P570) for the person identified by MusicBrainz artist ID — avoids name collisions."""
-    safe = _escape_sparql_string(mb_artist_id)
+    """Find birth (P569) and death (P570) for the person identified by MusicBrainz
+    artist ID — avoids name collisions."""
+    safe = escape_sparql_string(mb_artist_id)
     return f"""
 SELECT ?birth ?death WHERE {{
   ?person wdt:P434 "{safe}".
@@ -563,8 +525,8 @@ def _sparql_work_year_by_title_people(title: str, names: list[str]) -> str:
     """Earliest date of a musical work with `title`, whose composer (P86) or
     performer (P175) is one of `names`. Constraining by the people keeps the match
     fast and unambiguous."""
-    safe_title = _escape_sparql_string(title)
-    values = " ".join(f'"{_escape_sparql_string(n)}"@en' for n in names)
+    safe_title = escape_sparql_string(title)
+    values = " ".join(f'"{escape_sparql_string(n)}"@en' for n in names)
     return f"""
 SELECT ?date WHERE {{
   VALUES ?pname {{ {values} }}
@@ -583,8 +545,8 @@ LIMIT 3
 
 
 def _sparql_work_by_title_artist(title: str, artist: str) -> str:
-    safe_title = _escape_sparql_string(title)
-    safe_artist = _escape_sparql_string(artist)
+    safe_title = escape_sparql_string(title)
+    safe_artist = escape_sparql_string(artist)
     return f"""
 SELECT ?workLabel ?composerLabel ?composer ?birth ?death WHERE {{
   ?work wdt:P31/wdt:P279* wd:Q207628;

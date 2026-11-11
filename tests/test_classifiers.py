@@ -1,5 +1,6 @@
 """Tests for classifiers."""
 
+import importlib.util
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -27,7 +28,6 @@ class TestHuggingFaceClassifier:
         # Set required attributes
         classifier.model_id = "test-model"
         classifier.music_labels = ["Music"]
-        classifier.threshold = 0.5
         classifier.device = "cpu"
         classifier._torch = mock_torch
         classifier.label2id = {"Music": 0, "Speech": 1, "Silence": 2}
@@ -42,8 +42,8 @@ class TestHuggingFaceClassifier:
 
         return classifier, mock_torch
 
-    def test_classify_above_threshold(self, mock_classifier):
-        """Test classify returns is_music=True when above threshold."""
+    def test_classify_returns_the_music_labels_probability(self, mock_classifier):
+        """Whether that is music is the run's call (its threshold)."""
         classifier, mock_torch = mock_classifier
 
         # Set up mock inputs
@@ -68,40 +68,9 @@ class TestHuggingFaceClassifier:
             sample_rate=16000,
         )
 
-        result = classifier.classify(chunk)
+        music, _ = classifier.classify(chunk)
 
-        assert result.is_music is True
-        assert result.confidence == 0.8
-        assert result.chunk is chunk
-
-    def test_classify_below_threshold(self, mock_classifier):
-        """Test classify returns is_music=False when below threshold."""
-        classifier, mock_torch = mock_classifier
-
-        mock_inputs = {"input_values": MagicMock()}
-        mock_inputs["input_values"].to = MagicMock(return_value=MagicMock())
-        classifier.processor.return_value = mock_inputs
-
-        # Set up softmax to return low probability
-        mock_probs = MagicMock()
-        mock_prob_slice = MagicMock()
-        mock_prob_slice.sum.return_value.item.return_value = 0.3
-        mock_probs.__getitem__ = MagicMock(return_value=mock_prob_slice)
-        mock_torch.softmax.return_value = mock_probs
-
-        classifier._resample = MagicMock(side_effect=lambda a, o, t: a)
-
-        chunk = AudioChunk(
-            data=np.zeros(16000, dtype=np.float32),
-            start_time=0.0,
-            end_time=1.0,
-            sample_rate=16000,
-        )
-
-        result = classifier.classify(chunk)
-
-        assert result.is_music is False
-        assert result.confidence == 0.3
+        assert music == 0.8
 
     def test_resample_same_rate(self, mock_classifier):
         """Test _resample returns audio unchanged when rates match."""
@@ -132,23 +101,11 @@ class TestHuggingFaceClassifier:
 
 
 @pytest.mark.skipif(
-    not pytest.importorskip("torch", reason="torch not installed"),
-    reason="HF dependencies not installed",
+    importlib.util.find_spec("torch") is None, reason="torch not installed"
 )
 class TestHuggingFaceClassifierIntegration:
     """Integration tests that require actual HF dependencies."""
 
-    @pytest.fixture
-    def test_video_path(self):
-        """Path to test video file."""
-        import pathlib
-
-        path = pathlib.Path(__file__).parent / "test_video.mp4"
-        if not path.exists():
-            pytest.skip("test_video.mp4 not found")
-        return path
-
-    @pytest.mark.slow
     def test_real_model_loading(self):
         """Test loading real model (skipped in CI)."""
         from soundtrackID.classifiers import HuggingFaceClassifier
@@ -158,19 +115,17 @@ class TestHuggingFaceClassifierIntegration:
         assert len(classifier.label2id) > 0
         assert "Music" in classifier.label2id
 
-    @pytest.mark.slow
-    def test_classify_real_audio(self, test_video_path):
-        """Test classification with real audio from test video."""
-        import librosa
-
+    def test_classify_real_audio(self):
+        """Test classification of 10 s of audio with the real model."""
         from soundtrackID.classifiers import HuggingFaceClassifier
 
-        # Load 10 seconds of audio starting at 60s (music section)
-        audio, sr = librosa.load(test_video_path, sr=16000, duration=10.0, offset=60.0)
+        # A 440 Hz tone; the checks below don't depend on what the audio is
+        sr = 16000
+        t = np.arange(10 * sr) / sr
+        audio = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
 
         classifier = HuggingFaceClassifier(
             music_labels=["Music", "Musical instrument", "Singing", "Background music"],
-            threshold=0.3,
         )
 
         chunk = AudioChunk(
@@ -180,9 +135,34 @@ class TestHuggingFaceClassifierIntegration:
             sample_rate=sr,
         )
 
-        result = classifier.classify(chunk)
+        music, probs = classifier.classify(chunk)
 
-        # The test video contains music, so we expect detection
-        assert result.confidence > 0.0
-        assert result.chunk is chunk
-        assert isinstance(result.is_music, bool)
+        assert music > 0.0
+        assert len(probs) == len(classifier.labels)
+
+
+def test_the_onnx_export_is_used_unless_hf_is_asked_for_or_it_is_missing(
+    tmp_path, monkeypatch
+):
+    """The app's and the CLI's classifier, from source."""
+    from soundtrackID import classifiers
+
+    built = []
+    monkeypatch.setattr(
+        classifiers,
+        "OnnxClassifier",
+        lambda model_dir, music_labels: built.append(("onnx", model_dir)),
+    )
+    monkeypatch.setattr(
+        classifiers,
+        "HuggingFaceClassifier",
+        lambda music_labels: built.append(("hf",)),
+    )
+    monkeypatch.setattr(classifiers, "_MODEL_DIR", tmp_path)
+
+    classifiers.load_classifier(hf=False)
+    classifiers.load_classifier(hf=True)
+    monkeypatch.setattr(classifiers, "_MODEL_DIR", tmp_path / "not exported")
+    classifiers.load_classifier(hf=False)
+
+    assert built == [("onnx", str(tmp_path)), ("hf",), ("hf",)]

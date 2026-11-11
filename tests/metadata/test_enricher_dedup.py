@@ -19,14 +19,36 @@ def test_recurring_track_enriched_once(monkeypatch):
     counter = _CountingLookup()
     monkeypatch.setattr(enricher, "MusicLookup", lambda *_a, **_k: counter)
 
-    results = {"cues": [
-        {"segment_id": "seg_001", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-        {"segment_id": "seg_002", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-        {"segment_id": "seg_003", "title": "La Cumparsita", "artist": "Matos", "isrc": "Y1"},
-        {"segment_id": "seg_004", "title": "Diane", "artist": "Erno Rapee", "isrc": "X1"},
-    ]}
+    results = {
+        "cues": [
+            {
+                "segment_id": "seg_001",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+            {
+                "segment_id": "seg_002",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+            {
+                "segment_id": "seg_003",
+                "title": "La Cumparsita",
+                "artist": "Matos",
+                "isrc": "Y1",
+            },
+            {
+                "segment_id": "seg_004",
+                "title": "Diane",
+                "artist": "Erno Rapee",
+                "isrc": "X1",
+            },
+        ]
+    }
 
-    enricher.enrich(results=results, film_hint=None, http_client=None, scope="music")
+    enricher.enrich(results=results, http_client=None)
 
     # One lookup per unique (title, artist), not per cue.
     assert len(counter.calls) == 2
@@ -39,22 +61,19 @@ def test_recurring_track_enriched_once(monkeypatch):
     assert cues[2]["enrichment"]["composer"] == "composer-of-La Cumparsita"
 
 
-def test_identity_key_normalizes_case_and_punctuation():
-    a = enricher._identity_key({"title": "La Cumparsita", "artist": "Matos Rodríguez"})
-    b = enricher._identity_key({"title": "la cumparsita", "artist": "matos rodríguez"})
-    assert a == b
-
-
 def test_progress_counts_unique_tracks(monkeypatch):
     counter = _CountingLookup()
     monkeypatch.setattr(enricher, "MusicLookup", lambda *_a, **_k: counter)
     events = []
-    results = {"cues": [
-        {"segment_id": "s1", "title": "Diane", "artist": "R", "isrc": "X"},
-        {"segment_id": "s2", "title": "Diane", "artist": "R", "isrc": "X"},
-    ]}
+    results = {
+        "cues": [
+            {"segment_id": "s1", "title": "Diane", "artist": "R", "isrc": "X"},
+            {"segment_id": "s2", "title": "Diane", "artist": "R", "isrc": "X"},
+        ]
+    }
     enricher.enrich(
-        results=results, film_hint=None, http_client=None, scope="music",
+        results=results,
+        http_client=None,
         progress_cb=lambda step, **kw: events.append((step, kw.get("total"))),
     )
     starts = [t for step, t in events if step == "music_start"]

@@ -1,21 +1,27 @@
 """Music isolation."""
 
+import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
+log = logging.getLogger(__name__)
+
 
 class BaseMusicIsolator(ABC):
     @abstractmethod
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         """Isolate music from audio."""
         ...
 
 
 class DummyIsolator(BaseMusicIsolator):
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         return audio
 
 
@@ -42,14 +48,16 @@ class DemucsIsolator(BaseMusicIsolator):
         from demucs.pretrained import get_model
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Loading Demucs model '{model_name}'...")
+        log.info("Loading Demucs model '%s'...", model_name)
         self.model = get_model(model_name)
         self.model.to(self.device)
         self.model.eval()
         self.model_name = model_name
-        print(f"Demucs ready on {self.device}")
+        log.info("Demucs ready on %s", self.device)
 
-    def isolate(self, audio: NDArray[np.float32], sample_rate: int) -> NDArray[np.float32]:
+    def isolate(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
         """Isolate music from audio using Demucs.
 
         Separates audio into stems and returns the sum of non-vocal stems.
@@ -100,7 +108,9 @@ class DemucsIsolator(BaseMusicIsolator):
 
         if vocal_idx >= 0:
             # Sum all stems except vocals
-            music = torch.sum(sources[[i for i in range(len(stem_names)) if i != vocal_idx]], dim=0)
+            music = torch.sum(
+                sources[[i for i in range(len(stem_names)) if i != vocal_idx]], dim=0
+            )
         else:
             # No vocals stem, sum all
             music = torch.sum(sources, dim=0)
@@ -116,43 +126,3 @@ class DemucsIsolator(BaseMusicIsolator):
             music_np = music_np.mean(axis=0)
 
         return music_np.astype(np.float32)
-
-
-if __name__ == "__main__":
-    import sys
-    from scipy.io import wavfile
-
-    input_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("output/segments")
-    output_dir = Path("output/segments_clean")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Find all WAV files in input directory
-    wav_files = sorted(input_dir.glob("*.wav"))
-    if not wav_files:
-        print(f"No WAV files found in {input_dir}")
-        sys.exit(1)
-
-    print(f"Found {len(wav_files)} segment(s) in {input_dir}")
-    isolator = DemucsIsolator()
-
-    print("\nProcessing segments...")
-    for wav_path in wav_files:
-        print(f"\n  Processing: {wav_path.name}")
-
-        # Read input audio
-        sample_rate, audio = wavfile.read(wav_path)
-        if audio.dtype == np.int16:
-            audio = audio.astype(np.float32) / 32767.0
-        elif audio.dtype != np.float32:
-            audio = audio.astype(np.float32) / np.iinfo(audio.dtype).max
-
-        # Isolate music
-        music = isolator.isolate(audio, sample_rate)
-
-        # Export cleaned segment
-        output_path = output_dir / wav_path.name.replace("segment_", "clean_")
-        audio_int16 = (np.clip(music, -1.0, 1.0) * 32767).astype(np.int16)
-        wavfile.write(output_path, sample_rate, audio_int16)
-        print(f"    -> {output_path.name}")
-
-    print(f"\nExported {len(wav_files)} cleaned segment(s) to {output_dir}/")
