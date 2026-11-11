@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from scipy.io import wavfile
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
@@ -109,7 +108,7 @@ class FailingClient:
         return DetectionResult(segment=segment, title="X", artist=None)
 
 
-def test_classification_spans_cover_whole_audio(tmp_path):
+def test_classification_spans_cover_whole_audio():
     """The results get gap-free music / no-music spans with every class."""
     pipeline = Pipeline(
         loader=FakeLoader(),
@@ -118,7 +117,6 @@ def test_classification_spans_cover_whole_audio(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=NoMatchClient(),
-        output_dir=tmp_path,
     )
 
     results = pipeline.run(Path("film.mp4"))
@@ -133,7 +131,7 @@ def test_classification_spans_cover_whole_audio(tmp_path):
     assert spans[1]["classes"]["Music"] > FakeClassifier.threshold
 
 
-def test_classification_windows_list_top_three_classes(tmp_path):
+def test_classification_windows_list_top_three_classes():
     """Every classification window is listed with its three most likely classes."""
     pipeline = Pipeline(
         loader=FakeLoader(),
@@ -142,7 +140,6 @@ def test_classification_windows_list_top_three_classes(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=NoMatchClient(),
-        output_dir=tmp_path,
     )
 
     results = pipeline.run(Path("film.mp4"))
@@ -173,7 +170,7 @@ class AudDLikeClient:
         return DetectionResult(segment, "T", "A", "audd", dict(self.metadata))
 
 
-def test_a_cue_has_the_fields_of_its_answer_and_no_confidence(tmp_path):
+def test_a_cue_has_the_fields_of_its_answer_and_no_confidence():
     """No made-up score: Shazam and AudD give none, ACRCloud's is in its
     candidates. AudD's song_link is kept like any other field."""
     pipeline = Pipeline(
@@ -183,7 +180,6 @@ def test_a_cue_has_the_fields_of_its_answer_and_no_confidence(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=AudDLikeClient(),
-        output_dir=tmp_path,
     )
 
     [cue] = pipeline.run(Path("film.mp4")).to_dict()["cues"]
@@ -198,8 +194,10 @@ def test_a_cue_has_the_fields_of_its_answer_and_no_confidence(tmp_path):
     }
 
 
-def test_only_pending_cues_keep_their_audio(tmp_path):
-    """A resume sends it again; nothing else reads it."""
+def test_the_pending_cues_come_with_their_audio(tmp_path, monkeypatch):
+    """For the run to keep, so a resume can send it again; the pipeline itself
+    writes nothing."""
+    monkeypatch.chdir(tmp_path)
     pipeline = Pipeline(
         loader=FakeLoader(),
         chunker=AudioChunker(chunk_duration=10.0, overlap=5.0),
@@ -207,35 +205,24 @@ def test_only_pending_cues_keep_their_audio(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=ThrottledClient(answers=2),
-        output_dir=tmp_path,
         detection_concurrency=1,  # windows are asked in order
     )
 
     results = pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
 
-    cues = results.to_dict()["cues"]
-    assert [c["audio_file"] for c in cues] == [
-        None,  # answered ("no match")
-        "segments/seg_002.wav",
-        "segments/seg_003.wav",
-        "segments/seg_004.wav",
-        "segments/seg_005.wav",
-    ]
-    segments = tmp_path / "film" / "segments"
-    assert sorted(p.name for p in segments.iterdir()) == [
-        "seg_002.wav",
-        "seg_003.wav",
-        "seg_004.wav",
-        "seg_005.wav",
-    ]
+    pending = [c["segment_id"] for c in results.cues if c["pending"]]
+    assert pending == ["seg_002", "seg_003", "seg_004", "seg_005"]
+    assert sorted(results.pending_audio) == pending
     # The clip the provider would have heard: 10-15 s of the film.
-    rate, wav = wavfile.read(segments / "seg_002.wav")
+    clip = results.pending_audio["seg_002"]
     audio, _ = FakeLoader().load(None)
-    np.testing.assert_allclose(wav / 32767, audio[10 * SR : 15 * SR], atol=1e-4)
+    assert (clip.start_time, clip.end_time) == (10.0, 15.0)
+    np.testing.assert_array_equal(clip.audio, audio[10 * SR : 15 * SR])
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("bridge_gap, n_cues", [(10.0, 1), (5.0, 3)])
-def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cues):
+def test_bridge_gap_limits_bridged_unidentified_clips(bridge_gap, n_cues):
     """X, no match (10 s), X becomes one cue only if 10 s fits the bridge gap."""
     pipeline = Pipeline(
         loader=FakeLoader(),
@@ -244,7 +231,6 @@ def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cu
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=TitleByStartClient(starts=(0.0, 20.0)),
-        output_dir=tmp_path,
         bridge_gap=bridge_gap,
     )
 
@@ -253,7 +239,7 @@ def test_bridge_gap_limits_bridged_unidentified_clips(tmp_path, bridge_gap, n_cu
     assert len(results.cues) == n_cues
 
 
-def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
+def test_rate_limit_skips_the_calls_of_windows_already_queued():
     """They would be refused too, Shazam only after ~12 minutes of retries."""
     throttled = ThrottledClient()
     client = ReleasedClient(throttled)
@@ -269,7 +255,6 @@ def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=client,
-        output_dir=tmp_path,
         detection_concurrency=1,  # the other windows wait in the queue
     )
 
@@ -282,7 +267,7 @@ def test_rate_limit_skips_the_calls_of_windows_already_queued(tmp_path):
     assert not any(c["title"] for c in results.cues)
 
 
-def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
+def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues():
     """So a resume identifies each one; windows answered before still merge."""
     pipeline = Pipeline(
         loader=FakeLoader(),
@@ -291,7 +276,6 @@ def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=ThrottledClient(answers=2),
-        output_dir=tmp_path,
         detection_concurrency=1,  # windows are asked in order
     )
 
@@ -307,7 +291,7 @@ def test_windows_skipped_at_a_rate_limit_stay_separate_pending_cues(tmp_path):
     ]
 
 
-def test_a_window_the_provider_failed_on_stays_pending(tmp_path, caplog):
+def test_a_window_the_provider_failed_on_stays_pending(caplog):
     """The run goes on and keeps what was identified; a resume asks again."""
     pipeline = Pipeline(
         loader=FakeLoader(),
@@ -316,7 +300,6 @@ def test_a_window_the_provider_failed_on_stays_pending(tmp_path, caplog):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=FailingClient(fail_at=(10.0,)),
-        output_dir=tmp_path,
         detection_concurrency=1,
     )
 
@@ -328,7 +311,7 @@ def test_a_window_the_provider_failed_on_stays_pending(tmp_path, caplog):
         (10.0, 5.0, None, True),
         (15.0, 15.0, "X", False),
     ]
-    assert cues[1]["audio_file"] == "segments/seg_002.wav"
+    assert list(results.pending_audio) == ["seg_002"]  # kept for a resume
     assert "malformed answer" in caplog.text
 
 
@@ -339,7 +322,7 @@ class RejectingClient:
         raise ProviderAuthError("ACRCloud rejected the API keys (error 3014)")
 
 
-def test_rejected_keys_stop_the_run(tmp_path):
+def test_rejected_keys_stop_the_run():
     """Waiting doesn't fix them, so no pending cues for a resume that would fail
     the same way: the run fails at once and says why."""
     pipeline = Pipeline(
@@ -349,14 +332,13 @@ def test_rejected_keys_stop_the_run(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=RejectingClient(),
-        output_dir=tmp_path,
     )
 
     with pytest.raises(ProviderAuthError, match="rejected the API keys"):
         pipeline.run(Path("film.mp4"), max_segment_duration=5.0)
 
 
-def test_progress_events_carry_their_data_as_fields(tmp_path):
+def test_progress_events_carry_their_data_as_fields():
     """The UI reads the fields; `detail` is only a message and is never parsed."""
     client = ReleasedClient(TitleByStartClient(starts=(10.0,)))
     events = []
@@ -373,7 +355,6 @@ def test_progress_events_carry_their_data_as_fields(tmp_path):
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=DummyIsolator(),
         detection_client=client,
-        output_dir=tmp_path,
     )
 
     pipeline.run(Path("film.mp4"), on_progress=on_progress, max_segment_duration=5.0)
@@ -603,9 +584,9 @@ def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
         "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
     )
 
-    pipeline = app._build_pipeline(Path("."), bridge_gap=7.0, hop=2.5)
+    pipeline = app._build_pipeline(bridge_gap=7.0, hop=2.5)
 
-    assert pipeline.output_writer.bridge_gap == 7.0
+    assert pipeline.bridge_gap == 7.0
     assert pipeline.chunker.chunk_duration == FakeClassifier.window_duration
     assert pipeline.chunker.chunk_duration - pipeline.chunker.overlap == 2.5
 

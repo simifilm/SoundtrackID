@@ -23,7 +23,7 @@ from soundtrackID.models import (
     ResultsOutput,
     upgrade_results,
 )
-from soundtrackID.pipeline import OutputWriter
+from soundtrackID.pipeline import build_cues
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app_module.app)
@@ -290,8 +290,8 @@ def test_older_results_lose_their_confidence():
 
 
 def test_timeline_of_a_run_saved_before_it_had_its_own_file(tmp_path, monkeypatch):
-    """Read from results.json, and moved into timeline.json once the results
-    are read, as their next save leaves it out."""
+    """Read from results.json, and moved into timeline.json when the results
+    are next saved, as they leave it out."""
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     run_dir = _make_run(tmp_path)  # its waveform in results.json
     timeline = {"waveform": {"samples": [1, 2, 3]}}
@@ -382,11 +382,7 @@ def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(tmp_path, monkeypat
         return DetectionResult(segment, "T", "A", "acrcloud", dict(metadata))
 
     clip = MusicSegment(np.zeros(1000, np.float32), 0.0, 1.0, 1000)
-    analyzed = (
-        OutputWriter(tmp_path / "analyzed")
-        .write(tmp_path / "film.mp4", [(clip, detect(clip))])
-        .to_dict()["cues"][0]
-    )
+    [analyzed], _ = build_cues([(clip, detect(clip))], bridge_gap=2.0)
     cues = [{"segment_id": "s1", "title": None, "pending": True}]
     [resumed] = _resume(tmp_path, monkeypatch, detect, cues)["cues"]
 

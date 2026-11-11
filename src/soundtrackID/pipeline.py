@@ -8,7 +8,6 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
-from scipy.io import wavfile
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
@@ -92,92 +91,53 @@ def _group_detections(
     return groups
 
 
-class OutputWriter:
-    """Turns detections into cues and writes the audio of the pending ones."""
+def build_cues(
+    results: list[tuple[MusicSegment, DetectionResult]], bridge_gap: float
+) -> tuple[list[Cue], dict[str, MusicSegment]]:
+    """Merge consecutive detections with the same identification into cues.
 
-    def __init__(
-        self,
-        output_dir: Path,
-        bridge_gap: float = 2.0,
-    ) -> None:
-        self.output_dir = output_dir
-        self.bridge_gap = bridge_gap
+    Returns the cues and the audio of each pending one, by its segment_id, which
+    the run keeps for a resume to send again (runs.Run.write_audio); a pending
+    cue's audio_file is the run's to set.
+    """
+    groups = _group_detections(results, gap_tolerance_s=bridge_gap)
 
-    def write(
-        self,
-        video_path: Path,
-        results: list[tuple[MusicSegment, DetectionResult]],
-        waveform: dict | None = None,
-        film: dict | None = None,
-        classification: list[dict] | None = None,
-        classification_windows: list[dict] | None = None,
-        run_name: str | None = None,
-    ) -> ResultsOutput:
-        """Merge consecutive detections with the same identification into cues.
+    cues: list[Cue] = []
+    pending_audio: dict[str, MusicSegment] = {}
+    for i, group in enumerate(groups):
+        segment_id = f"seg_{i + 1:03d}"
+        pending = all(d.skipped for _, d in group)
+        if pending:
+            # A pending cue is a single clip: skipped clips are never joined.
+            pending_audio[segment_id] = group[0][0]
 
-        Writes output_dir/<video_name>/segments/seg_001.wav, the audio of each
-        pending cue, which a resume sends again; video_name is `run_name`, by
-        default the video's file name. results.json is the caller's to save
-        (analysis.analyze), once the run is complete.
-        """
-        video_name = run_name or video_path.stem
-        video_output_dir = self.output_dir / video_name
-        segments_dir = video_output_dir / "segments"
+        first_seg, last_seg = group[0][0], group[-1][0]
+        identified = [d for _, d in group if d.title]
+        cue: Cue = {
+            "segment_id": segment_id,
+            "start": first_seg.start_time,
+            "duration": last_seg.end_time - first_seg.start_time,
+            "audio_file": None,
+            "pending": pending,
+            **match_fields(identified[0] if identified else None),
+            "enrichment": None,
+        }
+        if identified:
+            # Canonical album for the merged cue: the most frequent album name
+            # among the group's identified windows (ties → first seen), so a
+            # single piece doesn't inherit whichever album the first window
+            # happened to carry.
+            album_counts: dict[str, int] = {}
+            for d in identified:
+                alb = d.metadata.get("album")
+                if alb:
+                    album_counts[alb] = album_counts.get(alb, 0) + 1
+            cue["album"] = (
+                max(album_counts, key=album_counts.get) if album_counts else None
+            )
+        cues.append(cue)
 
-        groups = _group_detections(results, gap_tolerance_s=self.bridge_gap)
-
-        cues: list[Cue] = []
-        for i, group in enumerate(groups):
-            segment_id = f"seg_{i + 1:03d}"
-            pending = all(d.skipped for _, d in group)
-            audio_file = None
-            if pending:
-                # A pending cue is a single clip: skipped clips are never joined.
-                seg = group[0][0]
-                audio_file = f"segments/{segment_id}.wav"
-                segments_dir.mkdir(parents=True, exist_ok=True)
-                audio_int16 = (np.clip(seg.audio, -1.0, 1.0) * 32767).astype(np.int16)
-                wavfile.write(
-                    video_output_dir / audio_file, seg.sample_rate, audio_int16
-                )
-
-            first_seg, last_seg = group[0][0], group[-1][0]
-            identified = [d for _, d in group if d.title]
-            cue: Cue = {
-                "segment_id": segment_id,
-                "start": first_seg.start_time,
-                "duration": last_seg.end_time - first_seg.start_time,
-                "audio_file": audio_file,
-                "pending": pending,
-                **match_fields(identified[0] if identified else None),
-                "enrichment": None,
-            }
-            if identified:
-                # Canonical album for the merged cue: the most frequent album name
-                # among the group's identified windows (ties → first seen), so a
-                # single piece doesn't inherit whichever album the first window
-                # happened to carry.
-                album_counts: dict[str, int] = {}
-                for d in identified:
-                    alb = d.metadata.get("album")
-                    if alb:
-                        album_counts[alb] = album_counts.get(alb, 0) + 1
-                cue["album"] = (
-                    max(album_counts, key=album_counts.get) if album_counts else None
-                )
-            cues.append(cue)
-
-        results_output = ResultsOutput(
-            source=video_path.name,
-            video_name=video_name,
-            cues=cues,
-            waveform=waveform,
-            film=film,
-            classification=classification,
-            classification_windows=classification_windows,
-        )
-
-        return results_output
+    return cues, pending_audio
 
 
 class Pipeline:
@@ -189,7 +149,6 @@ class Pipeline:
         aggregator: ChunkAggregator,
         isolator: BaseMusicIsolator,
         detection_client: BaseMusicDetectionClient,
-        output_dir: Path | None = None,
         detection_concurrency: int = 4,
         bridge_gap: float = 2.0,
     ) -> None:
@@ -199,13 +158,11 @@ class Pipeline:
         self.aggregator = aggregator
         self.isolator = isolator
         self.detection_client = detection_client
-        self.output_dir = output_dir or Path("./output")
         # Number of identification calls dispatched concurrently. Kept modest by
         # default: identification providers are network-bound and rate-limited
         # (ACRCloud is metered).
         self.detection_concurrency = max(1, detection_concurrency)
-
-        self.output_writer = OutputWriter(self.output_dir, bridge_gap=bridge_gap)
+        self.bridge_gap = bridge_gap
 
     @property
     def settings(self) -> dict:
@@ -215,7 +172,7 @@ class Pipeline:
             "threshold": self.classifier.threshold,
             "window": self.chunker.chunk_duration,
             "hop": self.chunker.chunk_duration - self.chunker.overlap,
-            "bridge_gap": self.output_writer.bridge_gap,
+            "bridge_gap": self.bridge_gap,
             "isolation": not isinstance(self.isolator, DummyIsolator),
         }
 
@@ -225,14 +182,12 @@ class Pipeline:
         on_progress=None,
         max_segment_duration: float | None = None,
         container_tags: dict | None = None,
-        run_name: str | None = None,
     ) -> ResultsOutput:
-        """Run the pipeline on a video file.
+        """Run the pipeline on a video file. Writes nothing: what to keep of the
+        results is the caller's (analysis.analyze).
 
         Args:
             video_path: Path to the video file.
-            run_name: Name of the run's output folder; by default the video's
-                file name.
             on_progress: Optional callable(step: str, **fields) for progress updates.
                 Steps: "loading", "waveform", "classifying", "identified", "detecting",
                 "writing" (identification overlaps classification, so "classifying" and
@@ -485,22 +440,21 @@ class Pipeline:
         progress("detecting", f"{found}/{total_chunks} chunks identified")
 
         progress("writing")
-        output = self.output_writer.write(
-            video_path,
-            detection_results,
+        cues, pending_audio = build_cues(detection_results, self.bridge_gap)
+        return ResultsOutput(
+            source=video_path.name,
+            cues=cues,
             waveform=waveform_data,
             film=container_tags or None,
             classification=merge_spans(slots, self.classifier.labels),
             classification_windows=windows,
-            run_name=run_name,
+            pending_audio=pending_audio,
         )
-        return output
 
 
 def build_pipeline(
     classifier: BaseClassifier,
     api: str,
-    output_dir: Path,
     hop: float = CLASSIFICATION_HOP_S,
     window: float | None = None,
     bridge_gap: float = 2.0,
@@ -530,6 +484,5 @@ def build_pipeline(
         aggregator=ChunkAggregator(gap_tolerance=1.0),
         isolator=isolator,
         detection_client=build_detection_client(api),
-        output_dir=output_dir,
         bridge_gap=bridge_gap,
     )

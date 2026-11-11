@@ -6,13 +6,13 @@ provider left pending, from their saved audio.
 """
 
 import logging
-import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from soundtrackID.models import load_results, match_fields, save_json
+from soundtrackID.models import MATCH_KEYS, match_fields
+from soundtrackID.runs import Run
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def analyze(
     pipeline,
     video: Path,
     api: str,
+    runs_dir: Path,
     film: dict[str, Any] | None = None,
     max_segment_duration: float | None = None,
     keep_video: bool = False,
@@ -35,18 +36,16 @@ def analyze(
 ) -> dict[str, Any]:
     """Analyze `video` as a new run and return its results.
 
-    The run gets a folder of its own in the pipeline's output folder, named after
-    the video's file and the time, so analyzing the same film again keeps the
-    earlier run. `api` names the provider(s) the pipeline identifies with; `film`
-    is what is known about the film, by default the file's MP4 tags.
-    `keep_video` moves the video into the run folder, with a filmstrip, for the
-    app's video preview. A cancelled or failed run leaves no folder behind.
+    The run gets a folder of its own in `runs_dir`, named after the video's file
+    and the time, so analyzing the same film again keeps the earlier run. `api`
+    names the provider(s) the pipeline identifies with; `film` is what is known
+    about the film, by default the file's MP4 tags. `keep_video` moves the video
+    into the run folder, with a filmstrip, for the app's video preview. A
+    cancelled or failed run leaves no folder behind.
     """
-    run_name = f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
-    run_dir = pipeline.output_dir / run_name
-    # Not exist_ok: a failure removes this folder, so it must not be another
-    # run's (the same file, started within the same second).
-    run_dir.mkdir(parents=True)
+    # The same file started within the same second would get this run's folder,
+    # and Run.create refuses it.
+    run = Run.create(runs_dir / f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}")
     progress = _checked(on_progress, cancel)
     try:
         if not film:
@@ -58,9 +57,13 @@ def analyze(
             on_progress=progress,
             max_segment_duration=max_segment_duration,
             container_tags=film,
-            run_name=run_name,
         )
+        output.video_name = run.name
         results = output.to_dict()
+        for cue in results["cues"]:
+            clip = output.pending_audio.get(cue["segment_id"])
+            if clip is not None:
+                cue["audio_file"] = run.write_audio(cue["segment_id"], clip)
         # Saved so a resume continues with the same providers.
         results["providers"] = [p.strip() for p in api.split(",") if p.strip()]
         # Everything the run was analyzed with, so it can be repeated exactly.
@@ -70,12 +73,12 @@ def analyze(
         }
         _rerank_and_look_up_composers(results.get("film"), results["cues"], progress)
         if keep_video:
-            _keep_video(video, run_dir, results)
-        save_json(run_dir / "timeline.json", output.timeline())
-        save_json(run_dir / "results.json", results)
+            _keep_video(video, run, results)
+        run.save_timeline(output.timeline())
+        run.save(results)
         return results
     except BaseException:
-        shutil.rmtree(run_dir, ignore_errors=True)
+        run.remove()
         raise
 
 
@@ -89,22 +92,20 @@ def resume(
     their saved audio, and save and return the run's results.
 
     Only the cues identified now are re-ranked and looked up: the others keep
-    what they have, e.g. a composer edited by hand. A cancelled resume saves
+    what they have, e.g. a composer edited by hand. The provider can take
+    minutes, so what this resume found goes into the results as they are when
+    it saves, keeping the edits saved meanwhile. A cancelled resume saves
     nothing, so its cues stay pending.
     """
-    import numpy as np
-    from scipy.io import wavfile
-
     from soundtrackID.detection import (
         ProviderAuthError,
         RateLimitError,
         build_detection_client,
     )
-    from soundtrackID.models import MusicSegment
 
     progress = _checked(on_progress, cancel)
-    results_path = run_dir / "results.json"
-    results = load_results(results_path)
+    run = Run(run_dir)
+    results = run.load()
     cues = results.get("cues") or []
     todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
     total = len(todo)
@@ -114,30 +115,17 @@ def resume(
     client = build_detection_client(api)
     _report(progress, "resuming", f"0/{total}")
     done_n = 0
+    changes: dict[str, dict[str, Any]] = {}  # what this resume sets, by segment_id
     identified = []  # the cues this resume identifies
     answered_audio = []  # of cues no longer pending
     for cue in todo:
-        wav_path = run_dir / cue["audio_file"]
-        if not wav_path.exists():
-            # Nothing left to send, so no resume can identify it.
-            cue["pending"] = False
-            cue["audio_file"] = None
-            continue
         try:
-            sr, audio = wavfile.read(wav_path)
-            if audio.dtype == np.int16:
-                audio = audio.astype(np.float32) / 32767.0
-            elif audio.dtype == np.int32:
-                audio = audio.astype(np.float32) / 2147483647.0
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            seg = MusicSegment(
-                audio=audio,
-                start_time=0.0,
-                end_time=len(audio) / sr,
-                sample_rate=sr,
-            )
-            det = client.detect(seg)
+            clip = run.read_audio(cue["audio_file"])
+            if clip is None:
+                # Nothing left to send, so no resume can identify it.
+                changes[cue["segment_id"]] = {"pending": False, "audio_file": None}
+                continue
+            det = client.detect(clip)
         except RateLimitError:
             break  # still refused: the rest stays pending
         except ProviderAuthError:
@@ -148,18 +136,26 @@ def resume(
         if det.title:
             cue.update(match_fields(det))
             identified.append(cue)
-        cue["pending"] = False  # answered, a match or not
-        cue["audio_file"] = None  # only pending cues keep their audio
-        answered_audio.append(wav_path)
+        # Answered, a match or not; only pending cues keep their audio.
+        changes[cue["segment_id"]] = {"pending": False, "audio_file": None}
+        answered_audio.append(cue["audio_file"])
         done_n += 1
         _report(progress, "resuming", f"{done_n}/{total}")
 
     _rerank_and_look_up_composers(results.get("film"), identified, progress)
-    save_json(results_path, results)
+    for cue in identified:
+        found = (*MATCH_KEYS, "enrichment", "temporal_pick")
+        changes[cue["segment_id"]].update({k: cue[k] for k in found if k in cue})
+
+    def apply(saved: dict[str, Any]) -> None:
+        for cue in saved.get("cues") or []:
+            cue.update(changes.get(cue.get("segment_id"), {}))
+
+    results = run.update(apply)
     # Only once saved: until then the saved cues are still pending, and a resume
     # needs their audio.
-    for wav_path in answered_audio:
-        wav_path.unlink(missing_ok=True)
+    for audio_file in answered_audio:
+        run.remove_audio(audio_file)
     return results
 
 
@@ -214,16 +210,15 @@ def _rerank_and_look_up_composers(
         log.exception("Composer lookup failed")
 
 
-def _keep_video(video: Path, run_dir: Path, results: dict[str, Any]) -> None:
+def _keep_video(video: Path, run: Run, results: dict[str, Any]) -> None:
     """Move the video into the run folder, with a thumbnail filmstrip, so the app
     shows it synced to the timeline (also when the run is reopened). Best-effort:
     the results are saved without it."""
     try:
-        dest = run_dir / f"source{video.suffix or '.mp4'}"
-        shutil.move(str(video), str(dest))
+        dest = run.keep_video(video)
         from soundtrackID.thumbnails import extract_filmstrip
 
-        filmstrip = extract_filmstrip(dest, run_dir / "filmstrip.jpg")
+        filmstrip = extract_filmstrip(dest, run.filmstrip_path)
         results["video"] = {"file": dest.name, "filmstrip": filmstrip}
     except Exception:
         log.exception("Keeping the video and its filmstrip failed")

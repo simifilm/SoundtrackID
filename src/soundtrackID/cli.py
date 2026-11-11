@@ -130,7 +130,6 @@ def main(argv: list[str] | None = None) -> None:
         pipeline = build_pipeline(
             _classifier(args.classifier, args.threshold),
             args.api,
-            args.output_dir,
             hop=args.hop,
             window=args.chunk_duration,
             bridge_gap=args.bridge_gap,
@@ -140,6 +139,7 @@ def main(argv: list[str] | None = None) -> None:
             pipeline,
             args.video_path,
             args.api,
+            args.output_dir,
             film=_film(args),
             max_segment_duration=args.max_segment,
         )

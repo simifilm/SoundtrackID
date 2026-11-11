@@ -136,6 +136,9 @@ class ResultsOutput:
     film: dict[str, Any] | None = None
     classification: list[dict[str, Any]] | None = None
     classification_windows: list[dict[str, Any]] | None = None
+    # The audio of each pending cue, by segment_id, which the run keeps for a
+    # resume (runs.Run.write_audio).
+    pending_audio: dict[str, MusicSegment] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """The run's results.json."""
@@ -171,7 +174,7 @@ class ResultsOutput:
 #   3: settings holds everything the run was analyzed with, also whether vocals
 #      were removed (isolation) instead of every cue's conditioning.
 #   4: no rate_limited: a resume is due while any cue is pending. The waveform
-#      and the classification are in timeline.json (load_results moves them).
+#      and the classification are in timeline.json (runs.Run moves them).
 #   5: no confidence, in the cues or their votes: it was ACRCloud's score, a
 #      constant 1.0 for Shazam and AudD, the share of agreeing providers for an
 #      ensemble, and nothing used it. ACRCloud's score is in the candidates.
@@ -210,14 +213,11 @@ def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
 
 def load_results(path: Path) -> dict[str, Any]:
     """Read a results.json, upgraded to the current format, with the rights
-    verdicts of this year."""
+    verdicts of this year. A timeline saved in it is left out: runs.Run reads
+    it, and moves it to timeline.json when the results are saved."""
     data = json.loads(path.read_text())
-    timeline = {k: data.pop(k) for k in TIMELINE_KEYS if k in data}
-    timeline_path = path.parent / "timeline.json"
-    if timeline and not timeline_path.exists():
-        # Saved before the timeline had a file of its own: moved there now, as
-        # the next save of these results leaves it out.
-        save_json(timeline_path, timeline)
+    for key in TIMELINE_KEYS:
+        data.pop(key, None)
     return _assess_rights(upgrade_results(data))
 
 
@@ -232,15 +232,6 @@ def _assess_rights(data: dict[str, Any]) -> dict[str, Any]:
             partial = bool(enrichment.get("authors_partial"))
             enrichment.update(rights.verdict(enrichment["authors"], partial, year))
     return data
-
-
-def load_timeline(run_dir: Path) -> dict[str, Any]:
-    """A run's timeline.json, also for a run saved before it had one."""
-    path = run_dir / "timeline.json"
-    if path.exists():
-        return json.loads(path.read_text())
-    old = json.loads((run_dir / "results.json").read_text())
-    return {k: old[k] for k in TIMELINE_KEYS if k in old}
 
 
 def save_json(path: Path, data: dict[str, Any]) -> None:

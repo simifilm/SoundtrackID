@@ -11,12 +11,12 @@ client = TestClient(app_module.app)
 
 
 @pytest.mark.parametrize("name", [".", "..", "../cache2"])
-def test_safe_run_dir_rejects_names_outside_the_cache(tmp_path, monkeypatch, name):
+def test_a_run_name_outside_the_cache_is_rejected(tmp_path, monkeypatch, name):
     """`.` is the cache folder itself, `../cache2` a sibling sharing its prefix."""
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path / "cache")
 
     with pytest.raises(HTTPException) as exc:
-        app_module._safe_run_dir(name)
+        app_module._run(name)
 
     assert exc.value.status_code == 400
 

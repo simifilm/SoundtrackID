@@ -24,13 +24,8 @@ from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
 from soundtrackID.envfiles import load_env_files
-from soundtrackID.models import (
-    apply_edits,
-    load_results,
-    load_timeline,
-    results_to_csv,
-    save_json,
-)
+from soundtrackID.models import apply_edits, results_to_csv
+from soundtrackID.runs import Run
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +217,6 @@ def _get_classifier(threshold: float = 0.2):
 
 
 def _build_pipeline(
-    output_dir: Path,
     threshold: float = 0.2,
     api: str = "acrcloud",
     bridge_gap: float = 2.0,
@@ -233,7 +227,6 @@ def _build_pipeline(
     return build_pipeline(
         _get_classifier(threshold=threshold),
         api,
-        output_dir,
         hop=hop,
         bridge_gap=bridge_gap,
     )
@@ -441,21 +434,20 @@ async def rerun(
 
     Keeps the run's film metadata, so the video needn't be uploaded again.
     """
-    run_dir = _safe_run_dir(video_name)
-    sources = sorted(run_dir.glob("source.*")) if run_dir.is_dir() else []
-    if not sources:
+    run = _run(video_name)
+    source = run.video
+    if source is None:
         raise HTTPException(status_code=404, detail="No stored video for this run")
-    results_path = run_dir / "results.json"
-    results = load_results(results_path) if results_path.exists() else {}
+    results = _load(run) if run.exists() else {}
     # The new run is named after the film's file, not after this run.
-    file_name = Path(results.get("source") or video_name).stem + sources[0].suffix
+    file_name = Path(results.get("source") or video_name).stem + source.suffix
     # Hard-linked, so both runs share the video on disk; copied where the drive
     # has no hard links.
     video = Path(tempfile.mkdtemp()) / file_name
     try:
-        os.link(sources[0], video)
+        os.link(source, video)
     except OSError:
-        shutil.copy2(sources[0], video)
+        shutil.copy2(source, video)
 
     return _event_stream(
         _run_pipeline_sse(
@@ -490,7 +482,6 @@ async def _run_pipeline_sse(
     def work(on_progress, cancel):
         try:
             pipeline = _build_pipeline(
-                _OUTPUT_DIR,
                 threshold=threshold,
                 api=api,
                 bridge_gap=bridge_gap,
@@ -500,6 +491,7 @@ async def _run_pipeline_sse(
                 pipeline,
                 video,
                 api,
+                _OUTPUT_DIR,
                 # User-confirmed metadata from the pre-analysis step; else the tags.
                 film=film_override,
                 max_segment_duration=max_segment_duration,
@@ -575,10 +567,10 @@ def _event_stream(events: AsyncGenerator[str, None]) -> StreamingResponse:
 @app.delete("/history/{video_name}")
 async def delete_history_item(video_name: str) -> dict:
     """Delete a run directory from the cache."""
-    run_dir = _safe_run_dir(video_name)
-    if not run_dir.exists() or not run_dir.is_dir():
+    run = _run(video_name)
+    if not run.path.is_dir():
         raise HTTPException(status_code=404, detail="Run not found")
-    shutil.rmtree(run_dir)
+    shutil.rmtree(run.path)
     return {"status": "deleted"}
 
 
@@ -603,28 +595,26 @@ async def history() -> list[dict]:
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        for run_dir in dirs:
-            results_path = run_dir / "results.json"
-            if not results_path.exists():
+        for run in map(Run, dirs):
+            if not run.exists():
                 continue
             try:
-                data = load_results(results_path)
-                cues = data.get("cues", [])
+                cues = run.load().get("cues", [])
                 items.append(
                     {
-                        "video_name": run_dir.name,
-                        "timestamp": results_path.stat().st_mtime,
+                        "video_name": run.name,
+                        "timestamp": run.results_path.stat().st_mtime,
                         "total": len(cues),
                         "identified": sum(1 for c in cues if c.get("title")),
                     }
                 )
             except Exception:
-                log.warning("Could not list %s", results_path, exc_info=True)
+                log.warning("Could not list %s", run.path, exc_info=True)
     return items
 
 
-def _safe_run_dir(video_name: str) -> Path:
-    """Resolve a run directory, guarding against path traversal via video_name.
+def _run(video_name: str) -> Run:
+    """A run by its name, guarding against path traversal via video_name.
 
     Runs are direct children of the cache, so anything else (the cache itself
     via ".", a sibling such as "../cache2") is rejected.
@@ -633,26 +623,35 @@ def _safe_run_dir(video_name: str) -> Path:
     run_dir = (cache / video_name).resolve()
     if run_dir.parent != cache:
         raise HTTPException(status_code=400, detail="Invalid path")
-    return run_dir
+    return Run(run_dir)
+
+
+def _load(run: Run) -> dict:
+    """A run's results, or the error saying why there are none."""
+    if not run.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        return run.load()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read results.json: {exc}"
+        )
 
 
 @app.get("/results/{video_name}")
 async def get_results(video_name: str) -> dict:
     """A run's results.json, in the current format."""
-    results_path = _safe_run_dir(video_name) / "results.json"
-    if not results_path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-    return load_results(results_path)
+    return _load(_run(video_name))
 
 
 @app.get("/output/{video_name}/timeline")
 async def get_timeline(video_name: str) -> dict:
     """A run's waveform and music classification, for the timeline and the
     Classes view."""
-    run_dir = _safe_run_dir(video_name)
-    if not (run_dir / "results.json").exists():
+    run = _run(video_name)
+    if not run.exists():
         raise HTTPException(status_code=404, detail="Run not found")
-    return load_timeline(run_dir)
+    return run.timeline()
 
 
 @app.post("/results/{video_name}")
@@ -666,31 +665,25 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
     cues = payload.get("cues")
     if not isinstance(cues, list):
         raise HTTPException(status_code=422, detail='Body must be {"cues": [...]}')
-    results_path = _safe_run_dir(video_name) / "results.json"
-    if not results_path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
+    run = _run(video_name)
+    _load(run)  # 404 or 500 rather than a save
+
+    def edit(results: dict) -> None:
+        results["cues"] = apply_edits(results.get("cues") or [], cues)
+
     try:
-        data = load_results(results_path)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to read results.json: {exc}"
-        )
-    try:
-        data["cues"] = apply_edits(data.get("cues") or [], cues)
+        run.update(edit)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    save_json(results_path, data)
     return {"status": "saved", "cues": len(cues)}
 
 
 @app.get("/output/{video_name}/video")
 async def serve_video(video_name: str) -> FileResponse:
     """Serve the stored source video (supports HTTP Range for scrubbing)."""
-    run_dir = _safe_run_dir(video_name)
-    matches = sorted(run_dir.glob("source.*")) if run_dir.is_dir() else []
-    if not matches:
+    video_path = _run(video_name).video
+    if video_path is None:
         raise HTTPException(status_code=404, detail="Video not found")
-    video_path = matches[0]
     media_type = mimetypes.guess_type(str(video_path))[0] or "video/mp4"
     return FileResponse(video_path, media_type=media_type)
 
@@ -698,16 +691,7 @@ async def serve_video(video_name: str) -> FileResponse:
 @app.get("/output/{video_name}/csv")
 async def export_csv(video_name: str) -> Response:
     """This run's results as CSV, built from its results.json as it is now."""
-    results_path = _safe_run_dir(video_name) / "results.json"
-    if not results_path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-    try:
-        data = load_results(results_path)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to read results.json: {exc}"
-        )
-
+    data = _load(_run(video_name))
     filename = f"{video_name}_results.csv"
     return Response(
         content=results_to_csv(data),
@@ -725,15 +709,7 @@ async def export_mava(video_name: str) -> Response:
     turns each row into a mava:AnnotationSegment. Bundles both files as a zip since
     that endpoint expects them together.
     """
-    results_path = _safe_run_dir(video_name) / "results.json"
-    if not results_path.exists():
-        raise HTTPException(status_code=404, detail="Run not found")
-    try:
-        data = load_results(results_path)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to read results.json: {exc}"
-        )
+    data = _load(_run(video_name))
 
     from soundtrackID.mava_export import build_mava_mapping, build_mava_tsv
 
@@ -755,8 +731,8 @@ async def export_mava(video_name: str) -> Response:
 @app.get("/output/{video_name}/filmstrip")
 async def serve_filmstrip(video_name: str) -> FileResponse:
     """Serve the thumbnail filmstrip sprite for a run."""
-    strip_path = _safe_run_dir(video_name) / "filmstrip.jpg"
-    if not strip_path.exists() or not strip_path.is_file():
+    strip_path = _run(video_name).filmstrip_path
+    if not strip_path.is_file():
         raise HTTPException(status_code=404, detail="Filmstrip not found")
     return FileResponse(strip_path, media_type="image/jpeg")
 
@@ -770,14 +746,14 @@ async def resume_run(
 ) -> StreamingResponse:
     """Re-run identification on the still-unidentified cues of a rate-limited run,
     reading their saved segment WAVs. Fills gaps without re-analyzing the video."""
-    run_dir = _safe_run_dir(video_name)
-    if not (run_dir / "results.json").exists():
+    run = _run(video_name)
+    if not run.exists():
         raise HTTPException(status_code=404, detail="Run not found")
     api = (payload or {}).get("api") or "acrcloud"
     return _event_stream(
         _sse(
             lambda on_progress, cancel: analysis.resume(
-                run_dir, api, on_progress=on_progress, cancel=cancel
+                run.path, api, on_progress=on_progress, cancel=cancel
             ),
             str(uuid.uuid4()),
         )
