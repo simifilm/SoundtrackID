@@ -39,7 +39,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
+      # Without --with-deps: the runner image has Chromium's libraries, and the
+      # apt step that would only add fonts failed when Ubuntu's mirrors were down.
       - name: Install Chromium
-        run: uv run --group dev playwright install --with-deps chromium
+        run: uv run --group dev playwright install chromium
       - name: Run browser tests
         run: uv run --extra app --group dev pytest -m browser
