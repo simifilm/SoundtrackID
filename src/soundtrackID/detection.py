@@ -265,7 +265,9 @@ class ShazamDetectionClient(BaseMusicDetectionClient):
 
         async def _run() -> dict:
             shazam = Shazam(
-                language=self._language, http_client=_shazamio_http_client()
+                language=self._language,
+                http_client=_shazamio_http_client(),
+                segment_duration_seconds=12,
             )
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 path = f.name

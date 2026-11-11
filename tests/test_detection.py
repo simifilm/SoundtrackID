@@ -138,15 +138,15 @@ MATCH = (200, {"matches": [{}], "track": {"title": "Song", "subtitle": "Band"}})
 @pytest.fixture
 def shazam_api(monkeypatch):
     """Answers with the given (status, body) responses in turn, repeating the
-    last one; returns them and the statuses sent. Retry backoff is skipped."""
+    last one; returns them and the requests received. Retry backoff is skipped."""
     shazamio_misc = pytest.importorskip("shazamio.misc")
     responses, sent = [], []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             status, body = responses[min(len(sent), len(responses) - 1)]
-            sent.append(status)
+            sent.append(request)
             data = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -168,9 +168,9 @@ def shazam_api(monkeypatch):
     server.shutdown()
 
 
-def _music():
-    audio = np.random.default_rng(0).uniform(-0.5, 0.5, 16000 * 5)
-    return MusicSegment(audio.astype(np.float32), 0.0, 5.0, 16000)
+def _music(seconds=5):
+    audio = np.random.default_rng(0).uniform(-0.5, 0.5, 16000 * seconds)
+    return MusicSegment(audio.astype(np.float32), 0.0, float(seconds), 16000)
 
 
 @pytest.mark.parametrize(
@@ -220,3 +220,13 @@ def test_shazamio_answers(shazam_api, answers, title):
 
     assert ShazamDetectionClient().detect(_music()).title == title
     assert len(sent) == len(answers)
+
+
+def test_shazamio_listens_to_12_s_of_a_longer_clip(shazam_api):
+    """Shazam matches nothing in 15 s or more (ShazamIO issue #150)."""
+    responses, sent = shazam_api
+    responses.append(NO_MATCH)
+
+    ShazamDetectionClient().detect(_music(seconds=30))
+
+    assert [request["signature"]["samplems"] for request in sent] == [12_000]
