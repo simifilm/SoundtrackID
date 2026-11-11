@@ -544,6 +544,16 @@ async def delete_history_item(video_name: str) -> dict:
     return {"status": "deleted"}
 
 
+@app.delete("/history")
+async def delete_history() -> dict:
+    """Delete every run directory from the cache."""
+    if _OUTPUT_DIR.exists():
+        for run_dir in _OUTPUT_DIR.iterdir():
+            if run_dir.is_dir():
+                shutil.rmtree(run_dir)
+    return {"status": "deleted"}
+
+
 @app.get("/history")
 async def history() -> list[dict]:
     """Summarize every completed run, newest first; GET /results/{video_name}

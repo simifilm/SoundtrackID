@@ -691,6 +691,25 @@ input.cell-edit {
 .history-item:hover .history-delete-btn { display: flex; }
 .history-delete-btn:hover { color: #ef4444; background: #fef2f2; }
 
+.history-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.4rem 0.75rem;
+}
+
+.history-delete-all {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  color: #9ca3af;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.history-delete-all:hover { color: #ef4444; background: #fef2f2; }
+
 #empty-state {
   padding: 3.5rem 2rem;
   text-align: center;

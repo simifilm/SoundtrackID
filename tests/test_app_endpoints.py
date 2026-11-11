@@ -216,3 +216,24 @@ def test_history_lists_only_runs_with_readable_results(tmp_path, monkeypatch):
 def test_history_is_empty_without_a_cache_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path / "missing")
     assert client.get("/history").json() == []
+
+
+def test_deleting_the_history_removes_every_run(tmp_path, monkeypatch):
+    """And only the runs: the settings next to the cache stay."""
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
+    (cache / "done").mkdir(parents=True)
+    (cache / "done" / "results.json").write_text("{}")
+    (cache / "broken").mkdir()  # not listed, but still in the cache
+    (tmp_path / "settings.json").write_text("{}")
+
+    r = client.delete("/history")
+
+    assert r.status_code == 200
+    assert list(cache.iterdir()) == []
+    assert (tmp_path / "settings.json").exists()
+
+
+def test_deleting_the_history_without_a_cache_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path / "missing")
+    assert client.delete("/history").status_code == 200

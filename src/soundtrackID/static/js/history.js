@@ -64,3 +64,10 @@ async function loadHistory() {
     panel.style.display = 'block';
   } catch (_) { panel.style.display = 'none'; }
 }
+
+document.getElementById('delete-all-runs').addEventListener('click', async () => {
+  const n = document.querySelectorAll('.history-item').length;
+  if (!confirm(`Delete ${n === 1 ? 'the 1 run' : `all ${n} runs`}? This can't be undone.`)) return;
+  try { await fetch('/history', { method: 'DELETE' }); } catch (_) {}
+  loadHistory();
+});

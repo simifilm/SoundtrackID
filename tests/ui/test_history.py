@@ -51,6 +51,29 @@ def test_deleting_a_run(page, runs):
     assert not gone.exists()
 
 
+def test_deleting_all_runs_asks_first(page, runs):
+    make_run(runs, [cue(1)], name="film_2026-11-11_10-00-00")
+    make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")
+    page.goto("/")
+    page.locator("#history-panel > summary").click()
+    asked, deletes = [], []
+    page.on(
+        "request", lambda r: deletes.append(r.url) if r.method == "DELETE" else None
+    )
+
+    page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    page.locator("#delete-all-runs").click()
+    expect(page.locator(".history-item")).to_have_count(2)
+
+    page.once("dialog", lambda d: (asked.append(d.message), d.accept()))
+    page.locator("#delete-all-runs").click()
+
+    expect(page.locator("#history-panel")).to_be_hidden()
+    assert asked == ["Delete all 2 runs? This can't be undone."] * 2
+    assert len(deletes) == 1  # none for the cancelled one
+    assert list(runs.iterdir()) == []
+
+
 def test_a_run_saved_before_the_timeline_had_its_own_file(page, runs):
     """Its waveform and classes still show, from the old results.json."""
     run = runs / "old_run"
