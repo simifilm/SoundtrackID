@@ -20,7 +20,7 @@ from soundtrackID.models import (
     DetectionResult,
     MusicSegment,
 )
-from soundtrackID.pipeline import Pipeline, _group_detections
+from soundtrackID.pipeline import Pipeline, _group_detections, waveform_peaks
 
 SR = 1000
 LABELS = ["Speech", "Music", "Applause", "Piano"]
@@ -106,6 +106,24 @@ class FailingClient:
         if segment.start_time in self.fail_at:
             raise ValueError("malformed answer")
         return DetectionResult(segment=segment, title="X", artist=None)
+
+
+def test_the_waveform_is_the_audios_peaks_scaled_to_one():
+    """5 points a second, each the loudest sample of its stretch."""
+    audio = np.zeros(4 * SR, dtype=np.float32)
+    audio[250] = -0.5  # in the 2nd point, 200-400 ms
+    audio[3999] = 0.25  # in the last
+
+    waveform = waveform_peaks(audio, SR)
+
+    assert waveform["duration"] == 4.0
+    assert len(waveform["samples"]) == 20
+    assert (waveform["samples"][1], waveform["samples"][19]) == (1.0, 0.5)
+    assert sum(waveform["samples"]) == 1.5
+
+
+def test_the_waveform_of_silence_is_flat():
+    assert waveform_peaks(np.zeros(SR, dtype=np.float32), SR)["samples"] == [0.0] * 5
 
 
 def test_classification_spans_cover_whole_audio():
