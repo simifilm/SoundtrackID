@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from soundtrackID.defaults import DEFAULT_API
 from soundtrackID.models import MATCH_KEYS, match_fields
 from soundtrackID.runs import Run
 
@@ -84,12 +85,13 @@ def analyze(
 
 def resume(
     run_dir: Path,
-    api: str,
+    api: str | None = None,
     on_progress: ProgressCb | None = None,
     cancel: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Identify the pending cues of a run (skipped at a provider's limit) from
-    their saved audio, and save and return the run's results.
+    their saved audio, and save and return the run's results. `api` names the
+    provider(s), by default the ones the run was analyzed with.
 
     Only the cues identified now are re-ranked and looked up: the others keep
     what they have, e.g. a composer edited by hand. The provider can take
@@ -112,7 +114,10 @@ def resume(
     if total == 0:
         return results
 
-    client = build_detection_client(api)
+    # Runs from before the providers were saved get the default.
+    client = build_detection_client(
+        api or ",".join(results.get("providers") or [DEFAULT_API])
+    )
     _report(progress, "resuming", f"0/{total}")
     done_n = 0
     changes: dict[str, dict[str, Any]] = {}  # what this resume sets, by segment_id

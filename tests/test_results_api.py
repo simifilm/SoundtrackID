@@ -443,14 +443,20 @@ def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(tmp_path, monkeypat
     }
 
 
-def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, **results):
+def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, asked=None, **results):
     """POST /resume for a run with these cues (each with a short silent clip),
     identifying them with `detect` and looking up composers with `enrich` (by
-    default not at all); returns the saved results."""
+    default not at all); returns the saved results. `asked` collects the
+    providers the resume asks for."""
     monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+
+    def build_detection_client(api):
+        if asked is not None:
+            asked.append(api)
+        return SimpleNamespace(detect=detect)
+
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
-        lambda api: SimpleNamespace(detect=detect),
+        "soundtrackID.detection.build_detection_client", build_detection_client
     )
     monkeypatch.setattr(
         "soundtrackID.metadata.enricher.enrich", enrich or (lambda **kw: None)
@@ -466,6 +472,23 @@ def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, **results):
 
     assert r.status_code == 200
     return json.loads((run / "results.json").read_text())
+
+
+def test_a_resume_continues_with_the_runs_own_providers(tmp_path, monkeypatch):
+    """Unless the page asks for others; as the CLI's resume."""
+    asked = []
+    cues = [{"segment_id": "s1", "title": None, "pending": True}]
+
+    _resume(
+        tmp_path,
+        monkeypatch,
+        lambda seg: DetectionResult(seg, "T", "A", "audd"),
+        cues,
+        asked=asked,
+        providers=["audd", "shazam"],
+    )
+
+    assert asked == ["audd,shazam"]
 
 
 def test_resume_reranks_newly_identified_cues(tmp_path, monkeypatch):

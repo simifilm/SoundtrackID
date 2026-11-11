@@ -9,6 +9,13 @@ import pytest
 from playwright.sync_api import expect
 
 from soundtrackID import app as app_module
+from soundtrackID.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MAX_SEGMENT_S,
+    MUSIC_THRESHOLD,
+)
 from tests.ui.conftest import saved
 
 pytestmark = pytest.mark.browser
@@ -132,6 +139,28 @@ def test_the_analysis_uses_the_chosen_settings(page, fakes, video, runs):
     assert (settings["threshold"], settings["hop"]) == (0.35, 2.5)
     assert settings["bridge_gap"] == 5.0  # 2 hops of 2.5 s
     assert settings["max_segment_duration"] == 15.0
+
+
+def test_the_page_starts_from_the_analysis_defaults(page, fakes, video, runs):
+    """The ones the CLI and the server use, so all analyze alike."""
+    page.goto("/")
+    upload(page, video)
+
+    page.locator("#fc-start").click()
+
+    expect(page.locator("#results-view")).to_be_visible(timeout=20_000)
+    [run] = runs.iterdir()
+    results = saved(run)
+    assert results["providers"] == [DEFAULT_API]
+    settings = results["settings"]
+    assert (settings["threshold"], settings["hop"]) == (
+        MUSIC_THRESHOLD,
+        CLASSIFICATION_HOP_S,
+    )
+    assert (settings["bridge_gap"], settings["max_segment_duration"]) == (
+        BRIDGE_GAP_S,
+        MAX_SEGMENT_S,
+    )
 
 
 def test_whole_music_segment_identifies_each_stretch_of_music_in_one_piece(

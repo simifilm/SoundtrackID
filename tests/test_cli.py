@@ -7,6 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 from soundtrackID import cli
+from soundtrackID.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MAX_SEGMENT_S,
+    MUSIC_THRESHOLD,
+)
 from soundtrackID.isolators import BaseMusicIsolator
 from soundtrackID.models import DetectionResult
 from tests.test_pipeline import FakeClassifier, ThrottledClient, fake_components
@@ -16,7 +23,7 @@ def _analyze(tmp_path, monkeypatch, *options, client=None):
     """Run `cli analyze film.mp4` on 30 s of music; returns the run's folder."""
     classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
     get_classifier = fake_components(monkeypatch, client, classifier)
-    monkeypatch.setattr(cli, "_classifier", lambda name: get_classifier())
+    monkeypatch.setattr(cli, "load_classifier", lambda hf: get_classifier())
 
     cli.main(["analyze", "film.mp4", "--output-dir", str(tmp_path)] + list(options))
 
@@ -83,6 +90,45 @@ def test_threshold_decides_what_is_music(tmp_path, monkeypatch):
     assert results["cues"] == []
 
 
+def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(tmp_path, monkeypatch):
+    """With the app's settings, and in the app's runs folder, so its history
+    lists the run."""
+    from fastapi.testclient import TestClient
+
+    from soundtrackID import app
+
+    classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
+    classifier.window_duration = 10.23  # the model's own, not a round 10 s
+    get_classifier = fake_components(monkeypatch, None, classifier)
+    monkeypatch.setattr(cli, "load_classifier", lambda hf: get_classifier())
+    monkeypatch.chdir(tmp_path)
+
+    cli.main(["analyze", "film.mp4"])
+
+    client = TestClient(app.app)
+    [run] = client.get("/history").json()
+    results = client.get(f"/results/{run['video_name']}").json()
+    assert results["providers"] == [DEFAULT_API]
+    assert results["settings"] == {
+        "classifier": "FakeClassifier",
+        "threshold": MUSIC_THRESHOLD,
+        "window": 10.23,
+        "hop": CLASSIFICATION_HOP_S,
+        "bridge_gap": BRIDGE_GAP_S,
+        "isolation": False,
+        "max_segment_duration": MAX_SEGMENT_S,
+    }
+
+
+def test_whole_music_segments_are_max_segment_0(tmp_path, monkeypatch):
+    """As the app's "Whole music segment"."""
+    run_dir = _analyze(tmp_path, monkeypatch, "--max-segment", "0")
+
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["settings"]["max_segment_duration"] is None
+    assert [(c["start"], c["duration"]) for c in results["cues"]] == [(0.0, 30.0)]
+
+
 def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
     """As the app's "Look up online": what is known stays."""
     hints = []
@@ -120,11 +166,16 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
         if c["pending"]
     ]
     assert pending
-    monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
-        lambda api: SimpleNamespace(
+    asked = []
+
+    def build_detection_client(api):
+        asked.append(api)
+        return SimpleNamespace(
             detect=lambda seg: DetectionResult(seg, "Song", "A", "acrcloud")
-        ),
+        )
+
+    monkeypatch.setattr(
+        "soundtrackID.detection.build_detection_client", build_detection_client
     )
 
     cli.main(["resume", str(run_dir)])
@@ -134,3 +185,4 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
         "Song"
     ] * len(pending)
     assert not any(c["pending"] for c in results["cues"])
+    assert asked == [",".join(results["providers"])]  # the run's own

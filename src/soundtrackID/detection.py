@@ -790,6 +790,7 @@ if __name__ == "__main__":
 
     from scipy.io import wavfile as scipy_wavfile
 
+    from soundtrackID.defaults import DEFAULT_API
     from soundtrackID.envfiles import load_env_files
 
     load_env_files()  # .env.dev, then .env, like the app and the CLI
@@ -800,9 +801,9 @@ if __name__ == "__main__":
     parser.add_argument("wav_files", nargs="+", help="WAV file(s) to identify")
     parser.add_argument(
         "--api",
-        default="acrcloud",
+        default=DEFAULT_API,
         help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-        "list for ensemble majority voting (default: acrcloud)",
+        f"list for ensemble majority voting (default: {DEFAULT_API})",
     )
     args = parser.parse_args()
 

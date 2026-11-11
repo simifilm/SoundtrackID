@@ -12,10 +12,21 @@ import pytest
 
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
+from soundtrackID.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MAX_SEGMENT_S,
+    MUSIC_THRESHOLD,
+)
 from soundtrackID.detection import ProviderAuthError, RateLimitError
 from soundtrackID.isolators import DummyIsolator
 from soundtrackID.models import MATCH_KEYS, DetectionResult, MusicSegment
-from soundtrackID.pipeline import Pipeline, _group_detections, waveform_peaks
+from soundtrackID.pipeline import (
+    Pipeline,
+    _group_detections,
+    waveform_peaks,
+)
 
 SR = 1000
 LABELS = ["Speech", "Music", "Applause", "Piano"]
@@ -444,6 +455,23 @@ def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
     }
 
 
+def test_an_analysis_without_settings_uses_the_defaults(tmp_path, monkeypatch):
+    """The same as the page's and the CLI's."""
+    events = _analyze(tmp_path, monkeypatch)
+
+    results = events[-1]["results"]
+    assert results["providers"] == [DEFAULT_API]
+    assert results["settings"] == {
+        "classifier": "FakeClassifier",
+        "threshold": MUSIC_THRESHOLD,
+        "window": FakeClassifier.window_duration,
+        "hop": CLASSIFICATION_HOP_S,
+        "bridge_gap": BRIDGE_GAP_S,
+        "isolation": False,
+        "max_segment_duration": MAX_SEGMENT_S,
+    }
+
+
 def test_results_are_saved_in_full_when_the_video_cannot_be_stored(
     tmp_path, monkeypatch
 ):
@@ -464,7 +492,7 @@ def test_results_are_saved_in_full_when_the_video_cannot_be_stored(
     run_dir = tmp_path / "cache" / events[-1]["results"]["video_name"]
     saved = json.loads((run_dir / "results.json").read_text())
     assert saved["settings"]["hop"] == 5.0
-    assert saved["providers"] == ["acrcloud"]
+    assert saved["providers"] == [DEFAULT_API]
     assert "video" not in saved
 
 
@@ -590,7 +618,9 @@ def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
         "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
     )
 
-    pipeline = app._build_pipeline(bridge_gap=7.0, hop=2.5)
+    pipeline = app._build_pipeline(
+        threshold=MUSIC_THRESHOLD, api=DEFAULT_API, bridge_gap=7.0, hop=2.5
+    )
 
     assert pipeline.bridge_gap == 7.0
     assert pipeline.chunker.chunk_duration == FakeClassifier.window_duration

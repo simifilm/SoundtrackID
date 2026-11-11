@@ -153,27 +153,30 @@ FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
 
 ### CLI
 
-The CLI runs the same analysis as the app: identification, the date re-ranking
-and the composer lookup, saved as one run.
+The CLI runs the same analysis as the app, with the same default settings:
+identification, the date re-ranking and the composer lookup, saved as one run.
 
 ```bash
 uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4
 ```
 
 ```
---output-dir DIR      Folder of the runs (default: ./output)
+--output-dir DIR      Folder of the runs (default: output/cache, the app's, so
+                      its history lists them)
 --api API             Detection provider(s): acrcloud, shazam, audd — or a
-                      comma-separated list for ensemble voting (default: acrcloud)
+                      comma-separated list for ensemble voting (default: shazam)
 --classifier {onnx,hf}
                       Music classifier backend (default: onnx)
 --isolation           Remove the vocals before identification (Demucs; slow,
                       needs --extra demucs)
---chunk-duration SEC  Length of a classified window in seconds (default: 10)
+--chunk-duration SEC  Length of a classified window in seconds (default: the
+                      model's own, 10.23)
 --hop SEC             Step between overlapping classified windows (default: 5)
---max-segment SEC     Split segments into chunks of at most N seconds before detection
+--max-segment SEC     Split segments into chunks of at most N seconds before
+                      detection; 0 sends each whole (default: 30)
 --threshold FLOAT     Music classification threshold 0–1 (default: 0.2)
 --bridge-gap SEC      Join clips of the same track across up to N seconds without
-                      music (default: 2)
+                      music (default: 0)
 --title, --year, --imdb-id
                       The film, where its file's tags lack it or are wrong; the
                       year flags music released after the film
@@ -187,7 +190,7 @@ continue the run later; it identifies only the cues still pending. Wrong API key
 stop the run instead, with a message:
 
 ```bash
-uv run --extra app python -m soundtrackID.cli resume "output/My Film_2026-11-11_10-15-00"
+uv run --extra app python -m soundtrackID.cli resume "output/cache/My Film_2026-11-11_10-15-00"
 ```
 
 ACRCloud and AudD read their keys from the environment or the `.env.dev` file
@@ -197,10 +200,12 @@ reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 ## Output
 
-Each analysis is a run of its own, in `output/<video_name>_<date>_<time>/`:
+Each analysis is a run of its own, in `output/cache/<video_name>_<date>_<time>/`
+from source, whether the app or the CLI made it (the installed app keeps its runs
+in its data folder):
 
 ```
-output/
+output/cache/
   My Film_2026-11-11_10-15-00/
     results.json        # all segments and identifications
     timeline.json       # waveform and music classification, for the app's timeline
@@ -233,6 +238,7 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── cli.py                  Command line: analyze a video, resume a run
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
 │   ├── analysis.py             The analysis the app and the CLI share, and resume
+│   ├── defaults.py             What an analysis uses unless told otherwise
 │   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models and the results.json output format
 │   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues

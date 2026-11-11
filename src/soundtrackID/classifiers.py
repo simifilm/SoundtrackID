@@ -1,6 +1,8 @@
 """Music classification."""
 
+import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -181,3 +183,19 @@ class HuggingFaceClassifier(BaseClassifier):
                 "Install with: pip install soundtrackID[hf]"
             ) from e
         return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
+
+
+# The ONNX export of the AST model, from source (assets/ast_model, Git LFS).
+_MODEL_DIR = Path(__file__).parents[2] / "assets" / "ast_model"
+
+
+def load_classifier(hf: bool = False) -> BaseClassifier:
+    """The music classifier the app and the CLI analyze with: the ONNX export,
+    or the HuggingFace original when `hf` asks for it or the export is missing.
+    The installed app bundles only the export."""
+    if getattr(sys, "frozen", False):
+        model_dir = Path(sys._MEIPASS) / "ast_model"  # pyright: ignore[reportAttributeAccessIssue]
+        return OnnxClassifier(model_dir=str(model_dir), music_labels=["Music"])
+    if hf or not _MODEL_DIR.exists():
+        return HuggingFaceClassifier(music_labels=["Music"])
+    return OnnxClassifier(model_dir=str(_MODEL_DIR), music_labels=["Music"])

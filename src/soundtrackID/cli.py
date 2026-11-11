@@ -1,7 +1,7 @@
 """Command line: analyze a video, or resume a run a provider stopped.
 
     python -m soundtrackID.cli analyze path/to/film.mp4
-    python -m soundtrackID.cli resume output/<run>
+    python -m soundtrackID.cli resume output/cache/<run>
 
 Runs the same analysis as the app (soundtrackID.analysis): pipeline, date
 re-ranking, composer lookup, one results.json per run.
@@ -13,9 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from soundtrackID.analysis import analyze, resume
+from soundtrackID.classifiers import OnnxClassifier, load_classifier
+from soundtrackID.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MAX_SEGMENT_S,
+    MUSIC_THRESHOLD,
+    SOURCE_RUNS_DIR,
+)
 from soundtrackID.envfiles import load_env_files
-from soundtrackID.models import load_results, results_to_csv
-from soundtrackID.pipeline import CLASSIFICATION_HOP_S, build_pipeline
+from soundtrackID.models import results_to_csv
+from soundtrackID.pipeline import build_pipeline
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -36,14 +45,15 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Folder of the runs (default: ./output)",
+        default=SOURCE_RUNS_DIR,
+        help=f"Folder of the runs (default: {SOURCE_RUNS_DIR}, the app's from "
+        "source, so its history lists them)",
     )
     a.add_argument(
         "--api",
-        default="acrcloud",
+        default=DEFAULT_API,
         help="Detection provider(s): acrcloud, shazam, audd — or a comma-separated "
-        "list for ensemble majority voting (default: acrcloud)",
+        f"list for ensemble majority voting (default: {DEFAULT_API})",
     )
     a.add_argument(
         "--classifier",
@@ -64,8 +74,9 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument(
         "--chunk-duration",
         type=float,
-        default=10.0,
-        help="Length of a classified window in seconds (default: 10.0)",
+        default=None,
+        help="Length of a classified window in seconds (default: the model's "
+        f"own, {OnnxClassifier.window_duration:.2f})",
     )
     a.add_argument(
         "--hop",
@@ -79,21 +90,22 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument(
         "--max-segment",
         type=float,
-        default=None,
-        help="Split segments into chunks of at most N seconds before detection",
+        default=MAX_SEGMENT_S,
+        help="Split segments into chunks of at most N seconds before detection; "
+        f"0 sends each whole (default: {MAX_SEGMENT_S:g})",
     )
     a.add_argument(
         "--threshold",
         type=float,
-        default=0.2,
-        help="Music classification threshold (default: 0.2)",
+        default=MUSIC_THRESHOLD,
+        help=f"Music classification threshold (default: {MUSIC_THRESHOLD})",
     )
     a.add_argument(
         "--bridge-gap",
         type=float,
-        default=2.0,
+        default=BRIDGE_GAP_S,
         help="Join clips of the same track across up to N seconds without music "
-        "(default: 2.0)",
+        f"(default: {BRIDGE_GAP_S:g})",
     )
     a.add_argument("--title", help="The film's title (instead of its file's tag)")
     a.add_argument("--year", type=int, help="The film's year (instead of its tag)")
@@ -128,7 +140,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "analyze":
         pipeline = build_pipeline(
-            _classifier(args.classifier),
+            load_classifier(hf=args.classifier == "hf"),
             args.api,
             threshold=args.threshold,
             hop=args.hop,
@@ -142,15 +154,12 @@ def main(argv: list[str] | None = None) -> None:
             args.api,
             args.output_dir,
             film=_film(args),
-            max_segment_duration=args.max_segment,
+            max_segment_duration=args.max_segment or None,
         )
         run_dir = args.output_dir / results["video_name"]
     else:
         run_dir = args.run_dir
-        api = args.api or ",".join(
-            load_results(run_dir / "results.json").get("providers") or ["acrcloud"]
-        )
-        results = resume(run_dir, api)
+        results = resume(run_dir, args.api)
 
     if args.csv:
         # newline="": the CSV brings its own line endings.
@@ -158,19 +167,6 @@ def main(argv: list[str] | None = None) -> None:
             results_to_csv(results), encoding="utf-8", newline=""
         )
     _summarize(results, run_dir)
-
-
-def _classifier(name: str):
-    if name == "hf":
-        from soundtrackID.classifiers import HuggingFaceClassifier
-
-        return HuggingFaceClassifier(music_labels=["Music"])
-    from soundtrackID.classifiers import OnnxClassifier
-
-    return OnnxClassifier(
-        model_dir=str(Path(__file__).parents[2] / "assets" / "ast_model"),
-        music_labels=["Music"],
-    )
 
 
 def _film(args: argparse.Namespace) -> dict[str, Any] | None:

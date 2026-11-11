@@ -14,6 +14,7 @@ import numpy as np
 from soundtrackID.aggregator import ChunkAggregator
 from soundtrackID.chunker import AudioChunker
 from soundtrackID.classifiers import BaseClassifier
+from soundtrackID.defaults import BRIDGE_GAP_S, CLASSIFICATION_HOP_S, MUSIC_THRESHOLD
 from soundtrackID.detection import (
     BaseMusicDetectionClient,
     ProviderAuthError,
@@ -35,9 +36,6 @@ log = logging.getLogger(__name__)
 
 # The run's progress callback: progress(step, detail="", **fields).
 Progress = Callable[..., None]
-
-# Seconds between the starts of overlapping classification windows.
-CLASSIFICATION_HOP_S = 5.0
 
 
 def _det_key(det: DetectionResult) -> tuple | None:
@@ -404,8 +402,8 @@ class Pipeline:
         isolator: BaseMusicIsolator,
         detection_client: BaseMusicDetectionClient,
         detection_concurrency: int = 4,
-        bridge_gap: float = 2.0,
-        threshold: float = 0.2,
+        bridge_gap: float = BRIDGE_GAP_S,
+        threshold: float = MUSIC_THRESHOLD,
     ) -> None:
         self.loader = loader
         self.chunker = chunker
@@ -526,10 +524,10 @@ class Pipeline:
 def build_pipeline(
     classifier: BaseClassifier,
     api: str,
-    threshold: float = 0.2,
+    threshold: float = MUSIC_THRESHOLD,
     hop: float = CLASSIFICATION_HOP_S,
     window: float | None = None,
-    bridge_gap: float = 2.0,
+    bridge_gap: float = BRIDGE_GAP_S,
     isolation: bool = False,
 ) -> Pipeline:
     """The pipeline the app and the CLI analyze with.

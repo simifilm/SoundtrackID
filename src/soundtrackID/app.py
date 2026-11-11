@@ -22,6 +22,14 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from soundtrackID import analysis
+from soundtrackID.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MAX_SEGMENT_S,
+    MUSIC_THRESHOLD,
+    SOURCE_RUNS_DIR,
+)
 from soundtrackID.envfiles import load_env_files
 from soundtrackID.models import apply_edits, results_to_csv
 from soundtrackID.runs import Run
@@ -86,7 +94,7 @@ def _move_misplaced_windows_data(new: Path) -> None:
 if getattr(_sys, "frozen", False):
     _OUTPUT_DIR = _app_data_dir() / "cache"
 else:
-    _OUTPUT_DIR = Path("./output/cache")
+    _OUTPUT_DIR = SOURCE_RUNS_DIR
 
 # The server's log (main.py), next to the runs.
 LOG_PATH = _OUTPUT_DIR.parent / "soundtrackid.log"
@@ -183,36 +191,13 @@ def _get_classifier():
     if _classifier is None:
         with _classifier_lock:
             if _classifier is None:
-                if getattr(_sys, "frozen", False):
-                    from soundtrackID.classifiers import OnnxClassifier
+                from soundtrackID.classifiers import load_classifier
 
-                    _classifier = OnnxClassifier(
-                        model_dir=str(Path(_sys._MEIPASS) / "ast_model"),
-                        music_labels=["Music"],
-                    )
-                else:
-                    onnx_model_dir = Path(__file__).parents[2] / "assets" / "ast_model"
-                    use_hf = os.environ.get("FIWI_HF") or not onnx_model_dir.exists()
-                    if use_hf:
-                        from soundtrackID.classifiers import HuggingFaceClassifier
-
-                        _classifier = HuggingFaceClassifier(music_labels=["Music"])
-                    else:
-                        from soundtrackID.classifiers import OnnxClassifier
-
-                        _classifier = OnnxClassifier(
-                            model_dir=str(onnx_model_dir),
-                            music_labels=["Music"],
-                        )
+                _classifier = load_classifier(hf=bool(os.environ.get("FIWI_HF")))
     return _classifier
 
 
-def _build_pipeline(
-    threshold: float = 0.2,
-    api: str = "acrcloud",
-    bridge_gap: float = 2.0,
-    hop: float = 5.0,
-):
+def _build_pipeline(threshold: float, api: str, bridge_gap: float, hop: float):
     from soundtrackID.pipeline import build_pipeline
 
     return build_pipeline(
@@ -366,11 +351,11 @@ async def film_lookup(hint: dict = Body(default={})) -> dict:
 async def analyze(
     staging_id: str = Form(""),
     film: str = Form(""),
-    api: str = Form("acrcloud"),
-    threshold: float = Form(0.2),
-    bridge_gap: float = Form(2.0),
-    hop: float = Form(5.0),
-    max_segment: float = Form(0.0),
+    api: str = Form(DEFAULT_API),
+    threshold: float = Form(MUSIC_THRESHOLD),
+    bridge_gap: float = Form(BRIDGE_GAP_S),
+    hop: float = Form(CLASSIFICATION_HOP_S),
+    max_segment: float = Form(MAX_SEGMENT_S),  # 0: each whole
 ) -> StreamingResponse:
     """Analyze a staged upload and stream SSE progress events.
 
@@ -416,11 +401,11 @@ async def analyze(
 @app.post("/rerun/{video_name}")
 async def rerun(
     video_name: str,
-    api: str = Form("acrcloud"),
-    threshold: float = Form(0.2),
-    bridge_gap: float = Form(2.0),
-    hop: float = Form(5.0),
-    max_segment: float = Form(0.0),
+    api: str = Form(DEFAULT_API),
+    threshold: float = Form(MUSIC_THRESHOLD),
+    bridge_gap: float = Form(BRIDGE_GAP_S),
+    hop: float = Form(CLASSIFICATION_HOP_S),
+    max_segment: float = Form(MAX_SEGMENT_S),  # 0: each whole
 ) -> StreamingResponse:
     """Analyze a run's stored source video again with new settings, as a new run.
 
@@ -458,12 +443,12 @@ async def rerun(
 async def _run_pipeline_sse(
     video: Path,
     run_id: str,
-    threshold: float = 0.2,
-    bridge_gap: float = 2.0,
-    hop: float = 5.0,
-    max_segment_duration: float | None = None,
-    api: str = "acrcloud",
-    film_override: dict | None = None,
+    threshold: float,
+    bridge_gap: float,
+    hop: float,
+    max_segment_duration: float | None,
+    api: str,
+    film_override: dict | None,
 ) -> AsyncGenerator[str, None]:
     """Analyze `video` and stream the progress as SSE events.
 
@@ -743,7 +728,7 @@ async def resume_run(
     run = _run(video_name)
     if not run.exists():
         raise HTTPException(status_code=404, detail="Run not found")
-    api = (payload or {}).get("api") or "acrcloud"
+    api = (payload or {}).get("api") or None  # None: the run's own providers
     return _event_stream(
         _sse(
             lambda on_progress, cancel: analysis.resume(
