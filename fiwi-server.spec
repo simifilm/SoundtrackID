@@ -102,7 +102,6 @@ a = Analysis(
         "soundtrackID.loaders",
         "soundtrackID.isolators",
         "soundtrackID.models",
-        "soundtrackID.config",
         "soundtrackID.thumbnails",
         # metadata enrichment
         "soundtrackID.metadata",
