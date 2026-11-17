@@ -6,6 +6,7 @@ import shutil
 import pytest
 from playwright.sync_api import expect
 
+from tests.media import write_video
 from tests.ui.helpers import TIMELINE, cue, make_run, open_run
 
 pytestmark = pytest.mark.browser
@@ -60,6 +61,32 @@ def test_arrow_keys_step_one_frame(page, run_with_video):
     assert page.evaluate(CURRENT_TIME) == pytest.approx(0.15)
 
 
+@pytest.fixture(scope="module")
+def minute_video(tmp_path_factory):
+    """A minute of video: the player's own arrow-key jump, by 1% of its length,
+    is 0.6 s, so more than one frame."""
+    return write_video(tmp_path_factory.mktemp("media") / "minute.mp4", seconds=60)
+
+
+def test_arrow_keys_step_one_frame_also_when_the_player_has_focus(
+    page, runs, minute_video
+):
+    run = make_run(
+        runs,
+        [cue(1, "Song")],
+        video={"file": "source.mp4", "filmstrip": None, "fps": 10},
+    )
+    shutil.copy(minute_video, run / "source.mp4")
+    open_run(page)
+    page.wait_for_function(LOADED)
+    page.locator("#video-preview").focus()  # as clicking it to play or pause does
+
+    page.keyboard.press("ArrowRight")
+
+    # One frame, without the player's own jump.
+    assert page.evaluate(CURRENT_TIME) == pytest.approx(0.15)
+
+
 def test_an_arrow_key_pauses_the_video(page, run_with_video):
     page.keyboard.press("Space")
     page.wait_for_function(f"!{PAUSED}")
@@ -82,20 +109,22 @@ def test_arrow_keys_step_at_25_fps_for_runs_without_a_frame_rate(page, runs, vid
     assert page.evaluate(CURRENT_TIME) == pytest.approx(0.06)  # middle of frame 1
 
 
-def test_the_zoom_bar_shows_the_video_time_and_length(page, runs, video):
+def test_the_zoom_bar_shows_the_video_time_with_its_frame_and_length(page, runs, video):
     run = make_run(
-        runs, [cue(1, "Song")], video={"file": "source.mp4", "filmstrip": None}
+        runs,
+        [cue(1, "Song")],
+        video={"file": "source.mp4", "filmstrip": None, "fps": 10},
     )
     shutil.copy(video, run / "source.mp4")
     (run / "timeline.json").write_text(json.dumps(LONG_TIMELINE))
     open_run(page)
     readout = page.locator("#wf-time")
-    expect(readout).to_have_text("0:00 / 1:06:40")
+    expect(readout).to_have_text("0:00.00 / 1:06:40")
 
-    page.wait_for_function("document.querySelector('#video-preview').readyState >= 1")
+    page.wait_for_function(LOADED)
     page.evaluate("document.querySelector('#video-preview').currentTime = 1.5")
 
-    expect(readout).to_have_text("0:01 / 1:06:40")
+    expect(readout).to_have_text("0:01.05 / 1:06:40")  # frame 5 of 0–9 at 10 fps
 
 
 def test_a_run_without_video_shows_only_the_length(page, runs, video):

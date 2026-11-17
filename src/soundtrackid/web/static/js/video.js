@@ -81,7 +81,9 @@ function updatePlayhead() {
     return;
   }
   const t = Math.min(videoEl.currentTime, wfDuration);
-  wfTime.textContent = `${fmtClock(t)} / ${fmtClock(wfDuration)}`;
+  // The current time also names the frame within its second: .00 to .(fps − 1).
+  const frame = String(Math.floor((t % 1) * videoFps)).padStart(2, '0');
+  wfTime.textContent = `${fmtClock(t)}.${frame} / ${fmtClock(wfDuration)}`;
   const frac = t / wfDuration;
   wfPlayhead.style.left = (frac * waveformCanvas.clientWidth) + 'px';
   wfPlayhead.style.display = 'block';
@@ -155,13 +157,16 @@ filmstripCanvas.addEventListener('click', e => {
 });
 
 // Space plays / pauses the video from anywhere on the page, and ← / → step one
-// frame back / forward (pausing it), except while typing in a field or when the
-// player has focus (its own controls handle these keys then).
+// frame back / forward (pausing it), except while typing in a field. When the
+// player has focus, its own controls handle Space (they play / pause too), but
+// not the arrows (they'd jump by 1% of the length). They act on a key on its way
+// down to the player, so this listens on that way (capture) to stop the arrows first.
 document.addEventListener('keydown', e => {
   if (!hasVideo || !['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) return;
   const el = e.target;
-  if (el === videoEl || el.isContentEditable || el.closest('input, textarea, select')) return;
+  if (el.isContentEditable || el.closest('input, textarea, select')) return;
   if (e.code === 'Space') {
+    if (el === videoEl) return;
     e.preventDefault();   // no page scroll, no click on a focused button
     if (e.repeat) return;
     if (videoEl.paused) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
@@ -169,9 +174,10 @@ document.addEventListener('keydown', e => {
   } else {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   // e.g. Alt+← is browser Back
     e.preventDefault();   // no page scroll
+    e.stopPropagation();  // nor the player's own jump
     videoEl.pause();
     // Aim for the middle of the frame, so float rounding can't land on its neighbour.
     const frame = Math.floor(videoEl.currentTime * videoFps) + (e.code === 'ArrowRight' ? 1 : -1);
     seekVideo((frame + 0.5) / videoFps, false);
   }
-});
+}, true);
