@@ -1,4 +1,4 @@
-from soundtrackID.metadata.rights import _pd_status, _presumption_applies, verdict
+from soundtrackid.metadata.rights import _pd_status, _presumption_applies, verdict
 
 # ── Public-domain assessment (multi-role) ─────────────────────────────────
 

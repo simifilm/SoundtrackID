@@ -7,8 +7,8 @@ import av
 import numpy as np
 import pytest
 
-from soundtrackID.loaders import VideoLoader
-from soundtrackID.thumbnails import extract_filmstrip
+from soundtrackid.loaders import VideoLoader
+from soundtrackid.thumbnails import extract_filmstrip
 
 SR = 44100
 DURATION = 3.0

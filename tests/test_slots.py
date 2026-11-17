@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from soundtrackID.chunker import AudioChunker
-from soundtrackID.models import ClassificationResult
-from soundtrackID.slots import merge_spans, stream_slots
+from soundtrackid.chunker import AudioChunker
+from soundtrackid.models import ClassificationResult
+from soundtrackid.slots import merge_spans, stream_slots
 
 SR = 1000
 LABELS = ["Speech", "Music", "Orchestra"]

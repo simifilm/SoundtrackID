@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from soundtrackID.chunker import AudioChunker
+from soundtrackid.chunker import AudioChunker
 
 
 def test_chunk_basic():

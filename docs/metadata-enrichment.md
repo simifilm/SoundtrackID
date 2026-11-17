@@ -128,7 +128,7 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                    └───────────────────────────────────────────────────────┘
 ```
 
-The CLI (`python -m soundtrackID.cli analyze`) runs the same analysis. Its
+The CLI (`soundtrackid analyze`) runs the same analysis. Its
 `--title`, `--year` and `--imdb-id` options and `--lookup-film` take the place of
 the Confirm film panel.
 
@@ -281,7 +281,7 @@ The analysis progress shows this as the **Identifying composers** step with a
 ## File layout
 
 ```
-src/soundtrackID/metadata/
+src/soundtrackid/metadata/
   __init__.py
   mp4_tags.py      # mutagen-based Subler-compatible MP4 atom reader
   film.py          # TMDb + Wikidata + imdbapi.dev — FilmInfo + FilmLookup

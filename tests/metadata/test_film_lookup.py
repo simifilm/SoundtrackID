@@ -5,8 +5,8 @@ from pathlib import Path
 
 import httpx
 
-from soundtrackID.metadata import USER_AGENT
-from soundtrackID.metadata.film import FilmLookup
+from soundtrackid.metadata import USER_AGENT
+from soundtrackid.metadata.film import FilmLookup
 from tests.metadata.mock_http import mock_client
 
 FIXTURES = Path(__file__).parent / "fixtures"

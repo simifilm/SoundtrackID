@@ -8,15 +8,15 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from soundtrackID.aggregator import ChunkAggregator
-from soundtrackID.analysis import Cancelled, analyze, resume
-from soundtrackID.chunker import AudioChunker
-from soundtrackID.detection import ProviderAuthError
-from soundtrackID.isolators import DummyIsolator
-from soundtrackID.models import DetectionResult
-from soundtrackID.pipeline import Pipeline
-from soundtrackID.runs import Run
-from tests.test_pipeline import (
+from soundtrackid.aggregator import ChunkAggregator
+from soundtrackid.analysis import Cancelled, analyze, resume
+from soundtrackid.chunker import AudioChunker
+from soundtrackid.detection import ProviderAuthError
+from soundtrackid.isolators import DummyIsolator
+from soundtrackid.models import DetectionResult
+from soundtrackid.pipeline import Pipeline
+from soundtrackid.runs import Run
+from tests.fakes import (
     SR,
     FailingClient,
     FakeClassifier,
@@ -111,7 +111,7 @@ def test_a_cancelled_run_leaves_no_folder(tmp_path, monkeypatch):
         cancel.set()  # the user clicks Cancel
         progress_cb("music_start", total=1)
 
-    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", enrich)
+    monkeypatch.setattr("soundtrackid.metadata.enricher.enrich", enrich)
 
     with pytest.raises(Cancelled):
         analyze(
@@ -132,7 +132,7 @@ def test_a_failing_composer_lookup_is_logged(tmp_path, monkeypatch, caplog):
     def enrich(**kwargs):
         raise ValueError("MusicBrainz is down")
 
-    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", enrich)
+    monkeypatch.setattr("soundtrackid.metadata.enricher.enrich", enrich)
 
     analyze(
         _pipeline(NoMatchClient()),
@@ -153,7 +153,7 @@ def test_a_resume_logs_a_cue_the_provider_failed_on(tmp_path, monkeypatch, caplo
     cues = json.loads((run_dir / "results.json").read_text())["cues"]
     pending = [c["segment_id"] for c in cues if c["pending"]]
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
+        "soundtrackid.detection.build_detection_client",
         lambda api: FailingClient(fail_at=(0.0,)),  # resumed clips start at 0 s
     )
 
@@ -186,7 +186,7 @@ def test_a_resume_keeps_the_edits_saved_while_it_ran(tmp_path, monkeypatch):
             return DetectionResult(segment, "Found", "A", "acrcloud")
 
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
+        "soundtrackid.detection.build_detection_client",
         lambda api: EditedMeanwhile(),
     )
 
@@ -203,7 +203,7 @@ def test_a_resume_with_rejected_keys_fails_and_keeps_the_run(tmp_path, monkeypat
     run_dir = _analyze_throttled(tmp_path)
     before = (run_dir / "results.json").read_text()
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client", lambda api: RejectingClient()
+        "soundtrackid.detection.build_detection_client", lambda api: RejectingClient()
     )
 
     with pytest.raises(ProviderAuthError):

@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from soundtrackID.derived import is_anachronistic, refresh, track_key
+from soundtrackid.derived import is_anachronistic, refresh, track_key
 
 FILM = {"title": "Film", "year": 1950}
 

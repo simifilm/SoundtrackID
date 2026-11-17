@@ -1,4 +1,4 @@
-"""Tests for the command line (soundtrackID.cli): the same analysis as the app."""
+"""Tests for the command line (soundtrackid.cli): the same analysis as the app."""
 
 import csv
 import json
@@ -6,17 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from soundtrackID import cli
-from soundtrackID.defaults import (
+from soundtrackid import cli, paths
+from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
     DEFAULT_API,
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from soundtrackID.isolators import BaseMusicIsolator
-from soundtrackID.models import DetectionResult
-from tests.test_pipeline import FakeClassifier, ThrottledClient, fake_components
+from soundtrackid.isolators import BaseMusicIsolator
+from soundtrackid.models import DetectionResult
+from tests.fakes import FakeClassifier, ThrottledClient, fake_components
 
 
 def _analyze(tmp_path, monkeypatch, *options, client=None):
@@ -45,7 +45,7 @@ class FakeDemucs(BaseMusicIsolator):
 def test_vocals_stay_unless_isolation_is_asked_for(tmp_path, monkeypatch, options):
     """Demucs needs the demucs extra, which the documented install lacks; the
     old --no-isolation is still accepted."""
-    monkeypatch.setattr("soundtrackID.isolators.DemucsIsolator", FakeDemucs)
+    monkeypatch.setattr("soundtrackid.isolators.DemucsIsolator", FakeDemucs)
     FakeDemucs.built = 0
 
     run_dir = _analyze(tmp_path, monkeypatch, *options)
@@ -56,7 +56,7 @@ def test_vocals_stay_unless_isolation_is_asked_for(tmp_path, monkeypatch, option
 
 
 def test_isolation_removes_the_vocals_when_asked_for(tmp_path, monkeypatch):
-    monkeypatch.setattr("soundtrackID.isolators.DemucsIsolator", FakeDemucs)
+    monkeypatch.setattr("soundtrackid.isolators.DemucsIsolator", FakeDemucs)
     FakeDemucs.built = 0
 
     run_dir = _analyze(tmp_path, monkeypatch, "--isolation")
@@ -90,22 +90,24 @@ def test_threshold_decides_what_is_music(tmp_path, monkeypatch):
     assert results["cues"] == []
 
 
-def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(tmp_path, monkeypatch):
+def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(data_dir, monkeypatch):
     """With the app's settings, and in the app's runs folder, so its history
     lists the run."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID import app
+    from soundtrackid.web import data
+    from soundtrackid.web.app import app
 
     classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
     classifier.window_duration = 10.23  # the model's own, not a round 10 s
     get_classifier = fake_components(monkeypatch, None, classifier)
     monkeypatch.setattr(cli, "load_classifier", lambda hf: get_classifier())
-    monkeypatch.chdir(tmp_path)
+    # The project's runs, in a temporary data folder.
+    monkeypatch.setattr(paths, "SOURCE_RUNS_DIR", data.runs_dir())
 
     cli.main(["analyze", "film.mp4"])
 
-    client = TestClient(app.app)
+    client = TestClient(app)
     [run] = client.get("/history").json()
     results = client.get(f"/results/{run['video_name']}").json()
     assert results["providers"] == [DEFAULT_API]
@@ -118,6 +120,30 @@ def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(tmp_path, monkey
         "isolation": False,
         "max_segment_duration": MAX_SEGMENT_S,
     }
+
+
+def test_the_clis_runs_are_the_apps_from_any_folder(tmp_path, monkeypatch):
+    """From source, the CLI's runs go where the app's history reads them: the
+    project's output/cache, not one in whichever folder either is started from."""
+    from soundtrackid.web import data
+
+    folders = []
+
+    def analyze(pipeline, video_path, api, output_dir, **kwargs):
+        folders.append(output_dir)
+        return {"video_name": "film"}
+
+    monkeypatch.setattr(cli, "load_classifier", lambda hf: None)
+    monkeypatch.setattr(cli, "build_pipeline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "analyze", analyze)
+    monkeypatch.setattr(cli, "_summarize", lambda results, run_dir: None)
+    monkeypatch.chdir(tmp_path)
+
+    cli.main(["analyze", "film.mp4"])
+
+    project_runs = paths.SOURCE_ROOT / "output" / "cache"
+    assert folders == [project_runs]
+    assert data.runs_dir() == project_runs
 
 
 def test_whole_music_segments_are_max_segment_0(tmp_path, monkeypatch):
@@ -138,7 +164,7 @@ def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
         found = {"title": "Sunset Blvd.", "year": 1950, "director": "Billy Wilder"}
         return {**found, "imdb_id": None}
 
-    monkeypatch.setattr("soundtrackID.metadata.film.lookup_film", lookup_film)
+    monkeypatch.setattr("soundtrackid.metadata.film.lookup_film", lookup_film)
 
     run_dir = _analyze(
         tmp_path, monkeypatch, "--title", "Sunset Boulevard", "--lookup-film"
@@ -159,7 +185,7 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
     run_dir = _analyze(
         tmp_path, monkeypatch, "--max-segment", "5", client=ThrottledClient(answers=2)
     )
-    assert "cli resume" in capsys.readouterr().out
+    assert "soundtrackid resume" in capsys.readouterr().out
     pending = [
         c["segment_id"]
         for c in json.loads((run_dir / "results.json").read_text())["cues"]
@@ -175,7 +201,7 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
         )
 
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client", build_detection_client
+        "soundtrackid.detection.build_detection_client", build_detection_client
     )
 
     cli.main(["resume", str(run_dir)])

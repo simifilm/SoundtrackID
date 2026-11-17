@@ -8,15 +8,15 @@ from types import SimpleNamespace
 import pytest
 from playwright.sync_api import expect
 
-from soundtrackID import app as app_module
-from soundtrackID.defaults import (
+from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
     DEFAULT_API,
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from tests.ui.conftest import saved
+from soundtrackid.web import analyze as analyze_routes
+from tests.ui.helpers import saved
 
 pytestmark = pytest.mark.browser
 
@@ -210,7 +210,7 @@ def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):
 def test_a_refused_analysis_shows_why(page, fakes, video):
     page.goto("/")
     upload(page, video)
-    app_module._staging.clear()  # the staged upload expired meanwhile
+    analyze_routes._staging.clear()  # the staged upload expired meanwhile
 
     page.locator("#fc-start").click()
 
@@ -242,7 +242,7 @@ def test_rerun_analyzes_the_stored_video_again_as_a_new_run(
 ):
     times = iter([datetime(2026, 11, 11, 10, 0, 0), datetime(2026, 11, 11, 10, 5, 0)])
     monkeypatch.setattr(
-        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+        "soundtrackid.analysis.datetime", SimpleNamespace(now=lambda: next(times))
     )
     analyze(page, video)
 

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from soundtrackID.loaders import VideoLoader
+from soundtrackid.loaders import VideoLoader
 from tests.media import write_video
 
 VIDEO_SECONDS = 10

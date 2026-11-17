@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from soundtrackID.classifiers import OnnxClassifier
-from soundtrackID.models import AudioChunk
+from soundtrackid.classifiers import OnnxClassifier
+from soundtrackid.models import AudioChunk
 
 
 def test_window_duration_gives_exactly_max_length_frames(monkeypatch):
