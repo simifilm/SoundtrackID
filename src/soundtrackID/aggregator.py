@@ -36,9 +36,10 @@ class ChunkAggregator:
         Assumes music chunks arrive in ``start_time`` order, which the pipeline's
         sequential chunker guarantees.
         """
+        # No run until the first music chunk; then where it starts and ends.
         run_start: float | None = None
-        run_end: float | None = None
-        emitted_until: float | None = None  # end of the last window emitted in this run
+        run_end = 0.0
+        emitted_until = 0.0  # end of the last window emitted in this run
 
         def build(start: float, end: float) -> MusicSegment:
             return MusicSegment(

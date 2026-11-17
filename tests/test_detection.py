@@ -97,7 +97,9 @@ def test_no_helper_uses_shazamio():
         provider="shazam",
     )
     with (
-        patch("soundtrackID.detection._find_shazamkit_helper", return_value=None),
+        patch(
+            "soundtrackID.detection.shazam._find_shazamkit_helper", return_value=None
+        ),
         patch.object(ShazamDetectionClient, "_detect_shazamio", return_value=fb) as m,
     ):
         r = ShazamDetectionClient().detect(_segment())
@@ -163,7 +165,9 @@ def shazam_api(monkeypatch):
     monkeypatch.setattr(shazamio_misc.ShazamUrl, "SEARCH_FROM_FILE", url)
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda delay, *a: real_sleep(0, *a))
-    monkeypatch.setattr("soundtrackID.detection._find_shazamkit_helper", lambda: None)
+    monkeypatch.setattr(
+        "soundtrackID.detection.shazam._find_shazamkit_helper", lambda: None
+    )
     yield responses, sent
     server.shutdown()
 
@@ -202,7 +206,9 @@ def test_shazam_unreachable_is_a_rate_limit(shazam_api, monkeypatch):
 
 def test_shazam_without_shazamkit_or_shazamio_fails_at_start(monkeypatch):
     """Rather than reporting "no match" for every segment."""
-    monkeypatch.setattr("soundtrackID.detection._find_shazamkit_helper", lambda: None)
+    monkeypatch.setattr(
+        "soundtrackID.detection.shazam._find_shazamkit_helper", lambda: None
+    )
     monkeypatch.setitem(sys.modules, "shazamio", None)  # not installed
 
     with pytest.raises(ImportError, match=r"soundtrackID\[shazam\]"):

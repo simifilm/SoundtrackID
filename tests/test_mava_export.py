@@ -1,6 +1,6 @@
 """Tests for the MAVA/VIAN-Export compatible export.
 
-Covers mava_export.py and GET /output/{video_name}/mava.
+Covers the MAVA part of exports.py and GET /output/{video_name}/mava.
 """
 
 import io
@@ -9,10 +9,10 @@ import zipfile
 
 from fastapi.testclient import TestClient
 
-from soundtrackID import app as app_module
-from soundtrackID.mava_export import build_mava_mapping, build_mava_tsv
+from soundtrackID.exports import build_mava_mapping, build_mava_tsv
+from soundtrackID.web.app import app
 
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 
 def test_build_mava_tsv_uses_title_artist_label():
@@ -45,9 +45,8 @@ def test_build_mava_mapping_matches_import_tsv_contract():
     assert "my_video" in mapping["series_description"]
 
 
-def test_export_endpoint_returns_zip_with_tsv_and_mapping(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = tmp_path / "myrun"
+def test_export_endpoint_returns_zip_with_tsv_and_mapping(runs_dir):
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     (run_dir / "results.json").write_text(
         json.dumps(
@@ -70,7 +69,6 @@ def test_export_endpoint_returns_zip_with_tsv_and_mapping(tmp_path, monkeypatch)
     assert mapping["time_column"] == "start_in_seconds"
 
 
-def test_export_endpoint_missing_run_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_export_endpoint_missing_run_is_404(runs_dir):
     r = client.get("/output/nope/mava")
     assert r.status_code == 404

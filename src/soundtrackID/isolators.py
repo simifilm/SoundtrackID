@@ -44,8 +44,9 @@ class DemucsIsolator(BaseMusicIsolator):
                 - "mdx_extra" (MDX challenge winner)
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
         """
-        import torch
-        from demucs.pretrained import get_model
+        # The 'demucs' extras, which the type check doesn't install.
+        import torch  # pyright: ignore[reportMissingImports]
+        from demucs.pretrained import get_model  # pyright: ignore[reportMissingImports]
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         log.info("Loading Demucs model '%s'...", model_name)
@@ -69,9 +70,9 @@ class DemucsIsolator(BaseMusicIsolator):
         Returns:
             Isolated music as float32 array, same shape as input
         """
-        import torch
-        from demucs.apply import apply_model
-        from demucs.audio import convert_audio
+        import torch  # pyright: ignore[reportMissingImports]
+        from demucs.apply import apply_model  # pyright: ignore[reportMissingImports]
+        from demucs.audio import convert_audio  # pyright: ignore[reportMissingImports]
 
         # Ensure audio is (channels, samples)
         if audio.ndim == 1:

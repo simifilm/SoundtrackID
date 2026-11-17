@@ -16,7 +16,7 @@ from soundtrackID.defaults import (
 )
 from soundtrackID.isolators import BaseMusicIsolator
 from soundtrackID.models import DetectionResult
-from tests.test_pipeline import FakeClassifier, ThrottledClient, fake_components
+from tests.fakes import FakeClassifier, ThrottledClient, fake_components
 
 
 def _analyze(tmp_path, monkeypatch, *options, client=None):
@@ -95,7 +95,7 @@ def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(tmp_path, monkey
     lists the run."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID import app
+    from soundtrackID.web.app import app
 
     classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
     classifier.window_duration = 10.23  # the model's own, not a round 10 s
@@ -105,7 +105,7 @@ def test_by_default_the_cli_analyzes_like_the_app_into_its_runs(tmp_path, monkey
 
     cli.main(["analyze", "film.mp4"])
 
-    client = TestClient(app.app)
+    client = TestClient(app)
     [run] = client.get("/history").json()
     results = client.get(f"/results/{run['video_name']}").json()
     assert results["providers"] == [DEFAULT_API]
@@ -159,7 +159,7 @@ def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, caps
     run_dir = _analyze(
         tmp_path, monkeypatch, "--max-segment", "5", client=ThrottledClient(answers=2)
     )
-    assert "cli resume" in capsys.readouterr().out
+    assert "soundtrackid resume" in capsys.readouterr().out
     pending = [
         c["segment_id"]
         for c in json.loads((run_dir / "results.json").read_text())["cues"]

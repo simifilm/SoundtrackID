@@ -9,12 +9,13 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from soundtrackID import app as app_module
 from soundtrackID.metadata import film as film_module
 from soundtrackID.metadata.film import FilmInfo
+from soundtrackID.web import analyze, stream
+from soundtrackID.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 
 def test_page_is_served_uncached():
@@ -114,14 +115,13 @@ def test_film_lookup_failure_is_502(monkeypatch):
 # ── Staged uploads ─────────────────────────────────────────────────────────
 
 
-def test_identify_removes_stale_staged_uploads(tmp_path, monkeypatch):
-    staging = tmp_path / "staging"
-    monkeypatch.setattr(app_module, "_STAGING_DIR", staging)
-    monkeypatch.setattr(app_module, "_staging", {})
+def test_identify_removes_stale_staged_uploads(data_dir, monkeypatch):
+    staging = data_dir / "staging"
+    monkeypatch.setattr(analyze, "_staging", {})
     for name in ("abandoned", "recent"):
         (staging / name).mkdir(parents=True)
         (staging / name / "film.mp4").write_bytes(b"video")
-        app_module._staging[name] = staging / name / "film.mp4"
+        analyze._staging[name] = staging / name / "film.mp4"
     seven_hours_ago = time.time() - 7 * 3600
     os.utime(staging / "abandoned", (seven_hours_ago, seven_hours_ago))
 
@@ -130,13 +130,13 @@ def test_identify_removes_stale_staged_uploads(tmp_path, monkeypatch):
     assert r.status_code == 200
     new_id = r.json()["staging_id"]
     assert not (staging / "abandoned").exists()
-    assert set(app_module._staging) == {"recent", new_id}
+    assert set(analyze._staging) == {"recent", new_id}
 
 
 @pytest.mark.parametrize("staging_id", ["unknown", "pruned"])
 def test_analyze_needs_a_staged_upload(tmp_path, monkeypatch, staging_id):
     # "pruned" is still registered, but its file is gone
-    monkeypatch.setattr(app_module, "_staging", {"pruned": tmp_path / "film.mp4"})
+    monkeypatch.setattr(analyze, "_staging", {"pruned": tmp_path / "film.mp4"})
     r = client.post("/analyze", data={"staging_id": staging_id})
 
     assert r.status_code == 400
@@ -147,9 +147,8 @@ def test_analyze_needs_a_staged_upload(tmp_path, monkeypatch, staging_id):
 
 
 @pytest.fixture
-def run_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run = tmp_path / "myrun"
+def run_dir(runs_dir):
+    run = runs_dir / "myrun"
     run.mkdir()
     return run
 
@@ -185,7 +184,7 @@ def test_missing_video_or_filmstrip_is_404(run_dir, what):
 
 def test_cancel_stops_only_a_known_run(monkeypatch):
     event = threading.Event()
-    monkeypatch.setattr(app_module, "_cancel_events", {"run1": event})
+    monkeypatch.setattr(stream, "_cancel_events", {"run1": event})
 
     assert client.post("/cancel/other").status_code == 404
     assert not event.is_set()
@@ -196,15 +195,14 @@ def test_cancel_stops_only_a_known_run(monkeypatch):
 # ── History ────────────────────────────────────────────────────────────────
 
 
-def test_history_lists_only_runs_with_readable_results(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    (tmp_path / "running").mkdir()  # no results.json yet
-    (tmp_path / "broken").mkdir()
-    (tmp_path / "broken" / "results.json").write_text("{not json")
-    (tmp_path / "done").mkdir()
+def test_history_lists_only_runs_with_readable_results(runs_dir):
+    (runs_dir / "running").mkdir()  # no results.json yet
+    (runs_dir / "broken").mkdir()
+    (runs_dir / "broken" / "results.json").write_text("{not json")
+    (runs_dir / "done").mkdir()
     cues = [{"title": "A"}, {"title": None}]
-    (tmp_path / "done" / "results.json").write_text(json.dumps({"cues": cues}))
-    (tmp_path / "notes.txt").write_text("not a run")
+    (runs_dir / "done" / "results.json").write_text(json.dumps({"cues": cues}))
+    (runs_dir / "notes.txt").write_text("not a run")
 
     items = client.get("/history").json()
 
@@ -213,27 +211,24 @@ def test_history_lists_only_runs_with_readable_results(tmp_path, monkeypatch):
     ]
 
 
-def test_history_is_empty_without_a_cache_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path / "missing")
+def test_history_is_empty_without_a_cache_folder(data_dir):
     assert client.get("/history").json() == []
 
 
-def test_deleting_the_history_removes_every_run(tmp_path, monkeypatch):
+def test_deleting_the_history_removes_every_run(data_dir, runs_dir):
     """And only the runs: the settings next to the cache stay."""
-    cache = tmp_path / "cache"
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
-    (cache / "done").mkdir(parents=True)
+    cache = runs_dir
+    (cache / "done").mkdir()
     (cache / "done" / "results.json").write_text("{}")
     (cache / "broken").mkdir()  # not listed, but still in the cache
-    (tmp_path / "settings.json").write_text("{}")
+    (data_dir / "settings.json").write_text("{}")
 
     r = client.delete("/history")
 
     assert r.status_code == 200
     assert list(cache.iterdir()) == []
-    assert (tmp_path / "settings.json").exists()
+    assert (data_dir / "settings.json").exists()
 
 
-def test_deleting_the_history_without_a_cache_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path / "missing")
+def test_deleting_the_history_without_a_cache_folder(data_dir):
     assert client.delete("/history").status_code == 200

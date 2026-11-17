@@ -16,7 +16,7 @@ from soundtrackID.isolators import DummyIsolator
 from soundtrackID.models import DetectionResult
 from soundtrackID.pipeline import Pipeline
 from soundtrackID.runs import Run
-from tests.test_pipeline import (
+from tests.fakes import (
     SR,
     FailingClient,
     FakeClassifier,

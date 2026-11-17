@@ -8,10 +8,9 @@ from soundtrackID.detection import (
     EnsembleDetectionClient,
     ProviderAuthError,
     RateLimitError,
-    _consensus_from_votes,
-    _normalize_title,
     build_detection_client,
 )
+from soundtrackID.detection.ensemble import _consensus_from_votes, _normalize_title
 from soundtrackID.models import DetectionResult, MusicSegment
 
 

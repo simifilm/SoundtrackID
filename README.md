@@ -111,7 +111,7 @@ audio, which is what makes them usable on film soundtracks at all.
 
 | Provider | Notes |
 |---|---|
-| **ACRCloud** | Finds the most music (and is the CLI default). Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
+| **ACRCloud** | Finds the most music. Matches often come with Spotify, YouTube and MusicBrainz links, which are saved into the results. Needs an account. |
 | **Shazam** | Preselected in the app, and needs no account. |
 | **AudD** | Needs an API token. Matches come with a MusicBrainz link and usually an ISRC, which the composer lookup needs. |
 
@@ -128,7 +128,7 @@ against AcoustID and records the tests behind this recommendation.
 
 ### Browser
 
-Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/simifilm/SoundtrackID.git
@@ -157,7 +157,7 @@ The CLI runs the same analysis as the app, with the same default settings:
 identification, the date re-ranking and the composer lookup, saved as one run.
 
 ```bash
-uv run --extra app python -m soundtrackID.cli analyze path/to/video.mp4
+uv run --extra app soundtrackid analyze path/to/video.mp4
 ```
 
 ```
@@ -190,7 +190,7 @@ continue the run later; it identifies only the cues still pending. Wrong API key
 stop the run instead, with a message:
 
 ```bash
-uv run --extra app python -m soundtrackID.cli resume "output/cache/My Film_2026-11-11_10-15-00"
+uv run --extra app soundtrackid resume "output/cache/My Film_2026-11-11_10-15-00"
 ```
 
 ACRCloud and AudD read their keys from the environment or the `.env.dev` file
@@ -234,13 +234,21 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 ├── src/soundtrackID/           Python package: pipeline, web server and UI
 │   ├── __main__.py             Entry point for `python -m soundtrackID`
 │   ├── main.py                 Starts the web server
-│   ├── app.py                  FastAPI endpoints: upload, film lookup, analysis, history
-│   ├── cli.py                  Command line: analyze a video, resume a run
+│   ├── web/                    The web server (FastAPI)
+│   │   ├── app.py              The app: startup, the page, the routes below
+│   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume
+│   │   ├── history.py          Saved runs: list, delete, results and edits, video, exports
+│   │   ├── keys.py             The API keys entered in the app
+│   │   ├── stream.py           A run's progress as server-sent events, and cancelling it
+│   │   └── data.py             The server's data folder: runs, saved keys, staged uploads, log
+│   ├── cli.py                  Command line (`soundtrackid`): analyze a video, resume a run
+│   ├── paths.py                Where the app's files are, from source or installed
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
 │   ├── analysis.py             The analysis the app and the CLI share, and resume
 │   ├── defaults.py             What an analysis uses unless told otherwise
 │   ├── pipeline.py             Finds the music in a video and identifies it
-│   ├── models.py               Data models and the results.json output format
+│   ├── models.py               Data models of the pipeline: audio chunks, clips, matches
+│   ├── results.py              The results.json format: cue fields, upgrades, load and save, edits
 │   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues
 │   ├── derived.py              What follows from the results: rights verdict, anachronisms
 │   ├── loaders.py              Decodes the video and extracts its audio track
@@ -249,10 +257,11 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── slots.py                Turns the overlapping chunks' scores into music / no-music spans
 │   ├── aggregator.py           Merges music chunks into the windows sent for identification
 │   ├── isolators.py            Optional Demucs vocal isolation
-│   ├── detection.py            Identification clients (ACRCloud, Shazam, AudD) and ensemble voting
+│   ├── detection/              Identification: one module per provider (ACRCloud, Shazam,
+│   │                           AudD) and ensemble voting
 │   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
-│   ├── mava_export.py          The MAVA export (TSV and mapping)
+│   ├── exports.py              The CSV and MAVA (TSV and mapping) exports
 │   ├── metadata/               Film and composer enrichment
 │   │   ├── enricher.py         Looks up the composers of a run's cues
 │   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
@@ -270,7 +279,8 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 ├── tests/                      pytest suite; tests/ui drives the page in a headless browser
 ├── docs/                       Detailed documentation
 ├── fiwi-server.spec            PyInstaller spec for bundling the server
-└── pyproject.toml              Python dependencies and optional extras
+├── pyproject.toml              Python dependencies and optional extras
+└── uv.lock                     The exact dependency versions, for reproducible installs
 ```
 
 Further reading:

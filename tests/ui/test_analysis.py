@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 from playwright.sync_api import expect
 
-from soundtrackID import app as app_module
 from soundtrackID.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
@@ -16,7 +15,8 @@ from soundtrackID.defaults import (
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from tests.ui.conftest import saved
+from soundtrackID.web import analyze as analyze_routes
+from tests.ui.helpers import saved
 
 pytestmark = pytest.mark.browser
 
@@ -210,7 +210,7 @@ def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):
 def test_a_refused_analysis_shows_why(page, fakes, video):
     page.goto("/")
     upload(page, video)
-    app_module._staging.clear()  # the staged upload expired meanwhile
+    analyze_routes._staging.clear()  # the staged upload expired meanwhile
 
     page.locator("#fc-start").click()
 

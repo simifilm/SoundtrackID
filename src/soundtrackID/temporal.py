@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from soundtrackID.models import MATCH_KEYS
+from soundtrackID.results import MATCH_KEYS
 
 TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative

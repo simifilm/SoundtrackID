@@ -145,7 +145,7 @@ def test_the_onnx_export_is_used_unless_hf_is_asked_for_or_it_is_missing(
     tmp_path, monkeypatch
 ):
     """The app's and the CLI's classifier, from source."""
-    from soundtrackID import classifiers
+    from soundtrackID import classifiers, paths
 
     built = []
     monkeypatch.setattr(
@@ -158,11 +158,11 @@ def test_the_onnx_export_is_used_unless_hf_is_asked_for_or_it_is_missing(
         "HuggingFaceClassifier",
         lambda music_labels: built.append(("hf",)),
     )
-    monkeypatch.setattr(classifiers, "_MODEL_DIR", tmp_path)
+    monkeypatch.setattr(paths, "MODEL_DIR", tmp_path)
 
     classifiers.load_classifier(hf=False)
     classifiers.load_classifier(hf=True)
-    monkeypatch.setattr(classifiers, "_MODEL_DIR", tmp_path / "not exported")
+    monkeypatch.setattr(paths, "MODEL_DIR", tmp_path / "not exported")
     classifiers.load_classifier(hf=False)
 
     assert built == [("onnx", str(tmp_path)), ("hf",), ("hf",)]

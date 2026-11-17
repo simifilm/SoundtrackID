@@ -1,4 +1,4 @@
-"""Export detection results in a MAVA/VIAN-Export compatible format.
+"""The exports of a run's results: a CSV, and the TSV and mapping MAVA imports.
 
 MAVA (https://github.com/sdsc-ordes/mava-api) has no flat JSON export schema of
 its own — its API builds an in-memory RDF graph from either raw Turtle or a TSV
@@ -11,7 +11,42 @@ into VIAN.
 
 import csv
 import io
+import json
 from typing import Any
+
+
+def results_to_csv(results: dict[str, Any]) -> str:
+    """The cues of a results.json as CSV: one row per cue, a column per field.
+
+    Built from the results as they are now (also after edits and a resume), so
+    it holds the same data as the JSON. Nested fields get a column each (e.g.
+    enrichment.composer); lists, such as the candidates, are written as JSON.
+    """
+    rows = [_flatten(cue) for cue in results.get("cues") or []]
+    columns = list(dict.fromkeys(key for row in rows for key in row))
+    # A field nested in one cue and empty in another (e.g. enrichment) gets only
+    # the nested columns.
+    columns = [c for c in columns if not any(o.startswith(c + ".") for o in columns)]
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def _flatten(fields: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for key, value in fields.items():
+        if isinstance(value, dict):
+            flat.update(_flatten(value, f"{prefix}{key}."))
+        elif isinstance(value, list):
+            flat[prefix + key] = json.dumps(value, ensure_ascii=False)
+        else:
+            flat[prefix + key] = value
+    return flat
+
+
+# ── MAVA ──────────────────────────────────────────────────────────────────────
 
 MAVA_TIME_COLUMN = "start_in_seconds"
 MAVA_DURATION_COLUMN = "duration_in_seconds"

@@ -128,7 +128,7 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                    └───────────────────────────────────────────────────────┘
 ```
 
-The CLI (`python -m soundtrackID.cli analyze`) runs the same analysis. Its
+The CLI (`soundtrackid analyze`) runs the same analysis. Its
 `--title`, `--year` and `--imdb-id` options and `--lookup-film` take the place of
 the Confirm film panel.
 

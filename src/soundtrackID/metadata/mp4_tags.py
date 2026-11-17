@@ -89,7 +89,7 @@ def _parse_itunmovi_director(raw: Any) -> str | None:
     return _first_str(first)
 
 
-def _read_freeform(tags: dict, key: str) -> str | None:
+def _read_freeform(tags: Any, key: str) -> str | None:
     full_key = f"----:com.apple.iTunes:{key}"
     raw = tags.get(full_key)
     return _first_str(raw)

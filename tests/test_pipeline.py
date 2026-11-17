@@ -19,46 +19,26 @@ from soundtrackID.defaults import (
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from soundtrackID.detection import ProviderAuthError, RateLimitError
+from soundtrackID.detection import ProviderAuthError
 from soundtrackID.isolators import DummyIsolator
-from soundtrackID.models import MATCH_KEYS, DetectionResult, MusicSegment
+from soundtrackID.models import DetectionResult, MusicSegment
 from soundtrackID.pipeline import (
     Pipeline,
     _group_detections,
     waveform_peaks,
 )
-
-SR = 1000
-LABELS = ["Speech", "Music", "Applause", "Piano"]
-
-
-class FakeLoader:
-    def load(self, path):
-        return np.linspace(-0.5, 0.5, 30 * SR, dtype=np.float32), SR
-
-
-class FakeClassifier:
-    """Only the windows starting at `music_starts` are music: they score 0.6,
-    the others 0.05."""
-
-    labels = LABELS
-    window_duration = 10.0
-
-    def __init__(self, music_starts=(10.0,)):
-        self.music_starts = music_starts
-
-    def classify(self, chunk):
-        is_music = chunk.start_time in self.music_starts
-        probs = np.array(
-            [0.3, 0.6, 0.06, 0.04] if is_music else [0.9, 0.05, 0.03, 0.02],
-            dtype=np.float32,
-        )
-        return float(probs[1]), probs
-
-
-class NoMatchClient:
-    def detect(self, segment):
-        return DetectionResult(segment=segment, title=None, artist=None)
+from soundtrackID.results import MATCH_KEYS
+from tests.fakes import (
+    LABELS,
+    SR,
+    FailingClient,
+    FakeClassifier,
+    FakeLoader,
+    NoMatchClient,
+    RejectingClient,
+    ThrottledClient,
+    fake_components,
+)
 
 
 class TitleByStartClient:
@@ -82,34 +62,6 @@ class ReleasedClient:
     def detect(self, segment):
         self.released.wait(timeout=10)
         return self.client.detect(segment)
-
-
-class ThrottledClient:
-    """Answers "no match" to the first `answers` calls, then refuses every call
-    as rate-limited; counts the calls."""
-
-    def __init__(self, answers=0):
-        self.answers = answers
-        self.calls = 0
-
-    def detect(self, segment):
-        self.calls += 1
-        if self.calls > self.answers:
-            raise RateLimitError("quota exceeded")
-        return DetectionResult(segment=segment, title=None, artist=None)
-
-
-class FailingClient:
-    """Fails with an unexpected error on clips starting at `fail_at`, as on a
-    provider's malformed answer; matches "X" otherwise."""
-
-    def __init__(self, fail_at):
-        self.fail_at = fail_at
-
-    def detect(self, segment):
-        if segment.start_time in self.fail_at:
-            raise ValueError("malformed answer")
-        return DetectionResult(segment=segment, title="X", artist=None)
 
 
 def test_the_waveform_is_the_audios_peaks_scaled_to_one():
@@ -337,13 +289,6 @@ def test_a_window_the_provider_failed_on_stays_pending(caplog):
     assert "malformed answer" in caplog.text
 
 
-class RejectingClient:
-    """Rejects its keys, as a provider does with a wrong one."""
-
-    def detect(self, segment):
-        raise ProviderAuthError("ACRCloud rejected the API keys (error 3014)")
-
-
 def test_rejected_keys_stop_the_run():
     """Waiting doesn't fix them, so no pending cues for a resume that would fail
     the same way: the run fails at once and says why."""
@@ -406,30 +351,18 @@ def test_progress_events_carry_their_data_as_fields():
     ]
 
 
-def fake_components(monkeypatch, client=None, classifier=None):
-    """Make build_pipeline load audio with FakeLoader and identify with `client`
-    (default: no match); returns a stand-in for the app's _get_classifier."""
-    monkeypatch.setattr("soundtrackID.pipeline.VideoLoader", FakeLoader)
-    monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
-        lambda api: client or NoMatchClient(),
-    )
-
-    return lambda: classifier or FakeClassifier()
-
-
 def _analyze(tmp_path, monkeypatch, video=b"video", **form):
     """POST /analyze for film.mp4 with the fake components; returns the SSE events."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID import app
+    from soundtrackID.web import analyze, data
+    from soundtrackID.web.app import app
 
-    monkeypatch.setattr(app, "_OUTPUT_DIR", tmp_path / "cache")
-    monkeypatch.setattr(app, "_STAGING_DIR", tmp_path / "staging")
-    monkeypatch.setattr(app, "_staging", {})
-    monkeypatch.setattr(app, "_get_classifier", fake_components(monkeypatch))
+    monkeypatch.setattr(data, "root", tmp_path)
+    monkeypatch.setattr(analyze, "_staging", {})
+    monkeypatch.setattr(analyze, "get_classifier", fake_components(monkeypatch))
 
-    client = TestClient(app.app)
+    client = TestClient(app)
     staged = client.post("/identify", files={"file": ("film.mp4", video)}).json()
     r = client.post(
         "/analyze",
@@ -523,14 +456,14 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
     that run's video on disk (a hard link, not a second copy)."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID import app
+    from soundtrackID.web.app import app
 
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
     monkeypatch.setattr(
         "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
     )
     _analyze(tmp_path, monkeypatch, video=b"film")
-    client = TestClient(app.app)
+    client = TestClient(app)
 
     r = client.post("/rerun/film_2026-11-10_15-23-01", data={"hop": 10})
 
@@ -611,14 +544,14 @@ def test_bridging_counts_non_music_between_the_tracks():
 
 def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
     """The bridge gap and hop from the UI reach the writer and the chunker."""
-    from soundtrackID import app
+    from soundtrackID.web import analyze
 
-    monkeypatch.setattr(app, "_get_classifier", FakeClassifier)
+    monkeypatch.setattr(analyze, "get_classifier", FakeClassifier)
     monkeypatch.setattr(
         "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
     )
 
-    pipeline = app._build_pipeline(
+    pipeline = analyze._build_pipeline(
         threshold=MUSIC_THRESHOLD, api=DEFAULT_API, bridge_gap=7.0, hop=2.5
     )
 

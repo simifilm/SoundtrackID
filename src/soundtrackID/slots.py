@@ -44,7 +44,7 @@ def stream_slots(
             ),
             is_music=is_music,
             confidence=float(np.mean([r.confidence for r in agreeing])),
-            probs=np.mean([r.probs for r in agreeing], axis=0),
+            probs=np.mean([r.probs for r in agreeing if r.probs is not None], axis=0),
         )
 
     for result in results:

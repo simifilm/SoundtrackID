@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "soundtrackID"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Film Music Analysis Pipeline"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "numpy>=1.24",
     "pyacrcloud>=1.0",
@@ -16,6 +16,9 @@ dependencies = [
     "scipy>=1.10",
     "librosa>=0.10",
 ]
+
+[project.scripts]
+soundtrackid = "soundtrackID.cli:main"
 
 [project.optional-dependencies]
 # Bundled desktop app
@@ -36,7 +39,7 @@ onnx = [
 # Shazam prefers Apple's native ShazamKit (shazamkit/ Swift helper); shazamio is
 # the fallback used until the ShazamKit entitlement/profile is in place.
 shazam = [
-    "audioop-lts>=0.2.2 ; python_full_version >= '3.13'",
+    "audioop-lts>=0.2.2",
     "shazamio>=0.7",
     "truststore>=0.9",
 ]
@@ -66,6 +69,9 @@ build = [
 
 [tool.uv.sources]
 pyacrcloud = { git = "https://github.com/acrcloud/acrcloud_sdk_python", marker = "sys_platform == 'win32'" }
+
+[tool.hatch.version]
+path = "src/soundtrackID/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/soundtrackID"]

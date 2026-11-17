@@ -23,8 +23,8 @@ from soundtrackID.detection import (
     AudDDetectionClient,
     ProviderAuthError,
     RateLimitError,
-    _parse_acr_candidate,
 )
+from soundtrackID.detection.acrcloud import _parse_acr_candidate
 from soundtrackID.models import MusicSegment
 
 FIXTURES = Path(__file__).parent / "fixtures"

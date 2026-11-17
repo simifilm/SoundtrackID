@@ -123,9 +123,9 @@ class FilmLookup:
             except (httpx.HTTPError, ValueError):
                 log.warning("Wikidata film lookup failed", exc_info=True)
 
-        if not info.is_complete() and (info.imdb_id or imdb_id):
+        if not info.is_complete() and (known_imdb_id := info.imdb_id or imdb_id):
             try:
-                im = self._lookup_imdbapi(info.imdb_id or imdb_id)
+                im = self._lookup_imdbapi(known_imdb_id)
                 if im:
                     info.merge(im, "imdbapi")
             except (httpx.HTTPError, ValueError):

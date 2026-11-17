@@ -5,15 +5,15 @@ import shutil
 
 from fastapi.testclient import TestClient
 
-from soundtrackID import app as app_module
+from soundtrackID.web import analyze
+from soundtrackID.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 
-def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = tmp_path / "myrun"
+def test_rerun_uses_stored_video_film_and_new_settings(runs_dir, monkeypatch):
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     (run_dir / "source.mp4").write_bytes(b"video-bytes")
     (run_dir / "results.json").write_text(
@@ -31,7 +31,7 @@ def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
         shutil.rmtree(video.parent)  # its temporary folder, as the real run does
         yield "data: {}\n\n"
 
-    monkeypatch.setattr(app_module, "_run_pipeline_sse", fake_pipeline_sse)
+    monkeypatch.setattr(analyze, "_run_pipeline_sse", fake_pipeline_sse)
 
     r = client.post(
         "/rerun/myrun",
@@ -55,9 +55,8 @@ def test_rerun_uses_stored_video_film_and_new_settings(tmp_path, monkeypatch):
     assert kwargs["hop"] == 2.5
 
 
-def test_rerun_without_stored_video_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    (tmp_path / "myrun").mkdir()
+def test_rerun_without_stored_video_is_404(runs_dir):
+    (runs_dir / "myrun").mkdir()
 
     r = client.post("/rerun/myrun", data={})
 

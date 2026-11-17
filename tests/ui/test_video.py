@@ -6,7 +6,7 @@ import shutil
 import pytest
 from playwright.sync_api import expect
 
-from tests.ui.conftest import TIMELINE, cue, make_run, open_run
+from tests.ui.helpers import TIMELINE, cue, make_run, open_run
 
 pytestmark = pytest.mark.browser
 

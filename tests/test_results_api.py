@@ -12,26 +12,25 @@ import pytest
 from fastapi.testclient import TestClient
 from scipy.io import wavfile
 
-from soundtrackID import app as app_module
 from soundtrackID.derived import refresh
 from soundtrackID.detection import RateLimitError
-from soundtrackID.models import (
+from soundtrackID.models import DetectionResult, MusicSegment
+from soundtrackID.pipeline import build_cues
+from soundtrackID.results import (
     ANALYSIS_KEYS,
     MATCH_KEYS,
     RESULTS_VERSION,
-    DetectionResult,
-    MusicSegment,
     ResultsOutput,
     upgrade_results,
 )
-from soundtrackID.pipeline import build_cues
+from soundtrackID.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 
-def _make_run(tmp_path, name="myrun"):
-    run_dir = tmp_path / name
+def _make_run(runs_dir, name="myrun"):
+    run_dir = runs_dir / name
     run_dir.mkdir()
     (run_dir / "results.json").write_text(
         json.dumps(
@@ -46,9 +45,8 @@ def _make_run(tmp_path, name="myrun"):
     return run_dir
 
 
-def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)
+def test_save_replaces_cues_and_preserves_rest(runs_dir):
+    run_dir = _make_run(runs_dir)
 
     new_cues = [
         {
@@ -71,19 +69,18 @@ def test_save_replaces_cues_and_preserves_rest(tmp_path, monkeypatch):
     assert timeline == {"waveform": {"samples": [1, 2, 3]}}
 
 
-def _run_with_cue(tmp_path, cue, film=None):
-    run_dir = tmp_path / "myrun"
+def _run_with_cue(runs_dir, cue, film=None):
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     (run_dir / "results.json").write_text(json.dumps({"film": film, "cues": [cue]}))
     return run_dir
 
 
-def test_a_saved_edit_comes_back_with_what_follows_from_it(tmp_path, monkeypatch):
+def test_a_saved_edit_comes_back_with_what_follows_from_it(runs_dir):
     """A work dated after the film by hand is marked as later than it, in the
     answer (which the page shows) and on disk."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     cue = {"segment_id": "seg_001", "title": "Song", "artist": "A", "enrichment": {}}
-    run_dir = _run_with_cue(tmp_path, cue, film={"title": "F", "year": 1950})
+    run_dir = _run_with_cue(runs_dir, cue, film={"title": "F", "year": 1950})
     edited = {**cue, "enrichment": {"original_year": 1975}}
 
     r = client.post("/results/myrun", json={"cues": [edited]})
@@ -94,12 +91,9 @@ def test_a_saved_edit_comes_back_with_what_follows_from_it(tmp_path, monkeypatch
     assert answered["track_key"] == "song|a"
 
 
-def test_a_hand_edited_composer_keeps_the_co_authors_and_their_verdict(
-    tmp_path, monkeypatch
-):
+def test_a_hand_edited_composer_keeps_the_co_authors_and_their_verdict(runs_dir):
     """The life dates were the composer looked up, so they go; the lyricist
     found before stays, and their death in 1993 keeps the work protected."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     enrichment = {
         "composer": "Glenn Miller",
         "composer_death_year": 1944,
@@ -109,7 +103,7 @@ def test_a_hand_edited_composer_keeps_the_co_authors_and_their_verdict(
         ],
     }
     cue = {"segment_id": "seg_001", "title": "Moonlight Serenade"}
-    _run_with_cue(tmp_path, {**cue, "enrichment": enrichment})
+    _run_with_cue(runs_dir, {**cue, "enrichment": enrichment})
     edited = {**cue, "enrichment": {**enrichment, "composer": "Someone Else"}}
 
     r = client.post("/results/myrun", json={"cues": [edited]})
@@ -122,10 +116,9 @@ def test_a_hand_edited_composer_keeps_the_co_authors_and_their_verdict(
     assert (saved["latest_author_death_year"], saved["public_domain"]) == (1993, False)
 
 
-def test_an_edit_keeps_where_a_cue_is_and_whether_it_is_pending(tmp_path, monkeypatch):
+def test_an_edit_keeps_where_a_cue_is_and_whether_it_is_pending(runs_dir):
     """Those are the analysis's: a resume reads and removes the audio_file."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = tmp_path / "myrun"
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     cue = {
         "segment_id": "seg_001",
@@ -165,10 +158,9 @@ def test_an_edit_keeps_where_a_cue_is_and_whether_it_is_pending(tmp_path, monkey
     ],
     ids=["unknown", "twice", "not-an-object", "title-number", "enrichment-text"],
 )
-def test_an_edit_that_doesnt_fit_the_run_is_refused(tmp_path, monkeypatch, cues):
+def test_an_edit_that_doesnt_fit_the_run_is_refused(runs_dir, cues):
     """And nothing is saved."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)
+    run_dir = _make_run(runs_dir)
     before = (run_dir / "results.json").read_text()
 
     r = client.post("/results/myrun", json={"cues": cues})
@@ -177,47 +169,41 @@ def test_an_edit_that_doesnt_fit_the_run_is_refused(tmp_path, monkeypatch, cues)
     assert (run_dir / "results.json").read_text() == before
 
 
-def test_save_can_remove_all_cues(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)
+def test_save_can_remove_all_cues(runs_dir):
+    run_dir = _make_run(runs_dir)
     r = client.post("/results/myrun", json={"cues": []})
     assert r.status_code == 200
     assert json.loads((run_dir / "results.json").read_text())["cues"] == []
 
 
-def test_missing_run_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_missing_run_is_404(runs_dir):
     r = client.post("/results/nope", json={"cues": []})
     assert r.status_code == 404
 
 
-def test_bad_body_is_422(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    _make_run(tmp_path)
+def test_bad_body_is_422(runs_dir):
+    _make_run(runs_dir)
     r = client.post("/results/myrun", json={"not_cues": 1})
     assert r.status_code == 422
 
 
 @pytest.mark.parametrize("name", ["%2e", "%2e%2e"])
-def test_path_traversal_rejected(tmp_path, monkeypatch, name):
+def test_path_traversal_rejected(data_dir, runs_dir, name):
     # "." and ".." would reach these results files without the check
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for folder in (cache, tmp_path):
+    cache = runs_dir
+    for folder in (cache, data_dir):
         (folder / "results.json").write_text('{"cues": ["keep"]}')
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
     r = client.post(f"/results/{name}", json={"cues": []})
     assert r.status_code == 400
-    for folder in (cache, tmp_path):
+    for folder in (cache, data_dir):
         assert json.loads((folder / "results.json").read_text()) == {"cues": ["keep"]}
 
 
 # ── Reading runs: GET /results/{video_name} and the history list ───────────
 
 
-def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)  # saved without a version
+def test_get_returns_the_run_results_in_the_current_format(runs_dir):
+    run_dir = _make_run(runs_dir)  # saved without a version
 
     r = client.get("/results/myrun")
 
@@ -228,20 +214,19 @@ def test_get_returns_the_run_results_in_the_current_format(tmp_path, monkeypatch
     assert r.json()["version"] == RESULTS_VERSION
 
 
-def _run_with_enrichment(tmp_path, enrichment):
-    run_dir = tmp_path / "myrun"
+def _run_with_enrichment(runs_dir, enrichment):
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     cue = {"segment_id": "seg_001", "title": "Song", "enrichment": enrichment}
     (run_dir / "results.json").write_text(json.dumps({"cues": [cue]}))
 
 
-def test_the_rights_verdict_is_that_of_the_year_the_run_is_read(tmp_path, monkeypatch):
+def test_the_rights_verdict_is_that_of_the_year_the_run_is_read(runs_dir):
     """The last author died 71 years ago: still protected when the run was
     saved last year, in the public domain now, also in the CSV."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     died = date.today().year - 71
     _run_with_enrichment(
-        tmp_path,
+        runs_dir,
         {
             "composer": "A",
             "authors": [{"name": "A", "roles": ["composer"], "death_year": died}],
@@ -260,11 +245,10 @@ def test_the_rights_verdict_is_that_of_the_year_the_run_is_read(tmp_path, monkey
     assert row["enrichment.public_domain"] == "True"
 
 
-def test_a_verdict_saved_without_its_authors_is_kept(tmp_path, monkeypatch):
+def test_a_verdict_saved_without_its_authors_is_kept(runs_dir):
     """Nothing to assess it from again."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     enrichment = {"composer": "A", "composer_death_year": 1900, "public_domain": True}
-    _run_with_enrichment(tmp_path, enrichment)
+    _run_with_enrichment(runs_dir, enrichment)
 
     cue = client.get("/results/myrun").json()["cues"][0]
 
@@ -341,11 +325,10 @@ def test_older_results_lose_their_confidence():
     ]
 
 
-def test_timeline_of_a_run_saved_before_it_had_its_own_file(tmp_path, monkeypatch):
+def test_timeline_of_a_run_saved_before_it_had_its_own_file(runs_dir):
     """Read from results.json, and moved into timeline.json when the results
     are next saved, as they leave it out."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = _make_run(tmp_path)  # its waveform in results.json
+    run_dir = _make_run(runs_dir)  # its waveform in results.json
     timeline = {"waveform": {"samples": [1, 2, 3]}}
 
     assert client.get("/output/myrun/timeline").json() == timeline
@@ -356,32 +339,27 @@ def test_timeline_of_a_run_saved_before_it_had_its_own_file(tmp_path, monkeypatc
     assert client.get("/output/myrun/timeline").json() == timeline
 
 
-def test_timeline_of_a_missing_run_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_timeline_of_a_missing_run_is_404(runs_dir):
     assert client.get("/output/nope/timeline").status_code == 404
 
 
-def test_get_missing_run_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_get_missing_run_is_404(runs_dir):
     assert client.get("/results/nope").status_code == 404
 
 
 @pytest.mark.parametrize("name", ["%2e", "%2e%2e"])
-def test_get_path_traversal_rejected(tmp_path, monkeypatch, name):
+def test_get_path_traversal_rejected(data_dir, runs_dir, name):
     # "." and ".." would reach these results files without the check
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for folder in (cache, tmp_path):
+    cache = runs_dir
+    for folder in (cache, data_dir):
         (folder / "results.json").write_text("{}")
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", cache)
     assert client.get(f"/results/{name}").status_code == 400
 
 
-def test_history_lists_every_run_newest_first(tmp_path, monkeypatch):
+def test_history_lists_every_run_newest_first(runs_dir):
     """Not just the last few; without their results, which GET /results loads."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     for i in range(12):
-        run_dir = _make_run(tmp_path, f"run{i:02d}")
+        run_dir = _make_run(runs_dir, f"run{i:02d}")
         os.utime(run_dir, (1000 + i, 1000 + i))  # run11 is the newest
 
     items = client.get("/history").json()
@@ -399,15 +377,13 @@ def test_history_lists_every_run_newest_first(tmp_path, monkeypatch):
 # ── Resume endpoint ────────────────────────────────────────────────────────
 
 
-def test_resume_missing_run_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_resume_missing_run_404(runs_dir):
     r = client.post("/resume/nope", json={})
     assert r.status_code == 404
 
 
-def test_resume_with_nothing_pending_changes_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run = tmp_path / "r"
+def test_resume_with_nothing_pending_changes_nothing(runs_dir):
+    run = runs_dir / "r"
     run.mkdir()
     results = {
         "version": RESULTS_VERSION,
@@ -422,7 +398,7 @@ def test_resume_with_nothing_pending_changes_nothing(tmp_path, monkeypatch):
     assert json.loads((run / "results.json").read_text()) == results
 
 
-def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(tmp_path, monkeypatch):
+def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(runs_dir, monkeypatch):
     """E.g. its candidates, without which the date re-ranking skips it."""
     metadata = {
         key: f"<{key}>"
@@ -436,19 +412,18 @@ def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(tmp_path, monkeypat
     clip = MusicSegment(np.zeros(1000, np.float32), 0.0, 1.0, 1000)
     [analyzed], _ = build_cues([(clip, detect(clip))], bridge_gap=2.0)
     cues = [{"segment_id": "s1", "title": None, "pending": True}]
-    [resumed] = _resume(tmp_path, monkeypatch, detect, cues)["cues"]
+    [resumed] = _resume(runs_dir, monkeypatch, detect, cues)["cues"]
 
     assert {key: resumed[key] for key in MATCH_KEYS} == {
         key: analyzed[key] for key in MATCH_KEYS
     }
 
 
-def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, asked=None, **results):
+def _resume(runs_dir, monkeypatch, detect, cues, enrich=None, asked=None, **results):
     """POST /resume for a run with these cues (each with a short silent clip),
     identifying them with `detect` and looking up composers with `enrich` (by
     default not at all); returns the saved results. `asked` collects the
     providers the resume asks for."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
 
     def build_detection_client(api):
         if asked is not None:
@@ -461,7 +436,7 @@ def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, asked=None, **resu
     monkeypatch.setattr(
         "soundtrackID.metadata.enricher.enrich", enrich or (lambda **kw: None)
     )
-    run = tmp_path / "r"
+    run = runs_dir / "r"
     (run / "segments").mkdir(parents=True)
     for cue in cues:
         cue["audio_file"] = f"segments/{cue['segment_id']}.wav"
@@ -474,13 +449,13 @@ def _resume(tmp_path, monkeypatch, detect, cues, enrich=None, asked=None, **resu
     return json.loads((run / "results.json").read_text())
 
 
-def test_a_resume_continues_with_the_runs_own_providers(tmp_path, monkeypatch):
+def test_a_resume_continues_with_the_runs_own_providers(runs_dir, monkeypatch):
     """Unless the page asks for others; as the CLI's resume."""
     asked = []
     cues = [{"segment_id": "s1", "title": None, "pending": True}]
 
     _resume(
-        tmp_path,
+        runs_dir,
         monkeypatch,
         lambda seg: DetectionResult(seg, "T", "A", "audd"),
         cues,
@@ -491,7 +466,7 @@ def test_a_resume_continues_with_the_runs_own_providers(tmp_path, monkeypatch):
     assert asked == ["audd,shazam"]
 
 
-def test_resume_reranks_newly_identified_cues(tmp_path, monkeypatch):
+def test_resume_reranks_newly_identified_cues(runs_dir, monkeypatch):
     """A resumed cue whose top match postdates the film gets the period pick."""
     candidates = [
         {"title": "Sampler", "release_year": 2022, "score": 90.0},
@@ -504,7 +479,7 @@ def test_resume_reranks_newly_identified_cues(tmp_path, monkeypatch):
 
     cues = [{"segment_id": "s1", "title": None}]
     saved = _resume(
-        tmp_path, monkeypatch, detect, cues, film={"year": 1971}, rate_limited=True
+        runs_dir, monkeypatch, detect, cues, film={"year": 1971}, rate_limited=True
     )
 
     [cue] = saved["cues"]
@@ -512,7 +487,7 @@ def test_resume_reranks_newly_identified_cues(tmp_path, monkeypatch):
     assert cue["temporal_pick"] is True
 
 
-def test_resume_asks_only_about_pending_cues(tmp_path, monkeypatch):
+def test_resume_asks_only_about_pending_cues(runs_dir, monkeypatch):
     """A cue the provider already answered with "no match" isn't asked again."""
 
     def detect(segment):
@@ -522,7 +497,7 @@ def test_resume_asks_only_about_pending_cues(tmp_path, monkeypatch):
         {"segment_id": "s1", "title": None, "pending": False},
         {"segment_id": "s2", "title": None, "pending": True},
     ]
-    saved = _resume(tmp_path, monkeypatch, detect, cues, rate_limited=True)
+    saved = _resume(runs_dir, monkeypatch, detect, cues, rate_limited=True)
 
     assert [(c["title"], c["pending"]) for c in saved["cues"]] == [
         (None, False),
@@ -530,7 +505,7 @@ def test_resume_asks_only_about_pending_cues(tmp_path, monkeypatch):
     ]
 
 
-def test_resume_of_an_older_run_keeps_its_unasked_cues_pending(tmp_path, monkeypatch):
+def test_resume_of_an_older_run_keeps_its_unasked_cues_pending(runs_dir, monkeypatch):
     """Its cues aren't marked, so every unidentified one counts as pending,
     including those a renewed rate limit leaves unasked."""
 
@@ -542,20 +517,19 @@ def test_resume_of_an_older_run_keeps_its_unasked_cues_pending(tmp_path, monkeyp
         {"segment_id": "s2", "title": None},
         {"segment_id": "s3", "title": None},
     ]
-    saved = _resume(tmp_path, monkeypatch, detect, cues, rate_limited=True)
+    saved = _resume(runs_dir, monkeypatch, detect, cues, rate_limited=True)
 
     assert [c["pending"] for c in saved["cues"]] == [False, True, True]
 
 
-def test_resume_gives_up_on_a_cue_whose_audio_is_gone(tmp_path, monkeypatch):
+def test_resume_gives_up_on_a_cue_whose_audio_is_gone(runs_dir, monkeypatch):
     """No resume could identify it, so it no longer counts as pending."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(
         "soundtrackID.detection.build_detection_client",
         lambda api: SimpleNamespace(detect=lambda seg: pytest.fail("nothing to send")),
     )
     monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", lambda **kw: None)
-    run = tmp_path / "r"
+    run = runs_dir / "r"
     run.mkdir()
     cue = {"segment_id": "s1", "pending": True, "audio_file": "segments/s1.wav"}
     results = {"version": RESULTS_VERSION, "cues": [cue]}
@@ -567,7 +541,7 @@ def test_resume_gives_up_on_a_cue_whose_audio_is_gone(tmp_path, monkeypatch):
     assert (saved["pending"], saved["audio_file"]) == (False, None)
 
 
-def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):
+def test_resume_changes_only_the_cues_it_identifies(runs_dir, monkeypatch):
     """The others keep their composers, e.g. one edited by hand."""
 
     def detect(segment):
@@ -588,7 +562,7 @@ def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):
         {"segment_id": "s2", "title": None, "pending": True},
     ]
     saved = _resume(
-        tmp_path, monkeypatch, detect, cues, enrich=enrich, rate_limited=True
+        runs_dir, monkeypatch, detect, cues, enrich=enrich, rate_limited=True
     )
 
     assert [c["enrichment"]["composer"] for c in saved["cues"]] == [
@@ -597,7 +571,7 @@ def test_resume_changes_only_the_cues_it_identifies(tmp_path, monkeypatch):
     ]
 
 
-def test_resume_removes_the_audio_of_answered_cues(tmp_path, monkeypatch):
+def test_resume_removes_the_audio_of_answered_cues(runs_dir, monkeypatch):
     """Only pending cues keep their audio, for the next resume."""
     calls = []
 
@@ -611,10 +585,10 @@ def test_resume_removes_the_audio_of_answered_cues(tmp_path, monkeypatch):
         {"segment_id": "s1", "title": None, "pending": True},
         {"segment_id": "s2", "title": None, "pending": True},
     ]
-    saved = _resume(tmp_path, monkeypatch, detect, cues, rate_limited=True)
+    saved = _resume(runs_dir, monkeypatch, detect, cues, rate_limited=True)
 
     assert [(c["pending"], c["audio_file"]) for c in saved["cues"]] == [
         (False, None),
         (True, "segments/s2.wav"),
     ]
-    assert [p.name for p in (tmp_path / "r" / "segments").iterdir()] == ["s2.wav"]
+    assert [p.name for p in (runs_dir / "r" / "segments").iterdir()] == ["s2.wav"]

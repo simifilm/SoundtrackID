@@ -7,6 +7,7 @@ by the web UI as a scrubbable timeline below the waveform (see static/js/video.j
 from pathlib import Path
 
 import av
+from av.stream import Disposition
 
 THUMB_HEIGHT = 48  # px, per thumbnail
 MAX_COLUMNS = 240  # cap on number of frames in the strip
@@ -30,16 +31,19 @@ def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
         streams = [
             s
             for s in container.streams.video
-            if not s.disposition & av.stream.Disposition.attached_pic
+            if not s.disposition & Disposition.attached_pic
         ]
         if not streams:
             return None
         stream = streams[0]
+        time_base = stream.time_base
+        if time_base is None:  # no times to seek the frames by
+            return None
 
         # Duration in seconds (prefer stream, fall back to container).
         duration = None
-        if stream.duration is not None and stream.time_base is not None:
-            duration = float(stream.duration * stream.time_base)
+        if stream.duration is not None:
+            duration = float(stream.duration * time_base)
         elif container.duration is not None:
             duration = float(container.duration / av.time_base)
         if not duration or duration <= 0:
@@ -55,7 +59,6 @@ def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
         from PIL import Image
 
         strip = Image.new("RGB", (thumb_w * n, THUMB_HEIGHT), (0, 0, 0))
-        time_base = stream.time_base
 
         for i in range(n):
             t = duration * (i + 0.5) / n  # centre of each column's slice

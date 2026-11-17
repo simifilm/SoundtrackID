@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from soundtrackID.defaults import DEFAULT_API
-from soundtrackID.models import MATCH_KEYS, match_fields
+from soundtrackID.results import MATCH_KEYS, match_fields
 from soundtrackID.runs import Run
 
 log = logging.getLogger(__name__)

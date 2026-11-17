@@ -27,10 +27,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 
-    from soundtrackID.app import LOG_PATH
+    from soundtrackID.web.data import log_path
 
-    _configure_logging(LOG_PATH)
-    uvicorn.run("soundtrackID.app:app", host=args.host, port=args.port, reload=False)
+    _configure_logging(log_path())
+    uvicorn.run(
+        "soundtrackID.web.app:app", host=args.host, port=args.port, reload=False
+    )
 
 
 def _configure_logging(path: Path) -> None:

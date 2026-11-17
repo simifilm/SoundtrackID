@@ -1,12 +1,11 @@
 """Music classification."""
 
-import sys
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
+from soundtrackID import paths
 from soundtrackID.models import AudioChunk
 
 
@@ -100,7 +99,7 @@ class OnnxClassifier(BaseClassifier):
 
     def classify(self, chunk: AudioChunk) -> tuple[float, NDArray[np.float32]]:
         features = self._extract_features(chunk.data, chunk.sample_rate)
-        logits = self.session.run(None, {"input_values": features})[0]
+        logits = np.asarray(self.session.run(None, {"input_values": features})[0])
         exp = np.exp(logits - logits.max(axis=-1, keepdims=True))
         probs = exp / exp.sum(axis=-1, keepdims=True)
         return float(probs[0, self.music_indices].sum()), probs[0]
@@ -119,9 +118,9 @@ class HuggingFaceClassifier(BaseClassifier):
         music_labels: list[str] | None = None,
         device: str = "cpu",
     ):
-        try:
-            import torch
-            from transformers import (
+        try:  # the 'hf' extras, which the type check doesn't install
+            import torch  # pyright: ignore[reportMissingImports]
+            from transformers import (  # pyright: ignore[reportMissingImports]
                 AutoFeatureExtractor,
                 AutoModelForAudioClassification,
             )
@@ -185,17 +184,10 @@ class HuggingFaceClassifier(BaseClassifier):
         return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr)
 
 
-# The ONNX export of the AST model, from source (assets/ast_model, Git LFS).
-_MODEL_DIR = Path(__file__).parents[2] / "assets" / "ast_model"
-
-
 def load_classifier(hf: bool = False) -> BaseClassifier:
     """The music classifier the app and the CLI analyze with: the ONNX export,
     or the HuggingFace original when `hf` asks for it or the export is missing.
     The installed app bundles only the export."""
-    if getattr(sys, "frozen", False):
-        model_dir = Path(sys._MEIPASS) / "ast_model"  # pyright: ignore[reportAttributeAccessIssue]
-        return OnnxClassifier(model_dir=str(model_dir), music_labels=["Music"])
-    if hf or not _MODEL_DIR.exists():
+    if not paths.FROZEN and (hf or not paths.MODEL_DIR.exists()):
         return HuggingFaceClassifier(music_labels=["Music"])
-    return OnnxClassifier(model_dir=str(_MODEL_DIR), music_labels=["Music"])
+    return OnnxClassifier(model_dir=str(paths.MODEL_DIR), music_labels=["Music"])

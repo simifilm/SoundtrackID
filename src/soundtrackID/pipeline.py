@@ -22,14 +22,8 @@ from soundtrackID.detection import (
 )
 from soundtrackID.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackID.loaders import VideoLoader
-from soundtrackID.models import (
-    ClassificationResult,
-    Cue,
-    DetectionResult,
-    MusicSegment,
-    ResultsOutput,
-    match_fields,
-)
+from soundtrackID.models import ClassificationResult, DetectionResult, MusicSegment
+from soundtrackID.results import Cue, ResultsOutput, match_fields
 from soundtrackID.slots import merge_spans, stream_slots, top_classes
 
 log = logging.getLogger(__name__)
@@ -136,7 +130,9 @@ def build_cues(
                 if alb:
                     album_counts[alb] = album_counts.get(alb, 0) + 1
             cue["album"] = (
-                max(album_counts, key=album_counts.get) if album_counts else None
+                max(album_counts, key=lambda a: album_counts[a])
+                if album_counts
+                else None
             )
         cues.append(cue)
 

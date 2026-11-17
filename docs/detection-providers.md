@@ -7,8 +7,8 @@ empirical findings from testing them against real film audio. The short version:
 > **For identifying music *inside films*, ACRCloud has the best recall, Shazam is
 > a solid baseline, and AcoustID is unsuitable.**
 
-All three implement `BaseMusicDetectionClient.detect()` in
-[`detection.py`](../src/soundtrackID/detection.py) and are selectable via the
+All three implement `BaseMusicDetectionClient.detect()`, each in its own module of
+[`detection/`](../src/soundtrackID/detection/), and are selectable via the
 **Detection API** dropdown in the UI, the `--api` CLI flag, or
 `build_detection_client(...)`.
 
@@ -63,7 +63,7 @@ cues is lower than ACRCloud, and it depends on an unofficial endpoint.
 
 **Shazam hears only about 12 s of each clip.** shazamio fingerprints a stretch
 from the middle of a longer clip: 12 s in the app (`segment_duration_seconds`
-in `detection.py`; shazamio's own default is 10 s). Longer doesn't help: Shazam
+in `detection/shazam.py`; shazamio's own default is 10 s). Longer doesn't help: Shazam
 matches nothing from 15 s on
 ([ShazamIO issue #150](https://github.com/shazamio/ShazamIO/issues/150)). The
 native ShazamKit helper takes the first 10 s instead, since ShazamKit rejects

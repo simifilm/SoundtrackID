@@ -1,6 +1,6 @@
 """Tests for the CSV export.
 
-Covers models.results_to_csv, which the CLI's --csv also writes with, and
+Covers exports.results_to_csv, which the CLI's --csv also writes with, and
 GET /output/{video_name}/csv (the UI's download).
 """
 
@@ -10,10 +10,10 @@ import json
 
 from fastapi.testclient import TestClient
 
-from soundtrackID import app as app_module
-from soundtrackID.models import results_to_csv
+from soundtrackID.exports import results_to_csv
+from soundtrackID.web.app import app
 
-client = TestClient(app_module.app)
+client = TestClient(app)
 
 CUES = [
     {
@@ -91,10 +91,9 @@ def test_csv_has_a_column_for_every_field_of_the_json():
     assert (unidentified["title"], unidentified["enrichment.composer"]) == ("", "")
 
 
-def test_download_holds_the_saved_results(tmp_path, monkeypatch):
+def test_download_holds_the_saved_results(runs_dir):
     """Also after edits: the CSV holds what the JSON holds now."""
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
-    run_dir = tmp_path / "myrun"
+    run_dir = runs_dir / "myrun"
     run_dir.mkdir()
     (run_dir / "results.json").write_text(json.dumps({"cues": CUES}))
     client.post("/results/myrun", json={"cues": [{**CUES[0], "title": "Edited"}]})
@@ -109,6 +108,5 @@ def test_download_holds_the_saved_results(tmp_path, monkeypatch):
     assert [row["title"] for row in _rows(r.text)] == ["Edited"]
 
 
-def test_download_of_a_missing_run_is_404(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "_OUTPUT_DIR", tmp_path)
+def test_download_of_a_missing_run_is_404(runs_dir):
     assert client.get("/output/nope/csv").status_code == 404

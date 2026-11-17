@@ -16,11 +16,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from scipy.io import wavfile
-
 from soundtrackID.derived import refresh
-from soundtrackID.models import TIMELINE_KEYS, MusicSegment, load_results, save_json
+from soundtrackID.models import MusicSegment
+from soundtrackID.results import TIMELINE_KEYS, load_results, save_json
 
 # One lock per run folder, so the saves of a run in this process (an edit, the
 # end of a resume) never read what the other is about to overwrite.
@@ -135,19 +133,7 @@ class Run:
         path = self._audio_path(audio_file)
         if path is None or not path.is_file():
             return None
-        sample_rate, audio = wavfile.read(path)
-        if audio.dtype == np.int16:
-            audio = audio.astype(np.float32) / 32767.0
-        elif audio.dtype == np.int32:
-            audio = audio.astype(np.float32) / 2147483647.0
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-        return MusicSegment(
-            audio=audio,
-            start_time=0.0,
-            end_time=len(audio) / sample_rate,
-            sample_rate=sample_rate,
-        )
+        return MusicSegment.read_wav(path)
 
     def remove_audio(self, audio_file: str) -> None:
         path = self._audio_path(audio_file)

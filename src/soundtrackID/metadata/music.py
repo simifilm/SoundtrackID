@@ -155,7 +155,8 @@ class MusicLookup:
             score = _score_work_authors(authors, artist)
             if score > best_score:
                 best, best_authors, best_wd, best_score = work, authors, used_wd, score
-        if not best or best_score <= 0:  # require at least one author-name match
+        # Require at least one author-name match.
+        if not best or not best_authors or best_score <= 0:
             return None
         return self._build_from_authors(best, best_authors, best_wd, match="work")
 

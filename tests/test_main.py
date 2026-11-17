@@ -5,8 +5,8 @@ import logging
 import uvicorn
 
 from soundtrackID import main as main_module
-from soundtrackID.app import LOG_PATH
 from soundtrackID.main import _configure_logging, main
+from soundtrackID.web.data import log_path
 
 
 def test_main(monkeypatch) -> None:
@@ -24,9 +24,12 @@ def test_main(monkeypatch) -> None:
 
     main()
 
-    assert logs == [LOG_PATH]
+    assert logs == [log_path()]
     assert calls == [
-        ("soundtrackID.app:app", {"host": "127.0.0.1", "port": 8000, "reload": False})
+        (
+            "soundtrackID.web.app:app",
+            {"host": "127.0.0.1", "port": 8000, "reload": False},
+        )
     ]
 
 

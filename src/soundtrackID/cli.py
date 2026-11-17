@@ -1,7 +1,7 @@
 """Command line: analyze a video, or resume a run a provider stopped.
 
-    python -m soundtrackID.cli analyze path/to/film.mp4
-    python -m soundtrackID.cli resume output/cache/<run>
+    soundtrackid analyze path/to/film.mp4
+    soundtrackid resume output/cache/<run>
 
 Runs the same analysis as the app (soundtrackID.analysis): pipeline, date
 re-ranking, composer lookup, one results.json per run.
@@ -23,7 +23,7 @@ from soundtrackID.defaults import (
     SOURCE_RUNS_DIR,
 )
 from soundtrackID.envfiles import load_env_files
-from soundtrackID.models import results_to_csv
+from soundtrackID.exports import results_to_csv
 from soundtrackID.pipeline import build_pipeline
 
 
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.getLogger("soundtrackID").setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser(
-        prog="python -m soundtrackID.cli",
+        prog="soundtrackid",
         description="Find and identify the music in a film.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -196,7 +196,7 @@ def _summarize(results: dict[str, Any], run_dir: Path) -> None:
         print(
             f"{pending} cue(s) still pending: a provider hit its limit, couldn't "
             "be reached or failed. "
-            f'Continue later with: python -m soundtrackID.cli resume "{run_dir}"'
+            f'Continue later with: soundtrackid resume "{run_dir}"'
         )
 
 

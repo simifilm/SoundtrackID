@@ -84,7 +84,7 @@ if os.path.exists(".env"):
 # macOS build so it is never missing or stale. It is NOT passed through
 # Analysis (PyInstaller would treat the bundle's contents as loose files);
 # instead it is copied verbatim into the finished onedir after COLLECT, below.
-# sign-fiwi-server.sh signs it; detection._find_shazamkit_helper() finds it.
+# sign-fiwi-server.sh signs it; detection.shazam._find_shazamkit_helper() finds it.
 import shutil
 import subprocess
 import sys
