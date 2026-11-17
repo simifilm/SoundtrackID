@@ -3,6 +3,7 @@
 let filmstripSprite   = null;   // loaded sprite Image
 let filmstripMeta     = null;   // {count, thumb_width, thumb_height}
 let hasVideo          = false;
+let videoFps          = null;   // frames per second, for stepping frame by frame
 let activeSegmentEnd  = null;   // when playing a cue, pause the video at this time
 
 // Collapse / expand the video preview (chevron rotation handled in CSS).
@@ -17,6 +18,7 @@ function setupVideo(results, videoName) {
   const v = results && results.video;
   if (v && videoName) {
     hasVideo = true;
+    videoFps = v.fps || 25;   // runs analysed before the rate was stored
     videoEl.src = `/output/${encodeURIComponent(videoName)}/video`;
     videoWrap.style.display = 'block';
     setVideoCollapsed(false);
@@ -152,14 +154,24 @@ filmstripCanvas.addEventListener('click', e => {
   seekVideo(t);
 });
 
-// Space plays / pauses the video from anywhere on the page, except while typing
-// in a field or when the player has focus (its own controls handle Space then).
+// Space plays / pauses the video from anywhere on the page, and ← / → step one
+// frame back / forward (pausing it), except while typing in a field or when the
+// player has focus (its own controls handle these keys then).
 document.addEventListener('keydown', e => {
-  if (e.code !== 'Space' || !hasVideo) return;
+  if (!hasVideo || !['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) return;
   const el = e.target;
   if (el === videoEl || el.isContentEditable || el.closest('input, textarea, select')) return;
-  e.preventDefault();   // no page scroll, no click on a focused button
-  if (e.repeat) return;
-  if (videoEl.paused) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
-  else videoEl.pause();
+  if (e.code === 'Space') {
+    e.preventDefault();   // no page scroll, no click on a focused button
+    if (e.repeat) return;
+    if (videoEl.paused) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
+    else videoEl.pause();
+  } else {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   // e.g. Alt+← is browser Back
+    e.preventDefault();   // no page scroll
+    videoEl.pause();
+    // Aim for the middle of the frame, so float rounding can't land on its neighbour.
+    const frame = Math.floor(videoEl.currentTime * videoFps) + (e.code === 'ArrowRight' ? 1 : -1);
+    seekVideo((frame + 0.5) / videoFps, false);
+  }
 });

@@ -16,6 +16,7 @@ from soundtrackid.defaults import (
     MUSIC_THRESHOLD,
 )
 from soundtrackid.web import analyze as analyze_routes
+from tests.media import FPS
 from tests.ui.helpers import saved
 
 pytestmark = pytest.mark.browser
@@ -187,6 +188,13 @@ def test_the_finished_run_is_in_recent_runs(page, fakes, video, runs):
     [run] = runs.iterdir()
     page.locator("#history-panel > summary").click()
     expect(page.locator(".history-item")).to_have_text([re.compile(run.name)])
+
+
+def test_the_run_keeps_the_videos_frame_rate(page, fakes, video, runs):
+    analyze(page, video)
+
+    [run] = runs.iterdir()
+    assert saved(run)["video"]["fps"] == FPS  # the arrow keys step by its frames
 
 
 def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):

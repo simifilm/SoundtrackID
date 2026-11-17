@@ -221,9 +221,13 @@ def _keep_video(video: Path, run: Run, results: dict[str, Any]) -> None:
     the results are saved without it."""
     try:
         dest = run.keep_video(video)
-        from soundtrackid.thumbnails import extract_filmstrip
+        from soundtrackid.thumbnails import extract_filmstrip, frame_rate
 
         filmstrip = extract_filmstrip(dest, run.filmstrip_path)
-        results["video"] = {"file": dest.name, "filmstrip": filmstrip}
+        results["video"] = {
+            "file": dest.name,
+            "filmstrip": filmstrip,
+            "fps": frame_rate(dest),
+        }
     except Exception:
         log.exception("Keeping the video and its filmstrip failed")

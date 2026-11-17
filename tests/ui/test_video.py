@@ -11,6 +11,8 @@ from tests.ui.helpers import TIMELINE, cue, make_run, open_run
 pytestmark = pytest.mark.browser
 
 PAUSED = "document.querySelector('#video-preview').paused"
+CURRENT_TIME = "document.querySelector('#video-preview').currentTime"
+LOADED = "document.querySelector('#video-preview').readyState >= 1"
 # Over an hour, and long enough for the zoom bar (it shows above 30 s).
 LONG_TIMELINE = {**TIMELINE, "waveform": {"samples": [0.5] * 150, "duration": 4000.0}}
 
@@ -18,7 +20,9 @@ LONG_TIMELINE = {**TIMELINE, "waveform": {"samples": [0.5] * 150, "duration": 40
 @pytest.fixture
 def run_with_video(page, runs, video):
     run = make_run(
-        runs, [cue(1, "Song")], video={"file": "source.mp4", "filmstrip": None}
+        runs,
+        [cue(1, "Song")],
+        video={"file": "source.mp4", "filmstrip": None, "fps": 10},
     )
     shutil.copy(video, run / "source.mp4")
     open_run(page)
@@ -42,6 +46,40 @@ def test_space_in_a_text_field_types_a_space(page, run_with_video):
 
     expect(field).to_have_value("Song ")
     assert page.evaluate(PAUSED)
+
+
+def test_arrow_keys_step_one_frame(page, run_with_video):
+    page.wait_for_function(LOADED)
+
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("ArrowRight")
+    # Into the middle of frame 2 at 10 fps, so rounding can't land on a neighbour.
+    assert page.evaluate(CURRENT_TIME) == pytest.approx(0.25)
+
+    page.keyboard.press("ArrowLeft")
+    assert page.evaluate(CURRENT_TIME) == pytest.approx(0.15)
+
+
+def test_an_arrow_key_pauses_the_video(page, run_with_video):
+    page.keyboard.press("Space")
+    page.wait_for_function(f"!{PAUSED}")
+
+    page.keyboard.press("ArrowRight")
+
+    assert page.evaluate(PAUSED)  # right away, before the 2 s video ends by itself
+
+
+def test_arrow_keys_step_at_25_fps_for_runs_without_a_frame_rate(page, runs, video):
+    run = make_run(
+        runs, [cue(1, "Song")], video={"file": "source.mp4", "filmstrip": None}
+    )
+    shutil.copy(video, run / "source.mp4")
+    open_run(page)
+    page.wait_for_function(LOADED)
+
+    page.keyboard.press("ArrowRight")
+
+    assert page.evaluate(CURRENT_TIME) == pytest.approx(0.06)  # middle of frame 1
 
 
 def test_the_zoom_bar_shows_the_video_time_and_length(page, runs, video):
