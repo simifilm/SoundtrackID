@@ -3,8 +3,8 @@ providers, which the pipeline, analysis, CLI and app tests share."""
 
 import numpy as np
 
-from soundtrackID.detection import ProviderAuthError, RateLimitError
-from soundtrackID.models import DetectionResult
+from soundtrackid.detection import ProviderAuthError, RateLimitError
+from soundtrackid.models import DetectionResult
 
 SR = 1000
 LABELS = ["Speech", "Music", "Applause", "Piano"]
@@ -77,9 +77,9 @@ class RejectingClient:
 def fake_components(monkeypatch, client=None, classifier=None):
     """Make build_pipeline load audio with FakeLoader and identify with `client`
     (default: no match); returns a stand-in for the app's get_classifier."""
-    monkeypatch.setattr("soundtrackID.pipeline.VideoLoader", FakeLoader)
+    monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", FakeLoader)
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
+        "soundtrackid.detection.build_detection_client",
         lambda api: client or NoMatchClient(),
     )
 

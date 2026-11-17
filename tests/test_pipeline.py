@@ -10,24 +10,24 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from soundtrackID.aggregator import ChunkAggregator
-from soundtrackID.chunker import AudioChunker
-from soundtrackID.defaults import (
+from soundtrackid.aggregator import ChunkAggregator
+from soundtrackid.chunker import AudioChunker
+from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
     DEFAULT_API,
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from soundtrackID.detection import ProviderAuthError
-from soundtrackID.isolators import DummyIsolator
-from soundtrackID.models import DetectionResult, MusicSegment
-from soundtrackID.pipeline import (
+from soundtrackid.detection import ProviderAuthError
+from soundtrackid.isolators import DummyIsolator
+from soundtrackid.models import DetectionResult, MusicSegment
+from soundtrackid.pipeline import (
     Pipeline,
     _group_detections,
     waveform_peaks,
 )
-from soundtrackID.results import MATCH_KEYS
+from soundtrackid.results import MATCH_KEYS
 from tests.fakes import (
     LABELS,
     SR,
@@ -355,8 +355,8 @@ def _analyze(tmp_path, monkeypatch, video=b"video", **form):
     """POST /analyze for film.mp4 with the fake components; returns the SSE events."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID.web import analyze, data
-    from soundtrackID.web.app import app
+    from soundtrackid.web import analyze, data
+    from soundtrackid.web.app import app
 
     monkeypatch.setattr(data, "root", tmp_path)
     monkeypatch.setattr(analyze, "_staging", {})
@@ -434,7 +434,7 @@ def test_each_analysis_gets_its_own_run(tmp_path, monkeypatch):
     other settings: the run folder carries the time of the analysis."""
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
     monkeypatch.setattr(
-        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+        "soundtrackid.analysis.datetime", SimpleNamespace(now=lambda: next(times))
     )
 
     _analyze(tmp_path, monkeypatch, video=b"first film")
@@ -456,11 +456,11 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
     that run's video on disk (a hard link, not a second copy)."""
     from fastapi.testclient import TestClient
 
-    from soundtrackID.web.app import app
+    from soundtrackid.web.app import app
 
     times = iter([datetime(2026, 11, 10, 15, 23, 1), datetime(2026, 11, 10, 15, 40)])
     monkeypatch.setattr(
-        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+        "soundtrackid.analysis.datetime", SimpleNamespace(now=lambda: next(times))
     )
     _analyze(tmp_path, monkeypatch, video=b"film")
     client = TestClient(app)
@@ -544,11 +544,11 @@ def test_bridging_counts_non_music_between_the_tracks():
 
 def test_build_pipeline_passes_bridge_gap_and_hop(monkeypatch):
     """The bridge gap and hop from the UI reach the writer and the chunker."""
-    from soundtrackID.web import analyze
+    from soundtrackid.web import analyze
 
     monkeypatch.setattr(analyze, "get_classifier", FakeClassifier)
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client", lambda api: NoMatchClient()
+        "soundtrackid.detection.build_detection_client", lambda api: NoMatchClient()
     )
 
     pipeline = analyze._build_pipeline(

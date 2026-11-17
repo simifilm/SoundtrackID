@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from soundtrackID.metadata import USER_AGENT, music
-from soundtrackID.metadata.music import MusicLookup
+from soundtrackid.metadata import USER_AGENT, music
+from soundtrackid.metadata.music import MusicLookup
 from tests.metadata.mock_http import mock_client
 
 FIXTURES = Path(__file__).parent / "fixtures"

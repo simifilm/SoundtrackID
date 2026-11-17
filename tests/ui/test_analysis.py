@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 from playwright.sync_api import expect
 
-from soundtrackID.defaults import (
+from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
     DEFAULT_API,
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from soundtrackID.web import analyze as analyze_routes
+from soundtrackid.web import analyze as analyze_routes
 from tests.ui.helpers import saved
 
 pytestmark = pytest.mark.browser
@@ -242,7 +242,7 @@ def test_rerun_analyzes_the_stored_video_again_as_a_new_run(
 ):
     times = iter([datetime(2026, 11, 11, 10, 0, 0), datetime(2026, 11, 11, 10, 5, 0)])
     monkeypatch.setattr(
-        "soundtrackID.analysis.datetime", SimpleNamespace(now=lambda: next(times))
+        "soundtrackid.analysis.datetime", SimpleNamespace(now=lambda: next(times))
     )
     analyze(page, video)
 

@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from soundtrackID.aggregator import ChunkAggregator
-from soundtrackID.models import AudioChunk, ClassificationResult
+from soundtrackid.aggregator import ChunkAggregator
+from soundtrackid.models import AudioChunk, ClassificationResult
 
 
 def test_aggregate_single_music_chunk():

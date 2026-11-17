@@ -95,17 +95,17 @@ if sys.platform == "darwin":
 _shazamkit_extra = []
 
 a = Analysis(
-    ["src/soundtrackID/__main__.py"],
+    ["src/soundtrackid/__main__.py"],
     pathex=["."],
     binaries=shazamio_bins + aiohttp_bins + mutagen_bins + acrcloud_bins + _acr_extr_bins + _shazamkit_extra,
     datas=[
-        ("src/soundtrackID/static", "static"),
+        ("src/soundtrackid/web/static", "static"),
         ("assets/ast_model", "ast_model"),
         ("LICENSE", "."),
     ] + shazamio_datas + aiohttp_datas + mutagen_datas + acrcloud_datas + _env_extra,
     hiddenimports=[
-        # soundtrackID's own modules, all of them, so none can be forgotten here
-        *collect_submodules("soundtrackID"),
+        # soundtrackid's own modules, all of them, so none can be forgotten here
+        *collect_submodules("soundtrackid"),
         # metadata enrichment
         "httpx",
         "mutagen",

@@ -1,7 +1,7 @@
 """Enrichment dedupes per unique track identity (one API lookup per piece)."""
 
-from soundtrackID.metadata import enricher
-from soundtrackID.metadata.music import ComposerInfo
+from soundtrackid.metadata import enricher
+from soundtrackid.metadata.music import ComposerInfo
 
 
 class _CountingLookup:

@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from soundtrackID import paths
+from soundtrackid import paths
 
 
 def test_windows_keeps_the_data_in_local_app_data(tmp_path, monkeypatch):

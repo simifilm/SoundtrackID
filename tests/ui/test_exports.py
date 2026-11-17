@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
-from soundtrackID.derived import refresh
+from soundtrackid.derived import refresh
 from tests.ui.helpers import cue, make_run, open_run, saved
 
 pytestmark = pytest.mark.browser

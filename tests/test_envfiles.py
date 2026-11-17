@@ -2,7 +2,7 @@
 
 import os
 
-from soundtrackID.envfiles import load_env_files
+from soundtrackid.envfiles import load_env_files
 
 KEYS = ("FIWI_TMDB_KEY", "FIWI_TMDB_API_TOKEN", "AUDD_API_TOKEN")
 

@@ -1,0 +1,272 @@
+"""Tests for the multi-provider ensemble (majority voting)."""
+
+import numpy as np
+import pytest
+
+from soundtrackid.detection import (
+    BaseMusicDetectionClient,
+    EnsembleDetectionClient,
+    ProviderAuthError,
+    RateLimitError,
+    build_detection_client,
+)
+from soundtrackid.detection.ensemble import _consensus_from_votes, _normalize_title
+from soundtrackid.models import DetectionResult, MusicSegment
+
+
+def _vote(provider, title, isrc=None, matched=True, meta=None):
+    m = dict(meta or {})
+    if isrc:
+        m["isrc"] = isrc
+    return {
+        "provider": provider,
+        "title": title,
+        "artist": "Hans Zimmer",
+        "isrc": isrc,
+        "matched": matched,
+        "metadata": m,
+    }
+
+
+# ── normalization ─────────────────────────────────────────────────────────
+
+
+def test_normalize_strips_parenthetical_and_remaster():
+    assert _normalize_title("Cornfield Chase") == "cornfield chase"
+    assert (
+        _normalize_title('Cornfield Chase (From "Interstellar")') == "cornfield chase"
+    )
+    assert _normalize_title("No Time To Die - Remastered 2021") == "no time to die"
+
+
+# ── pure voting core ──────────────────────────────────────────────────────
+
+
+def test_unanimous_three_of_three():
+    title, _, _, ag = _consensus_from_votes(
+        [
+            _vote("acrcloud", "Cornfield Chase"),
+            _vote("shazam", 'Cornfield Chase (From "Interstellar")'),
+            _vote("audd", "Cornfield Chase"),
+        ],
+        total=3,
+    )
+    assert title == "Cornfield Chase"
+    assert ag == {"count": 3, "total": 3, "providers": ["acrcloud", "shazam", "audd"]}
+
+
+def test_majority_two_of_three():
+    title, _, _, ag = _consensus_from_votes(
+        [
+            _vote("acrcloud", "Cornfield Chase"),
+            _vote("shazam", "Cornfield Chase"),
+            _vote("audd", "Other Song"),
+        ],
+        total=3,
+    )
+    assert title == "Cornfield Chase"
+    assert ag["count"] == 2
+
+
+def test_agreement_by_shared_isrc_across_different_titles():
+    _, _, _, ag = _consensus_from_votes(
+        [
+            _vote("acrcloud", "Cornfield Chase", isrc="USABC1234567"),
+            _vote("audd", "Cornfield Chase - Remastered", isrc="USABC1234567"),
+        ],
+        total=3,
+    )
+    assert ag["count"] == 2
+    assert ag["providers"] == ["acrcloud", "audd"]
+
+
+def test_metadata_merge_fills_gaps_by_priority():
+    _, _, merged, _ = _consensus_from_votes(
+        [
+            _vote("acrcloud", "Cornfield Chase", meta={"spotify_url": "s"}),
+            _vote("audd", "Cornfield Chase", isrc="USX", meta={"isrc": "USX"}),
+        ],
+        total=3,
+    )
+    assert merged["isrc"] == "USX"  # only audd had it
+    assert merged["spotify_url"] == "s"  # only acrcloud had it
+
+
+def test_single_provider_one_of_three():
+    title, _, _, ag = _consensus_from_votes(
+        [
+            _vote("acrcloud", None, matched=False),
+            _vote("shazam", None, matched=False),
+            _vote("audd", "Abyss"),
+        ],
+        total=3,
+    )
+    assert title == "Abyss"
+    assert ag == {"count": 1, "total": 3, "providers": ["audd"]}
+
+
+def test_no_match_anywhere():
+    title, _, _, ag = _consensus_from_votes(
+        [_vote("acrcloud", None, matched=False)], total=3
+    )
+    assert title is None
+    assert ag == {"count": 0, "total": 3, "providers": []}
+
+
+def test_all_disagree_falls_back_to_priority():
+    title, _, _, ag = _consensus_from_votes(
+        [_vote("acrcloud", "A"), _vote("shazam", "B"), _vote("audd", "C")],
+        total=3,
+    )
+    assert title == "A"  # highest-priority provider wins the 1-1-1 tie
+    assert ag["count"] == 1
+
+
+# ── EnsembleDetectionClient.detect() ──────────────────────────────────────
+
+
+class _FakeClient(BaseMusicDetectionClient):
+    def __init__(self, title, *, isrc=None, raises=False, rate_limited=False):
+        self._title = title
+        self._isrc = isrc
+        self._raises = raises
+        self._rate_limited = rate_limited
+
+    def detect(self, segment):
+        if self._rate_limited:
+            raise RateLimitError("limit reached")
+        if self._raises:
+            raise RuntimeError("provider quota exceeded")
+        meta = {"isrc": self._isrc} if self._isrc else {}
+        return DetectionResult(
+            segment=segment,
+            title=self._title,
+            artist="Hans Zimmer" if self._title else None,
+            metadata=meta,
+        )
+
+
+def _segment():
+    return MusicSegment(
+        audio=np.zeros(1000, dtype=np.float32),
+        start_time=0.0,
+        end_time=1.0,
+        sample_rate=1000,
+    )
+
+
+def test_ensemble_detect_builds_consensus_and_votes():
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient("Cornfield Chase")),
+            ("shazam", _FakeClient(None)),
+            ("audd", _FakeClient("Cornfield Chase")),
+        ]
+    )
+    res = ens.detect(_segment())
+    assert res.provider == "ensemble"
+    assert res.title == "Cornfield Chase"
+    assert res.metadata["agreement"] == {
+        "count": 2,
+        "total": 3,
+        "providers": ["acrcloud", "audd"],
+    }
+    votes = {v["provider"]: v["matched"] for v in res.metadata["votes"]}
+    assert votes == {"acrcloud": True, "shazam": False, "audd": True}
+    # No score: only ACRCloud gives one, and it is in its candidates.
+    assert not any("confidence" in v for v in res.metadata["votes"])
+
+
+def test_ensemble_survives_a_raising_provider():
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient("Abyss")),
+            ("audd", _FakeClient(None, raises=True)),
+        ]
+    )
+    res = ens.detect(_segment())
+    assert res.title == "Abyss"
+    audd_vote = next(v for v in res.metadata["votes"] if v["provider"] == "audd")
+    assert audd_vote["matched"] is False
+    assert "quota" in (audd_vote["error"] or "")
+
+
+@pytest.mark.parametrize(
+    "other",
+    [_FakeClient(None, rate_limited=True), _FakeClient(None, raises=True)],
+    ids=["other-rate-limited", "other-failed"],
+)
+def test_ensemble_is_rate_limited_when_no_provider_answered(other):
+    # Nobody listened to the window, so it must stay pending for a resume
+    # instead of reading as "no match".
+    ens = EnsembleDetectionClient(
+        [("acrcloud", _FakeClient(None, rate_limited=True)), ("audd", other)]
+    )
+    with pytest.raises(RateLimitError):
+        ens.detect(_segment())
+
+
+def test_ensemble_fails_when_every_provider_failed():
+    # Nobody listened to the window either, so it stays pending like a window a
+    # single provider failed on; not a rate limit, so the next window is asked.
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient(None, raises=True)),
+            ("audd", _FakeClient(None, raises=True)),
+        ]
+    )
+    with pytest.raises(RuntimeError) as exc:
+        ens.detect(_segment())
+    assert not isinstance(exc.value, RateLimitError)
+
+
+def test_ensemble_fails_when_a_provider_rejects_its_keys():
+    # Voting on without it would quietly drop a provider the user chose.
+    class Rejecting(BaseMusicDetectionClient):
+        def detect(self, segment):
+            raise ProviderAuthError("AudD rejected the API token (error 900)")
+
+    ens = EnsembleDetectionClient(
+        [("acrcloud", _FakeClient("Abyss")), ("audd", Rejecting())]
+    )
+    with pytest.raises(ProviderAuthError, match="AudD rejected"):
+        ens.detect(_segment())
+
+
+@pytest.mark.parametrize("answer", ["Abyss", None], ids=["match", "no-match"])
+def test_ensemble_carries_on_when_another_provider_answers(answer):
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", _FakeClient(None, rate_limited=True)),
+            ("audd", _FakeClient(answer)),
+        ]
+    )
+    res = ens.detect(_segment())
+    assert res.title == answer
+    acr_vote = next(v for v in res.metadata["votes"] if v["provider"] == "acrcloud")
+    assert acr_vote["matched"] is False
+    assert "limit reached" in acr_vote["error"]
+
+
+# ── factory ───────────────────────────────────────────────────────────────
+
+
+def test_build_single_returns_plain_client(monkeypatch):
+    # acrcloud construction needs creds; stub it out.
+    import soundtrackid.detection as det
+
+    monkeypatch.setattr(det, "_build_single_client", lambda name: _FakeClient(name))
+    client = build_detection_client("audd")
+    assert isinstance(client, _FakeClient)
+
+
+def test_build_list_returns_ensemble_in_priority_order(monkeypatch):
+    import soundtrackid.detection as det
+
+    monkeypatch.setattr(det, "_build_single_client", lambda name: _FakeClient(name))
+    client = build_detection_client("audd,acrcloud")
+    assert isinstance(client, EnsembleDetectionClient)
+    assert [n for n, _ in client._clients] == [
+        "acrcloud",
+        "audd",
+    ]  # reordered by priority

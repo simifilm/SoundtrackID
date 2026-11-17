@@ -2,7 +2,7 @@
 
 import pytest
 
-from soundtrackID.web import data
+from soundtrackid.web import data
 
 
 @pytest.fixture

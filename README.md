@@ -136,10 +136,15 @@ cd SoundtrackID
 git lfs pull                          # downloads the ONNX model (~331 MB)
 ```
 
+SoundtrackID runs from this checkout (`uv run` installs it in editable mode) or as
+the desktop app, not from a pip-installed wheel: the wheel holds the Python package
+only, while the model (`assets/`) and the ShazamKit helper (`shazamkit/`) stay in
+the checkout, where `paths.py` finds them.
+
 Start the server:
 
 ```bash
-uv run --extra app python -m soundtrackID
+uv run --extra app python -m soundtrackid
 ```
 
 Then open [http://localhost:8000](http://localhost:8000).
@@ -148,7 +153,7 @@ Then open [http://localhost:8000](http://localhost:8000).
 The default classifier uses ONNX Runtime (fast, no GPU needed). To use the original HuggingFace/PyTorch pipeline instead:
 
 ```bash
-FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackID
+FIWI_HF=1 uv run --extra hf --extra shazam --extra web python -m soundtrackid
 ```
 
 ### CLI
@@ -161,8 +166,8 @@ uv run --extra app soundtrackid analyze path/to/video.mp4
 ```
 
 ```
---output-dir DIR      Folder of the runs (default: output/cache, the app's, so
-                      its history lists them)
+--output-dir DIR      Folder of the runs (default: output/cache in the project
+                      folder, the app's, so its history lists them)
 --api API             Detection provider(s): acrcloud, shazam, audd — or a
                       comma-separated list for ensemble voting (default: shazam)
 --classifier {onnx,hf}
@@ -201,8 +206,8 @@ reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 ## Output
 
 Each analysis is a run of its own, in `output/cache/<video_name>_<date>_<time>/`
-from source, whether the app or the CLI made it (the installed app keeps its runs
-in its data folder):
+in the project folder from source, whether the app or the CLI made it and wherever
+it was started (the installed app keeps its runs in its data folder):
 
 ```
 output/cache/
@@ -231,16 +236,21 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 
 ```
 .
-├── src/soundtrackID/           Python package: pipeline, web server and UI
-│   ├── __main__.py             Entry point for `python -m soundtrackID`
-│   ├── main.py                 Starts the web server
-│   ├── web/                    The web server (FastAPI)
+├── src/soundtrackid/           Python package: pipeline, web server and UI
+│   ├── __main__.py             Entry point for `python -m soundtrackid`
+│   ├── server.py               Starts the web server
+│   ├── web/                    The web server (FastAPI) and the page it serves
 │   │   ├── app.py              The app: startup, the page, the routes below
 │   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume
 │   │   ├── history.py          Saved runs: list, delete, results and edits, video, exports
 │   │   ├── keys.py             The API keys entered in the app
 │   │   ├── stream.py           A run's progress as server-sent events, and cancelling it
-│   │   └── data.py             The server's data folder: runs, saved keys, staged uploads, log
+│   │   ├── data.py             The server's data folder: runs, saved keys, staged uploads, log
+│   │   └── static/             The web UI
+│   │       ├── index.html      The page's markup
+│   │       ├── app.css         Its styles
+│   │       └── js/             Its scripts, one per part of the page, run in the order
+│   │                           index.html lists them (state.js first, main.js last)
 │   ├── cli.py                  Command line (`soundtrackid`): analyze a video, resume a run
 │   ├── paths.py                Where the app's files are, from source or installed
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
@@ -262,23 +272,23 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
 │   ├── exports.py              The CSV and MAVA (TSV and mapping) exports
-│   ├── metadata/               Film and composer enrichment
-│   │   ├── enricher.py         Looks up the composers of a run's cues
-│   │   ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
-│   │   ├── music.py            Composer lookup: MusicBrainz → Wikidata
-│   │   ├── rights.py           Public domain or protected, from the authors' life years
-│   │   └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
-│   └── static/                 The web UI
-│       ├── index.html          The page's markup
-│       ├── app.css             Its styles
-│       └── js/                 Its scripts, one per part of the page, run in the order
-│                               index.html lists them (state.js first, main.js last)
+│   └── metadata/               Film and composer enrichment
+│       ├── enricher.py         Looks up the composers of a run's cues
+│       ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev
+│       ├── music.py            Composer lookup: MusicBrainz → Wikidata
+│       ├── rights.py           Public domain or protected, from the authors' life years
+│       └── mp4_tags.py         Reads iTunes/Subler tags to pre-fill the film form
 ├── src-tauri/                  Desktop shell (Rust / Tauri)
 ├── assets/ast_model/           ONNX classifier model (Git LFS)
+├── shazamkit/                  Native ShazamKit helper (Swift, macOS), built by build.sh
 ├── scripts/                    macOS signing script and entitlements
-├── tests/                      pytest suite; tests/ui drives the page in a headless browser
+├── tests/                      pytest suite, laid out like the package (web/, detection/,
+│                               metadata/); tests/ui drives the page in a headless browser
 ├── docs/                       Detailed documentation
+├── images/                     The project's logo, with and without background
+├── .github/                    CI workflows (tests, builds) and issue templates
 ├── fiwi-server.spec            PyInstaller spec for bundling the server
+├── package.json                Node packages: the Tauri CLI
 ├── pyproject.toml              Python dependencies and optional extras
 └── uv.lock                     The exact dependency versions, for reproducible installs
 ```
@@ -446,7 +456,7 @@ npm run tauri -- icon <path-to-logo>
 ### Development mode
 
 ```bash
-uv run --extra app python -m soundtrackID &   # start Python server on :8000
+uv run --extra app python -m soundtrackid &   # start Python server on :8000
 PATH="$HOME/.cargo/bin:$PATH" npm run tauri dev
 ```
 
@@ -502,7 +512,7 @@ A collaborative project between the [University of Zurich](https://www.uzh.ch) a
 
 ### Data sources
 
-<a href="https://www.themoviedb.org/"><img src="src/soundtrackID/static/tmdb-logo.svg" alt="TMDB" height="14"></a>
+<a href="https://www.themoviedb.org/"><img src="src/soundtrackid/web/static/tmdb-logo.svg" alt="TMDB" height="14"></a>
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. Film metadata
 comes from [TMDB](https://www.themoviedb.org/) and is used under the

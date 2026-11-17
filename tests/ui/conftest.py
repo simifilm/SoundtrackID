@@ -1,4 +1,4 @@
-"""Browser tests of the page (static/: index.html, app.css, js/).
+"""Browser tests of the page (web/static/: index.html, app.css, js/).
 
 A headless Chromium drives the real app, which runs in this process with fakes
 for the model, the video loader, the providers and the online lookups. The tests
@@ -20,10 +20,10 @@ import pytest
 import uvicorn
 from mutagen.mp4 import MP4
 
-from soundtrackID.detection import RateLimitError
-from soundtrackID.models import DetectionResult
-from soundtrackID.web import analyze, data
-from soundtrackID.web.app import app
+from soundtrackid.detection import RateLimitError
+from soundtrackid.models import DetectionResult
+from soundtrackid.web import analyze, data
+from soundtrackid.web.app import app
 from tests.fakes import FakeClassifier, FakeLoader
 from tests.media import write_video
 from tests.ui.helpers import MUSIC_STARTS
@@ -159,13 +159,13 @@ def fakes(data_dir, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     fakes = Fakes()
     monkeypatch.setattr(analyze, "get_classifier", fakes.get_classifier)
-    monkeypatch.setattr("soundtrackID.pipeline.VideoLoader", FakeLoader)
+    monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", FakeLoader)
     monkeypatch.setattr(
-        "soundtrackID.detection.build_detection_client",
+        "soundtrackid.detection.build_detection_client",
         lambda api: SimpleNamespace(detect=fakes.detect),
     )
-    monkeypatch.setattr("soundtrackID.metadata.enricher.enrich", fakes.enrich)
-    monkeypatch.setattr("soundtrackID.metadata.film.lookup_film", fakes.lookup_film)
+    monkeypatch.setattr("soundtrackid.metadata.enricher.enrich", fakes.enrich)
+    monkeypatch.setattr("soundtrackid.metadata.film.lookup_film", fakes.lookup_film)
     yield fakes
     # Never leave a server thread waiting.
     fakes.classifying.set()

@@ -281,7 +281,7 @@ The analysis progress shows this as the **Identifying composers** step with a
 ## File layout
 
 ```
-src/soundtrackID/metadata/
+src/soundtrackid/metadata/
   __init__.py
   mp4_tags.py      # mutagen-based Subler-compatible MP4 atom reader
   film.py          # TMDb + Wikidata + imdbapi.dev — FilmInfo + FilmLookup

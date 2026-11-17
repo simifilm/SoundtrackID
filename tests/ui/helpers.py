@@ -6,7 +6,7 @@ import json
 import numpy as np
 from scipy.io import wavfile
 
-from soundtrackID.results import RESULTS_VERSION
+from soundtrackid.results import RESULTS_VERSION
 
 # 30 s of music, as the fake classifier hears it in FakeLoader's audio: windows
 # of 10 s every 5 s.

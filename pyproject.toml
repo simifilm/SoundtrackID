@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "soundtrackID"
+name = "soundtrackid"
 dynamic = ["version"]
 description = "Film Music Analysis Pipeline"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -18,12 +18,12 @@ dependencies = [
 ]
 
 [project.scripts]
-soundtrackid = "soundtrackID.cli:main"
+soundtrackid = "soundtrackid.cli:main"
 
 [project.optional-dependencies]
 # Bundled desktop app
 app = [
-    "soundtrackID[onnx,shazam,web,metadata]",
+    "soundtrackid[onnx,shazam,web,metadata]",
 ]
 demucs = [
     "demucs>=4.0",
@@ -71,10 +71,13 @@ build = [
 pyacrcloud = { git = "https://github.com/acrcloud/acrcloud_sdk_python", marker = "sys_platform == 'win32'" }
 
 [tool.hatch.version]
-path = "src/soundtrackID/__init__.py"
+path = "src/soundtrackid/__init__.py"
 
+# The wheel holds the package only: the model (assets/) and the ShazamKit helper
+# (shazamkit/) stay in the checkout, so SoundtrackID runs from a checkout or as the
+# desktop app, not from a pip-installed wheel (see paths.py).
 [tool.hatch.build.targets.wheel]
-packages = ["src/soundtrackID"]
+packages = ["src/soundtrackid"]
 
 [tool.ruff]
 line-length = 88

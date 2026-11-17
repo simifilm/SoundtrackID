@@ -8,7 +8,7 @@ empirical findings from testing them against real film audio. The short version:
 > a solid baseline, and AcoustID is unsuitable.**
 
 All three implement `BaseMusicDetectionClient.detect()`, each in its own module of
-[`detection/`](../src/soundtrackID/detection/), and are selectable via the
+[`detection/`](../src/soundtrackid/detection/), and are selectable via the
 **Detection API** dropdown in the UI, the `--api` CLI flag, or
 `build_detection_client(...)`.
 

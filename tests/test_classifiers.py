@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from soundtrackID.models import AudioChunk
+from soundtrackid.models import AudioChunk
 
 
 class TestHuggingFaceClassifier:
@@ -15,7 +15,7 @@ class TestHuggingFaceClassifier:
     @pytest.fixture
     def mock_classifier(self):
         """Create a HuggingFaceClassifier with mocked internals."""
-        from soundtrackID.classifiers import HuggingFaceClassifier
+        from soundtrackid.classifiers import HuggingFaceClassifier
 
         # Create instance without calling __init__
         classifier = HuggingFaceClassifier.__new__(HuggingFaceClassifier)
@@ -78,7 +78,7 @@ class TestHuggingFaceClassifier:
         audio = np.ones(1000, dtype=np.float32)
 
         # Call the actual _resample method from the class
-        from soundtrackID.classifiers import HuggingFaceClassifier
+        from soundtrackid.classifiers import HuggingFaceClassifier
 
         result = HuggingFaceClassifier._resample(classifier, audio, 16000, 16000)
 
@@ -92,7 +92,7 @@ class TestHuggingFaceClassifier:
         with patch("librosa.resample") as mock_resample:
             mock_resample.return_value = np.ones(500, dtype=np.float32)
 
-            from soundtrackID.classifiers import HuggingFaceClassifier
+            from soundtrackid.classifiers import HuggingFaceClassifier
 
             result = HuggingFaceClassifier._resample(classifier, audio, 32000, 16000)
 
@@ -108,7 +108,7 @@ class TestHuggingFaceClassifierIntegration:
 
     def test_real_model_loading(self):
         """Test loading real model (skipped in CI)."""
-        from soundtrackID.classifiers import HuggingFaceClassifier
+        from soundtrackid.classifiers import HuggingFaceClassifier
 
         classifier = HuggingFaceClassifier()
         assert classifier.model is not None
@@ -117,7 +117,7 @@ class TestHuggingFaceClassifierIntegration:
 
     def test_classify_real_audio(self):
         """Test classification of 10 s of audio with the real model."""
-        from soundtrackID.classifiers import HuggingFaceClassifier
+        from soundtrackid.classifiers import HuggingFaceClassifier
 
         # A 440 Hz tone; the checks below don't depend on what the audio is
         sr = 16000
@@ -145,7 +145,7 @@ def test_the_onnx_export_is_used_unless_hf_is_asked_for_or_it_is_missing(
     tmp_path, monkeypatch
 ):
     """The app's and the CLI's classifier, from source."""
-    from soundtrackID import classifiers, paths
+    from soundtrackid import classifiers, paths
 
     built = []
     monkeypatch.setattr(

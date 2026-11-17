@@ -3,7 +3,7 @@
 import numpy as np
 from PIL import Image
 
-from soundtrackID.thumbnails import extract_filmstrip
+from soundtrackid.thumbnails import extract_filmstrip
 from tests.media import write_video
 
 

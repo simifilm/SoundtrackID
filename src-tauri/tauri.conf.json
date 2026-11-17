@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "ch.uzh.soundtrackid",
   "build": {
-    "frontendDist": "../src/soundtrackID/static"
+    "frontendDist": "../src/soundtrackid/web/static"
   },
   "app": {
     "withGlobalTauri": true,
