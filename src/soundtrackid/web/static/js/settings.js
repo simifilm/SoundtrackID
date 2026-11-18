@@ -27,8 +27,15 @@ function updateProviderKeyWarning() {
   el.hidden = missing.length === 0;
   el.textContent = `API keys missing for ${missing.join(' and ')}. Add them under API keys below.`;
 }
+// Keep the ticked providers for the next start; none ticked clears the choice.
+function saveProviders() {
+  fetch('/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ providers: selectedProviders() }),
+  }).catch(() => { /* offline is fine */ });
+}
 document.querySelectorAll('.opt-provider').forEach(cb =>
-  cb.addEventListener('change', updateProviderKeyWarning));
+  cb.addEventListener('change', () => { updateProviderKeyWarning(); saveProviders(); }));
 
 async function loadApiKeyState() {
   try {
@@ -36,6 +43,12 @@ async function loadApiKeyState() {
     if (!r.ok) return;
     const state = await r.json();
     apiKeyState = state;
+    // Tick the providers chosen last time; none saved keeps the page's default.
+    if (state.providers.length) {
+      document.querySelectorAll('.opt-provider').forEach(cb => {
+        cb.checked = state.providers.includes(cb.value);
+      });
+    }
     document.querySelectorAll('#api-keys input[data-key]').forEach(inp => {
       const s = state[inp.dataset.key];
       inp.value = '';
