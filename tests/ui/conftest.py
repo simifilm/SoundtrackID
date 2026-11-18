@@ -106,7 +106,9 @@ class Fakes:
         self.tracks = {}  # identification window start (s) → (title, artist, metadata)
         self.answers = None  # calls the provider answers before its limit; None: all
         self.composers = {}  # ISRC → the enrichment the composer lookup finds
-        self.film = {}  # what "Look up online" finds
+        self.candidates = []  # the films "Look up online" offers to choose from
+        self.film = {}  # what looking the chosen film up finds
+        self.film_hints = []  # what the film was looked up by
         # Cleared, classification (after the first window) or identification wait.
         self.classifying = threading.Event()
         self.identifying = threading.Event()
@@ -145,7 +147,11 @@ class Fakes:
             progress("music_cue", index=index, total=len(cues))
         return results
 
-    def lookup_film(self, imdb_id=None, tmdb_id=None, title=None, year=None):
+    def search_films(self, imdb_id=None, tmdb_id=None, title=None, year=None):
+        return [dict(c) for c in self.candidates]
+
+    def lookup_film(self, **hint):
+        self.film_hints.append(hint)
         return dict(self.film)
 
 
@@ -165,6 +171,7 @@ def fakes(data_dir, monkeypatch):
         lambda api: SimpleNamespace(detect=fakes.detect),
     )
     monkeypatch.setattr("soundtrackid.metadata.enricher.enrich", fakes.enrich)
+    monkeypatch.setattr("soundtrackid.metadata.film.search_films", fakes.search_films)
     monkeypatch.setattr("soundtrackid.metadata.film.lookup_film", fakes.lookup_film)
     yield fakes
     # Never leave a server thread waiting.

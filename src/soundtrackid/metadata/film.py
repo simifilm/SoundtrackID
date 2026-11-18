@@ -14,6 +14,9 @@ from soundtrackid.models import parse_year
 
 log = logging.getLogger(__name__)
 
+SEARCH_LIMIT = 10  # title matches offered to choose from
+TMDB_POSTER_URL = "https://image.tmdb.org/t/p/w92"  # + poster_path
+
 
 @dataclass
 class FilmInfo:
@@ -97,7 +100,7 @@ class FilmLookup:
         title: str | None = None,
         year: int | None = None,
     ) -> FilmInfo:
-        info = FilmInfo(imdb_id=imdb_id, tmdb_id=tmdb_id)
+        info = FilmInfo()
 
         if not self._has_tmdb_creds():
             log.info("No TMDb key (FIWI_TMDB_API_TOKEN, FIWI_TMDB_KEY): TMDb skipped")
@@ -111,6 +114,21 @@ class FilmLookup:
             except (httpx.HTTPError, ValueError):
                 log.warning("TMDb lookup failed", exc_info=True)
 
+        return self._complete(
+            info, imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year
+        )
+
+    def _complete(
+        self,
+        info: FilmInfo,
+        imdb_id: str | None,
+        tmdb_id: int | None,
+        title: str | None,
+        year: int | None,
+    ) -> FilmInfo:
+        """Fill in what `info` lacks from Wikidata, then imdbapi.dev, and the
+        given IDs last: a source's IDs are the film's own, a given one can be
+        wrong."""
         if not info.is_complete():
             try:
                 wd = self._lookup_wikidata(
@@ -131,7 +149,48 @@ class FilmLookup:
             except (httpx.HTTPError, ValueError):
                 log.warning("imdbapi.dev lookup failed", exc_info=True)
 
+        info.imdb_id = info.imdb_id or imdb_id
+        info.tmdb_id = info.tmdb_id or tmdb_id
         return info
+
+    def search(
+        self,
+        imdb_id: str | None = None,
+        tmdb_id: int | None = None,
+        title: str | None = None,
+        year: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """The films that may be the one meant, for the user to choose from:
+        TMDb's films of the given IDs first, then up to SEARCH_LIMIT matches of
+        the title. When TMDb has none (no key, no match, unreachable), the one
+        film Wikidata and imdbapi.dev find, already looked up: its record is the
+        candidate's "film"."""
+        candidates: list[dict[str, Any]] = []
+        if self._has_tmdb_creds():
+            try:
+                candidates = self._tmdb_candidates(tmdb_id, imdb_id, title, year)
+            except (httpx.HTTPError, ValueError):
+                log.warning("TMDb search failed", exc_info=True)
+        if candidates:
+            return candidates
+
+        info = self._complete(
+            FilmInfo(), imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year
+        )
+        if not info.sources:
+            return []
+        return [
+            {
+                "tmdb_id": info.tmdb_id,
+                "title": info.title,
+                "original_title": None,
+                "year": info.year,
+                "overview": None,
+                "poster_url": None,
+                "match": None,
+                "film": info.to_dict(),
+            }
+        ]
 
     # ── TMDb ─────────────────────────────────────────────────────────────
 
@@ -142,16 +201,16 @@ class FilmLookup:
         title: str | None,
         year: int | None,
     ) -> FilmInfo | None:
-        if not tmdb_id and imdb_id:
-            tmdb_id = self._tmdb_find_by_imdb(imdb_id)
-        if not tmdb_id and title:
-            tmdb_id = self._tmdb_search_movie(title, year)
-        if not tmdb_id:
-            return None
-
-        movie = self._tmdb_get(f"/3/movie/{tmdb_id}")
+        # The TMDb ID's film, else the IMDb ID's, else the title's first match:
+        # a given ID can be wrong, so the next is tried when one finds no film.
+        movie = self._tmdb_get(f"/3/movie/{tmdb_id}") if tmdb_id else None
+        if not movie and imdb_id and (found := self._tmdb_find_by_imdb(imdb_id)):
+            movie = self._tmdb_get(f"/3/movie/{found.get('id')}")
+        if not movie and title and (results := self._tmdb_search(title, year)):
+            movie = self._tmdb_get(f"/3/movie/{results[0].get('id')}")
         if not movie:
             return None
+        tmdb_id = movie.get("id")
         credits = self._tmdb_get(f"/3/movie/{tmdb_id}/credits") or {}
         info = _parse_tmdb_movie(movie, credits)
         info.tmdb_id = tmdb_id
@@ -178,7 +237,8 @@ class FilmLookup:
             return None
         return r.json()
 
-    def _tmdb_find_by_imdb(self, imdb_id: str) -> int | None:
+    def _tmdb_find_by_imdb(self, imdb_id: str) -> dict | None:
+        """The IMDb ID's film, as a search result."""
         data = self._tmdb_get(
             f"/3/find/{imdb_id}", params={"external_source": "imdb_id"}
         )
@@ -186,18 +246,42 @@ class FilmLookup:
             return None
         results = data.get("movie_results") or []
         if results:
-            return results[0].get("id")
+            return results[0]
         return None
 
-    def _tmdb_search_movie(self, title: str, year: int | None) -> int | None:
+    def _tmdb_search(self, title: str, year: int | None) -> list[dict]:
+        """The films matching the title, best first."""
         params: dict[str, Any] = {"query": title}
         if year:
             params["year"] = year
         data = self._tmdb_get("/3/search/movie", params=params)
         if not data:
-            return None
-        results = data.get("results") or []
-        return results[0].get("id") if results else None
+            return []
+        return data.get("results") or []
+
+    def _tmdb_candidates(
+        self,
+        tmdb_id: int | None,
+        imdb_id: str | None,
+        title: str | None,
+        year: int | None,
+    ) -> list[dict[str, Any]]:
+        found: list[tuple[dict, str | None]] = []
+        if tmdb_id and (movie := self._tmdb_get(f"/3/movie/{tmdb_id}")):
+            found.append((movie, "tmdb_id"))
+        if imdb_id and (movie := self._tmdb_find_by_imdb(imdb_id)):
+            found.append((movie, "imdb_id"))
+        if title:
+            results = self._tmdb_search(title, year)
+            if not results and year:
+                # The year may be the wrong one.
+                results = self._tmdb_search(title, None)
+            found += [(movie, None) for movie in results[:SEARCH_LIMIT]]
+        # A film found twice is listed once, where it was found first.
+        candidates: dict[Any, dict[str, Any]] = {}
+        for movie, match in found:
+            candidates.setdefault(movie.get("id"), _parse_tmdb_candidate(movie, match))
+        return list(candidates.values())
 
     # ── Wikidata ──────────────────────────────────────────────────────────
 
@@ -248,22 +332,61 @@ def lookup_film(
     year: int | None = None,
 ) -> dict[str, Any]:
     """Look a film up online from what is known about it, with the TMDb keys
-    from the environment: the app's "Look up online" and the CLI's --lookup-film.
+    from the environment: the film chosen in the app's "Look up online" and the
+    CLI's --lookup-film.
     """
     client = httpx.Client(timeout=15.0)
     try:
-        lookup = FilmLookup(
-            client,
-            tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
-            tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
+        info = _lookup_from_env(client).lookup(
+            imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year
         )
-        info = lookup.lookup(imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year)
         return info.to_dict()
     finally:
         client.close()
 
 
+def search_films(
+    imdb_id: str | None = None,
+    tmdb_id: int | None = None,
+    title: str | None = None,
+    year: int | None = None,
+) -> list[dict[str, Any]]:
+    """The films the app's "Look up online" offers to choose from
+    (FilmLookup.search), with the TMDb keys from the environment."""
+    client = httpx.Client(timeout=15.0)
+    try:
+        return _lookup_from_env(client).search(
+            imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year
+        )
+    finally:
+        client.close()
+
+
+def _lookup_from_env(client: httpx.Client) -> FilmLookup:
+    return FilmLookup(
+        client,
+        tmdb_bearer_token=os.environ.get("FIWI_TMDB_API_TOKEN"),
+        tmdb_api_key=os.environ.get("FIWI_TMDB_KEY"),
+    )
+
+
 # ── Pure parsers (testable without network) ──────────────────────────────
+
+
+def _parse_tmdb_candidate(movie: dict, match: str | None) -> dict[str, Any]:
+    """A film to choose from, from a TMDb movie or search result; `match` names
+    the given ID that points to it ("tmdb_id", "imdb_id"), None for a title
+    match."""
+    poster = movie.get("poster_path")
+    return {
+        "tmdb_id": movie.get("id"),
+        "title": movie.get("title") or movie.get("original_title"),
+        "original_title": movie.get("original_title"),
+        "year": parse_year(movie.get("release_date")),
+        "overview": movie.get("overview") or None,
+        "poster_url": f"{TMDB_POSTER_URL}{poster}" if poster else None,
+        "match": match,
+    }
 
 
 def _parse_tmdb_movie(movie: dict, credits: dict) -> FilmInfo:

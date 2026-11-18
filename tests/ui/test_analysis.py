@@ -74,31 +74,86 @@ def test_the_film_is_prefilled_from_the_files_tags(page, fakes, tagged_video):
     )
 
 
-def test_look_up_online_fills_only_the_empty_fields(page, fakes, tagged_video, runs):
-    """And the analysis keeps all it found, also what the form doesn't show."""
+def test_look_up_online_lets_you_choose_the_film(page, fakes, tagged_video, runs):
+    """The chosen film replaces the form, also a title the tags spell otherwise,
+    and the analysis keeps all of it, also what the form doesn't show."""
+    fakes.candidates = [
+        {"tmdb_id": 599, "title": "Sunset Blvd.", "year": 1950, "match": "tmdb_id"},
+        {"tmdb_id": 42, "title": "Sunset", "year": 1988, "match": None},
+    ]
     fakes.film = {
         "title": "Sunset Blvd.",
         "year": 1950,
         "director": "Billy Wilder",
         "director_death_year": 2002,
+        "tmdb_id": 599,
     }
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    choices = page.locator("#fc-candidates button")
+    expect(choices).to_have_count(2)
+    expect(choices.first).to_contain_text("Sunset Blvd. (1950)")
+    expect(choices.first).to_contain_text("Matches the TMDb ID")
+    choices.first.click()
+
+    expect(page.locator("#film-choose")).not_to_be_visible()
+    expect(page.locator("#fc-title")).to_have_value("Sunset Blvd.")
+    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
+    expect(page.locator("#fc-status")).to_have_text(
+        'Film applied. Changed: Title "Sunset Boulevard" → "Sunset Blvd."; '
+        'Director (empty) → "Billy Wilder"; TMDb ID (empty) → "599".'
+    )
+    # Looked up by the chosen film's ID alone
+    assert fakes.film_hints == [
+        {"imdb_id": None, "tmdb_id": 599, "title": None, "year": None}
+    ]
+    page.locator("#fc-start").click()
+    expect(page.locator("#film-metadata-header")).to_contain_text("Sunset Blvd. (1950)")
+    [run] = runs.iterdir()
+    film = saved(run)["film"]
+    assert (film["title"], film["director_death_year"]) == ("Sunset Blvd.", 2002)
+
+
+def test_a_film_found_without_tmdb_is_applied_as_found(page, fakes, tagged_video):
+    film = {"title": "Sunset Boulevard", "year": 1950, "director": "Billy Wilder"}
+    fakes.candidates = [{"title": "Sunset Boulevard", "year": 1950, "film": film}]
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-candidates button").click()
+
+    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
+    assert fakes.film_hints == []
+
+
+def test_choosing_no_film_leaves_the_form(page, fakes, tagged_video):
+    fakes.candidates = [{"tmdb_id": 42, "title": "Sunset", "year": 1988}]
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-choose-cancel").click()
+
+    expect(page.locator("#film-choose")).not_to_be_visible()
+    expect(page.locator("#fc-title")).to_have_value("Sunset Boulevard")
+    expect(page.locator("#fc-status")).to_have_text(
+        "No film chosen; the form is unchanged."
+    )
+
+
+def test_look_up_online_finding_nothing_says_so(page, fakes, tagged_video):
     page.goto("/")
     upload(page, tagged_video)
 
     page.locator("#fc-lookup").click()
 
     expect(page.locator("#fc-status")).to_have_text(
-        "Online data applied (empty fields filled)."
+        "Nothing found online. Please fill in manually."
     )
-    expect(page.locator("#fc-title")).to_have_value("Sunset Boulevard")
-    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
-    page.locator("#fc-start").click()
-    expect(page.locator("#film-metadata-header")).to_contain_text(
-        "Sunset Boulevard (1950)"
-    )
-    [run] = runs.iterdir()
-    film = saved(run)["film"]
-    assert (film["title"], film["director_death_year"]) == ("Sunset Boulevard", 2002)
+    expect(page.locator("#film-choose")).not_to_be_visible()
 
 
 def test_the_results_show_tracks_timeline_and_classes(page, fakes, video):

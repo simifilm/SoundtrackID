@@ -8,9 +8,10 @@ domain 70 years after the **composer's** death.
 It runs in two places:
 
 - **Film** — before the analysis starts, in the **Confirm film** panel. The
-  fields are pre-filled from the video file's MP4 tags; **Look up online** fills
-  the empty ones. The confirmed film is passed to `/analyze`, so the film year is
-  known while matches are ranked.
+  fields are pre-filled from the video file's MP4 tags; **Look up online** lists
+  the films they may mean, and the one the user chooses replaces the fields. The
+  confirmed film is passed to `/analyze`, so the film year is known while
+  matches are ranked.
 - **Composer** — automatically at the end of `/analyze` (and of `/resume`), for
   every identified cue that carries an ISRC.
 
@@ -112,9 +113,10 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
    Confirm film    │  Panel pre-filled from the tags; the user edits it    │
-                   │  "Look up online" → POST /film/lookup                 │
-                   │    (TMDb → Wikidata → imdbapi.dev, fills empty        │
-                   │    fields only)                                       │
+                   │  "Look up online" → POST /film/search → the user      │
+                   │    chooses a film → POST /film/lookup by its TMDb ID  │
+                   │    (TMDb → Wikidata → imdbapi.dev), which replaces    │
+                   │    the fields                                         │
                    └───────────────────────────┬───────────────────────────┘
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
@@ -145,12 +147,20 @@ the Confirm film panel.
 | **imdbapi.dev** | Tertiary fallback | Unofficial, no SLA; only invoked when prior sources lack director or director death year; failures swallowed silently |
 
 Merge rule: first non-null value wins per field. The `sources` list records
-which API supplied which data.
+which API supplied which data. The IMDb and TMDb IDs given come last, kept only
+where no source found the film's own: a given ID can be wrong.
 
 TMDb chain for a film:
-1. `/3/find/{imdb_id}` (by IMDb ID) or `/3/search/movie?query=...` (by title)
-2. `/3/movie/{tmdb_id}` + `/3/movie/{tmdb_id}/credits`
+1. `/3/movie/{tmdb_id}` (by TMDb ID), else `/3/find/{imdb_id}` (by IMDb ID),
+   else the first match of `/3/search/movie?query=...` (by title): each tried
+   when the one before finds no film
+2. `/3/movie/{tmdb_id}/credits`
 3. If director found but no death year: `/3/person/{director_id}` for `deathday`
+
+The films to choose from (`FilmLookup.search`): the films the TMDb and IMDb IDs
+point to, then up to 10 title matches, searched again without the year when
+none match with it. When TMDb has none (no key, no match, unreachable), the one
+film Wikidata and imdbapi.dev find.
 
 ### Composer: MusicBrainz → Wikidata
 
@@ -225,6 +235,14 @@ Wikidata directly.
 Multipart upload of the video (`file`). Stages it for `/analyze` and reads its
 MP4 tags. Returns `{staging_id, original_name, film}`, where `film` holds
 whatever the tags provided.
+
+### `POST /film/search`
+
+JSON body with any of `imdb_id`, `tmdb_id`, `title`, `year`. Returns
+`{candidates: [...]}`, the films to choose from, each with `tmdb_id`, `title`,
+`original_title`, `year`, `overview`, `poster_url` and `match` (`"tmdb_id"` or
+`"imdb_id"` when a given ID points to it). A film found without TMDb also has
+`film`, its full record, already looked up. `502` on an unexpected failure.
 
 ### `POST /film/lookup`
 

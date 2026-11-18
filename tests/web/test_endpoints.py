@@ -49,6 +49,10 @@ def film_lookup(monkeypatch):
             calls["hint"] = hint
             return FilmInfo(title="Sunset Boulevard", year=1950, sources=["tmdb"])
 
+        def search(self, **hint):
+            calls["hint"] = hint
+            return [{"tmdb_id": 599, "title": "Sunset Boulevard"}]
+
     monkeypatch.setattr(film_module, "FilmLookup", FakeFilmLookup)
     return calls
 
@@ -93,6 +97,22 @@ def test_film_lookup_drops_unusable_values(film_lookup, monkeypatch):
         "imdb_id": None,
         "tmdb_id": None,
         "title": None,
+        "year": None,
+    }
+
+
+def test_film_search_passes_the_hint_and_the_keys(film_lookup, monkeypatch):
+    monkeypatch.setenv("FIWI_TMDB_API_TOKEN", "tok")
+    monkeypatch.delenv("FIWI_TMDB_KEY", raising=False)
+    r = client.post("/film/search", json={"tmdb_id": "599", "title": "Sunset"})
+
+    assert r.status_code == 200
+    assert r.json() == {"candidates": [{"tmdb_id": 599, "title": "Sunset Boulevard"}]}
+    assert film_lookup["keys"] == ("tok", None)
+    assert film_lookup["hint"] == {
+        "imdb_id": None,
+        "tmdb_id": 599,
+        "title": "Sunset",
         "year": None,
     }
 

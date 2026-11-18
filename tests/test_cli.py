@@ -156,7 +156,7 @@ def test_whole_music_segments_are_max_segment_0(tmp_path, monkeypatch):
 
 
 def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
-    """As the app's "Look up online": what is known stays."""
+    """What is known stays: no one is there to choose among the films found."""
     hints = []
 
     def lookup_film(**hint):

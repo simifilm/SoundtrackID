@@ -70,33 +70,105 @@ function beginIdentify(file) {
     });
 }
 
-// Optional: resolve missing fields online (TMDb/Wikidata) without re-uploading.
-document.getElementById('fc-lookup').addEventListener('click', () => {
-  fcStatus.textContent = 'Looking up online…';
-  fetch('/film/lookup', {
+// Optional: find the film online (TMDb, else Wikidata) without re-uploading, and
+// let the user choose among the films found.
+const filmChoose   = document.getElementById('film-choose');
+const fcCandidates = document.getElementById('fc-candidates');
+const FC_FIELD_NAMES = { title: 'Title', year: 'Year', director: 'Director', imdb_id: 'IMDb ID', tmdb_id: 'TMDb ID' };
+const FC_MATCHES = { tmdb_id: 'Matches the TMDb ID', imdb_id: 'Matches the IMDb ID' };
+
+function postFilm(path, body) {
+  return fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(collectFilmFields()),
-  })
-    .then(res => res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)))
+    body: JSON.stringify(body),
+  }).then(res => res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)));
+}
+
+function fcElement(tag, className, text) {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function showCandidates(candidates) {
+  fcCandidates.replaceChildren(...candidates.map(c => {
+    const poster = c.poster_url
+      ? Object.assign(fcElement('img', 'fc-poster'), { src: c.poster_url, alt: '' })
+      : fcElement('span', 'fc-poster');
+    const text = fcElement('span', 'fc-cand-text');
+    text.append(fcElement('strong', '', c.year ? `${c.title} (${c.year})` : c.title));
+    if (c.original_title && c.original_title !== c.title) {
+      text.append(fcElement('span', 'fc-cand-sub', `Original title: ${c.original_title}`));
+    }
+    if (FC_MATCHES[c.match]) text.append(fcElement('span', 'fc-match', FC_MATCHES[c.match]));
+    if (c.overview) text.append(fcElement('span', 'fc-overview', c.overview));
+    const choice = fcElement('button', 'fc-candidate');
+    choice.type = 'button';
+    choice.append(poster, text);
+    choice.addEventListener('click', () => chooseFilm(c));
+    const item = document.createElement('li');
+    item.append(choice);
+    return item;
+  }));
+  filmChoose.showModal();
+}
+
+function chooseFilm(c) {
+  filmChoose.close();
+  fcStatus.textContent = 'Looking up the film…';
+  // By its TMDb ID alone, so nothing typed in the form mixes another film in; a
+  // film found without TMDb comes already looked up.
+  const film = c.film
+    ? Promise.resolve(c.film)
+    : postFilm('/film/lookup', { tmdb_id: c.tmdb_id }).then(data => data.film || {});
+  film.then(applyFilm).catch(() => { fcStatus.textContent = 'Online lookup failed.'; });
+}
+
+// The chosen film replaces the form and the record, also where it has no value,
+// so nothing of another film stays; the status says what changed.
+function applyFilm(film) {
+  const before = collectFilmFields();
+  pendingFilm = film;
+  fillFilmFields(film);
+  const after = collectFilmFields();
+  const shown = v => v == null ? '(empty)' : `"${v}"`;
+  const changes = Object.keys(fcFields)
+    .filter(k => String(before[k] ?? '') !== String(after[k] ?? ''))
+    .map(k => `${FC_FIELD_NAMES[k]} ${shown(before[k])} → ${shown(after[k])}`);
+  fcStatus.textContent = changes.length
+    ? `Film applied. Changed: ${changes.join('; ')}.`
+    : 'Film applied. Nothing changed.';
+}
+
+document.getElementById('fc-lookup').addEventListener('click', () => {
+  fcStatus.textContent = 'Looking up online…';
+  postFilm('/film/search', collectFilmFields())
     .then(data => {
-      const f = data.film || {};
-      // Keep the full looked-up record (incl. director_death_year, sources) …
-      pendingFilm = { ...pendingFilm, ...f };
-      // … but only fill *empty* form fields, keeping anything the user typed.
-      for (const [k, el] of Object.entries(fcFields)) {
-        if (!el.value && f[k] != null) el.value = f[k];
+      const candidates = data.candidates || [];
+      if (!candidates.length) {
+        fcStatus.textContent = 'Nothing found online. Please fill in manually.';
+        return;
       }
-      fcStatus.textContent = (f.title || f.year)
-        ? 'Online data applied (empty fields filled).'
-        : 'Nothing found online. Please fill in manually.';
+      fcStatus.textContent = 'Choose the film.';
+      showCandidates(candidates);
     })
     .catch(err => {
       fcStatus.textContent = String(err).includes('404')
-        ? 'Endpoint /film/lookup is missing. The server is running an older version; please restart.'
+        ? 'Endpoint /film/search is missing. The server is running an older version; please restart.'
         : 'Online lookup failed.';
     });
 });
+
+function cancelChoice() {
+  fcStatus.textContent = 'No film chosen; the form is unchanged.';
+}
+document.getElementById('fc-choose-cancel').addEventListener('click', () => {
+  filmChoose.close();
+  cancelChoice();
+});
+filmChoose.addEventListener('cancel', cancelChoice);  // Escape
 
 document.getElementById('fc-cancel').addEventListener('click', () => {
   pendingStagingId = null;
