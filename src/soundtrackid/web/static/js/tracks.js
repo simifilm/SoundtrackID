@@ -23,9 +23,10 @@ function buildTrackRowHTML(group) {
   const temporalBadge = cue.temporal_pick
     ? '<span class="temporal-badge" title="Re-ranked to a period-plausible match: the top result postdated the film, so an earlier candidate was chosen.">↻</span>'
     : '';
+  const links = platformLinkIcons(cue);
   return `
     <td class="expand-cell">${expander}</td>
-    <td class="editable" data-field="title" title="Double-click to edit">${cover}${fmt(cue.title)}${temporalBadge}${platformLinkIcons(cue)}</td>
+    <td class="editable" data-field="title" title="Double-click to edit"><div class="title-cell">${cover}<span class="title-text">${fmt(cue.title)}${temporalBadge}</span>${links ? `<span class="track-links">${links}</span>` : ''}</div></td>
     <td class="editable" data-field="artist" title="Double-click to edit">${fmt(cue.artist)}</td>
     <td class="${composerCls}" data-field="composer" title="Double-click to edit">${fmt(enr.composer)}${authorsInlineHTML(enr)}</td>
     <td class="editable" data-field="date" title="Double-click to edit"${dateCls}>${fmt(dateYear)}</td>
@@ -183,11 +184,12 @@ function buildTimelineRowHTML(cue, videoName) {
   const anaBadge = cue.anachronistic
     ? '<span class="anachronism-badge" title="Later than the film; likely a later work, not the original score.">⚠</span>'
     : '';
+  const links = platformLinkIcons(cue);
   return `
     <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
     <td>${fmtTime(cue.start)}</td>
     <td>${fmtTime(cue.duration)}</td>
-    <td>${fmt(cue.title)}${platformLinkIcons(cue)}${anaBadge}</td>
+    <td><div class="title-cell"><span class="title-text">${fmt(cue.title)}${anaBadge}</span>${links ? `<span class="track-links">${links}</span>` : ''}</div></td>
     <td>${fmt(cue.artist)}</td>`;
 }
 

@@ -634,6 +634,15 @@ input.cell-edit {
 .track-link:hover { opacity: 1; }
 .track-link svg { width: 15px; height: 15px; }
 
+/* Title cell: cover, title, then the platform links at the cell's end, so a
+   long title wraps beside them instead of pushing them onto a new line (under
+   the cover). Stacked in Tracks, side by side in the shorter Timeline rows. */
+.title-cell { display: flex; align-items: center; }
+.title-text { flex: auto; }
+.track-links { display: flex; flex-direction: column; gap: 2px; margin-left: 0.5rem; }
+.track-links .track-link { margin-left: 0; }
+#results-table .track-links { flex-direction: row; gap: 0.4rem; }
+
 /* History Panel */
 #history-panel {
   margin-top: 1.25rem;
