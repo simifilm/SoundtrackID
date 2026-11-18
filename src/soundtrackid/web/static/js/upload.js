@@ -21,7 +21,33 @@ function fillFilmFields(film) {
   fcFields.director.value = film.director ?? '';
   fcFields.imdb_id.value  = film.imdb_id ?? '';
   fcFields.tmdb_id.value  = film.tmdb_id ?? '';
+  linkFilmIds();
 }
+
+// The IMDb and TMDb ID fields link to the pages of the IDs filled in.
+const fcImdbLink = document.getElementById('fc-imdb-link');
+const fcTmdbLink = document.getElementById('fc-tmdb-link');
+
+function linkFilmIds() {
+  const imdb = encodeURIComponent(fcFields.imdb_id.value.trim());
+  const tmdb = encodeURIComponent(fcFields.tmdb_id.value.trim());
+  // A film and a series can have the same TMDb ID.
+  const tmdbPage = pendingFilm.media_type === 'tv' ? 'tv' : 'movie';
+  setHref(fcImdbLink, imdb && `https://www.imdb.com/title/${imdb}/`);
+  setHref(fcTmdbLink, tmdb && `https://www.themoviedb.org/${tmdbPage}/${tmdb}`);
+}
+
+function setHref(link, url) {
+  if (url) link.href = url;
+  else link.removeAttribute('href');
+}
+
+fcFields.imdb_id.addEventListener('input', linkFilmIds);
+fcFields.tmdb_id.addEventListener('input', () => {
+  // Typed, it may be another film's or series': whether it is a series is unknown.
+  pendingFilm.media_type = null;
+  linkFilmIds();
+});
 
 function collectFilmFields() {
   const yearNum = parseInt(fcFields.year.value, 10);

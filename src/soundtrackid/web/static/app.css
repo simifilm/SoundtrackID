@@ -280,6 +280,15 @@ footer a { color: inherit; }
   color: #1f2937; font-weight: 400;
 }
 .fc-grid input:focus { outline: none; border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+/* An ID's field, with a link to its page at its right end once filled in. */
+.fc-id { position: relative; display: flex; }
+.fc-id input { flex: 1; min-width: 0; padding-right: 1.8rem; }
+.fc-id-link {
+  position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%);
+  color: #7c3aed; text-decoration: none; font-size: 0.95rem;
+}
+.fc-id-link:hover { color: #4c1d95; }
+.fc-id-link:not([href]) { display: none; }
 #fc-status { display: block; min-height: 1.1em; margin: 0.75rem 0 0; font-size: 0.8rem; color: #6b7280; }
 .fc-actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.75rem; flex-wrap: wrap; }
 

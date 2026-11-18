@@ -152,6 +152,9 @@ def test_a_series_is_chosen_as_one_and_its_directors_linked(page, fakes, video):
 
     expect(page.locator("#fc-title")).to_have_value("Breaking Bad")
     assert fakes.film_hints[0]["media_type"] == "tv"
+    expect(page.locator("#fc-tmdb-link")).to_have_attribute(
+        "href", "https://www.themoviedb.org/tv/1396"
+    )
     page.locator("#fc-start").click()
     header = page.locator("#film-metadata-header")
     expect(header).to_contain_text("Directors: Michelle MacLaren, Adam Bernstein")
@@ -162,6 +165,50 @@ def test_a_series_is_chosen_as_one_and_its_directors_linked(page, fakes, video):
     expect(links.filter(has_text="1396")).to_have_attribute(
         "href", "https://www.themoviedb.org/tv/1396"
     )
+
+
+def test_a_typed_tmdb_id_is_no_longer_the_chosen_series(page, fakes, video):
+    fakes.candidates = [
+        {"tmdb_id": 1396, "media_type": "tv", "title": "Breaking Bad", "year": 2008}
+    ]
+    fakes.film = {
+        "title": "Breaking Bad",
+        "year": 2008,
+        "tmdb_id": 1396,
+        "media_type": "tv",
+    }
+    page.goto("/")
+    upload(page, video)
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-candidates button").click()
+    link = page.locator("#fc-tmdb-link")
+    expect(link).to_have_attribute("href", "https://www.themoviedb.org/tv/1396")
+
+    page.locator("#fc-tmdb").fill("599")
+
+    expect(link).to_have_attribute("href", "https://www.themoviedb.org/movie/599")
+    page.locator("#fc-start").click()
+    expect(
+        page.locator("#film-metadata-header a").filter(has_text="599")
+    ).to_have_attribute("href", "https://www.themoviedb.org/movie/599")
+
+
+def test_the_id_fields_link_to_the_ids_pages(page, fakes, video):
+    page.goto("/")
+    upload(page, video)
+    imdb = page.locator("#fc-imdb-link")
+    expect(imdb).to_be_hidden()
+
+    page.locator("#fc-imdb").fill("tt0043014")
+    page.locator("#fc-tmdb").fill("599")
+
+    expect(imdb).to_be_visible()
+    expect(imdb).to_have_attribute("href", "https://www.imdb.com/title/tt0043014/")
+    expect(page.locator("#fc-tmdb-link")).to_have_attribute(
+        "href", "https://www.themoviedb.org/movie/599"
+    )
+    page.locator("#fc-imdb").fill("")
+    expect(imdb).to_be_hidden()
 
 
 def test_a_film_found_without_tmdb_is_applied_as_found(page, fakes, tagged_video):
