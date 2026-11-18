@@ -113,15 +113,15 @@
   <!-- Film confirmation (shown after a file is picked, before analysis) -->
   <div id="film-confirm" style="display:none">
     <div class="fc-card">
-      <h3>Confirm film</h3>
-      <p class="fc-hint">Before analysis: review or complete the film details. The <strong>release year</strong>
-        is used to flag temporally implausible music matches (e.g. later songs that sample the film).</p>
+      <h3>Confirm film or series</h3>
+      <p class="fc-hint">Before analysis: review or complete the details. The <strong>release year</strong>
+        is used to flag temporally implausible music matches (e.g. later songs that sample it).</p>
       <div class="fc-grid">
-        <label>Title <input type="text" id="fc-title" placeholder="Film title"></label>
+        <label>Title <input type="text" id="fc-title" placeholder="Title"></label>
         <label>Year <input type="text" id="fc-year" inputmode="numeric" placeholder="YYYY"></label>
         <label>Director <input type="text" id="fc-director" placeholder="Director"></label>
-        <label>IMDb ID <input type="text" id="fc-imdb" placeholder="tt…"></label>
-        <label>TMDb ID <input type="text" id="fc-tmdb" placeholder="Number"></label>
+        <label>IMDb ID <span class="fc-id"><input type="text" id="fc-imdb" placeholder="tt…"><a id="fc-imdb-link" class="fc-id-link" target="_blank" rel="noopener noreferrer" title="Open on IMDb" aria-label="Open on IMDb">↗</a></span></label>
+        <label>TMDb ID <span class="fc-id"><input type="text" id="fc-tmdb" placeholder="Number"><a id="fc-tmdb-link" class="fc-id-link" target="_blank" rel="noopener noreferrer" title="Open on TMDb" aria-label="Open on TMDb">↗</a></span></label>
       </div>
       <small id="fc-status"></small>
       <div class="fc-actions">
@@ -131,6 +131,15 @@
       </div>
     </div>
   </div>
+
+  <!-- Choosing among the films "Look up online" found -->
+  <dialog id="film-choose" aria-labelledby="fc-choose-title">
+    <h3 id="fc-choose-title">Choose the film or series</h3>
+    <ul id="fc-candidates"></ul>
+    <div class="fc-actions">
+      <button type="button" id="fc-choose-cancel" class="reset-btn">Cancel</button>
+    </div>
+  </dialog>
 
   <!-- Progress View -->
   <div id="progress-view">
@@ -247,7 +256,7 @@
         <table id="results-table">
           <thead>
             <tr>
-              <th>Segment</th><th>Start</th><th>Duration</th><th>Title</th><th>Artist</th>
+              <th>Segment</th><th>Start</th><th>Duration</th><th>Title</th><th>Artist</th><th></th>
             </tr>
           </thead>
           <tbody id="results-body"></tbody>
@@ -277,9 +286,36 @@
           <button type="button" role="menuitem" data-format="csv">CSV (spreadsheet)</button>
         </div>
       </div>
-      <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
+      <div class="download-menu">
+        <button class="download-btn" id="export-btn" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
+        <div class="download-options" id="export-options" role="menu" hidden>
+          <button type="button" role="menuitem" id="vian-export-btn" title="A VIAN project with the music cues as a track, for VIAN's Import project (together with the video)">VIAN (project zip)</button>
+          <button type="button" role="menuitem" id="mava-export-btn" title="A .mediapkg, MAVA's exchange format, with the music cues as a track">MAVA (.mediapkg)</button>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- Choosing a segment's song among those the providers found in it, or typing one in -->
+  <dialog id="song-choose" aria-labelledby="sc-heading">
+    <h3 id="sc-heading">Choose the song</h3>
+    <div class="sc-segment">
+      <span id="sc-segment"></span>
+      <button type="button" id="sc-play" class="sc-button" title="Play or pause the segment">▶ Play</button>
+    </div>
+    <div id="sc-songs"></div>
+    <form id="sc-typed" class="sc-typed">
+      <div class="fc-grid">
+        <label>Title <input type="text" id="sc-title" placeholder="Title" required></label>
+        <label>Artist <input type="text" id="sc-artist" placeholder="Artist"></label>
+      </div>
+      <button type="submit" class="sc-button">Use typed song</button>
+    </form>
+    <small id="sc-status"></small>
+    <div class="fc-actions">
+      <button type="button" id="sc-close" class="reset-btn">Close</button>
+    </div>
+  </dialog>
 
   <!-- History Panel (under the results' buttons; alone under the drop zone on the start page) -->
   <details id="history-panel" style="display:none">

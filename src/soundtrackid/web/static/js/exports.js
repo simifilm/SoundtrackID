@@ -1,4 +1,4 @@
-// Downloading a run's results: JSON, CSV and the MAVA export.
+// Downloading a run's results: JSON, CSV and the VIAN and MAVA exports.
 
 // Download helpers
 // `content` is a string, or a Blob (e.g. a zip fetched from the server).
@@ -22,18 +22,20 @@ async function triggerDownload(content, filename, type) {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
+// A button opening a menu: a click on the button opens or closes it, any other
+// click (also on an option, or on another menu's button) closes it.
+function dropdownMenu(button, options) {
+  document.addEventListener('click', e => {
+    const open = button.contains(e.target) && options.hidden;
+    options.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  });
+}
+
 // Download results as JSON or CSV. Both come from the run's saved results, so
 // they hold the same data, also after edits and a resume.
 const downloadOptions = document.getElementById('download-options');
-function showDownloadOptions(show) {
-  downloadOptions.hidden = !show;
-  downloadBtn.setAttribute('aria-expanded', String(show));
-}
-downloadBtn.addEventListener('click', e => {
-  e.stopPropagation();  // the document's click handler would close it again
-  showDownloadOptions(downloadOptions.hidden);
-});
-document.addEventListener('click', () => showDownloadOptions(false));
+dropdownMenu(downloadBtn, downloadOptions);
 downloadOptions.addEventListener('click', async e => {
   const format = e.target.closest('[data-format]')?.dataset.format;
   if (!format || !currentVideoName) return;
@@ -44,10 +46,16 @@ downloadOptions.addEventListener('click', async e => {
   await triggerDownload(content, `${currentVideoName}_results.${format}`, 'application/json');
 });
 
-document.getElementById('mava-export-btn').addEventListener('click', async () => {
+// The exports for VIAN (a project zip) and MAVA (a .mediapkg), in a menu too.
+dropdownMenu(document.getElementById('export-btn'), document.getElementById('export-options'));
+async function downloadExport(tool, path, suffix) {
   if (!currentVideoName) return;
-  const res = await fetch(`/output/${encodeURIComponent(currentVideoName)}/mava`);
-  if (!res.ok) { alert(`MAVA export failed (HTTP ${res.status})`); return; }
+  const res = await fetch(`/output/${encodeURIComponent(currentVideoName)}/${path}`);
+  if (!res.ok) { alert(`${tool} export failed (HTTP ${res.status})`); return; }
   // Same name the server sends in Content-Disposition.
-  await triggerDownload(await res.blob(), currentVideoName + '_mava_export.zip');
-});
+  await triggerDownload(await res.blob(), currentVideoName + suffix);
+}
+document.getElementById('vian-export-btn').addEventListener('click',
+  () => downloadExport('VIAN', 'vian', '_vian_project.zip'));
+document.getElementById('mava-export-btn').addEventListener('click',
+  () => downloadExport('MAVA', 'mediapkg', '.mediapkg'));

@@ -126,7 +126,9 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
     Presents as an ordinary detection client, so the pipeline's grouping, merging
     and writing are unchanged. The consensus carries two extra metadata keys:
     ``agreement`` (how many providers concurred) and ``votes`` (each provider's
-    raw answer), which the frontend renders as a confidence badge + breakdown.
+    answer, with all its fields, also ACRCloud's candidates when it lost the
+    vote), which the frontend renders as a confidence badge + breakdown, and
+    offers to choose from (results.alternatives).
     """
 
     def __init__(self, clients: list[tuple[str, BaseMusicDetectionClient]]):
@@ -191,6 +193,7 @@ class EnsembleDetectionClient(BaseMusicDetectionClient):
                 k: v[k]
                 for k in ("provider", "title", "artist", "isrc", "matched", "error")
             }
+            | {k: v["metadata"][k] for k in _MERGE_KEYS if v["metadata"].get(k)}
             for v in votes
         ]
 

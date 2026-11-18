@@ -15,6 +15,7 @@ _REQUIRED_MODULES = [
     "mutagen",
     "onnxruntime",
     "PIL",
+    "pyarrow",
     "python_multipart",
     "shazamio",
     "truststore",
@@ -151,6 +152,9 @@ a = Analysis(
         # video thumbnails
         "PIL",
         "PIL.Image",
+        # the MAVA export (.mediapkg)
+        "pyarrow",
+        "pyarrow.parquet",
         # onnx
         "onnxruntime",
         # misc

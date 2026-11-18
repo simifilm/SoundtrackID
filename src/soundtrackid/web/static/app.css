@@ -280,8 +280,73 @@ footer a { color: inherit; }
   color: #1f2937; font-weight: 400;
 }
 .fc-grid input:focus { outline: none; border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+/* An ID's field, with a link to its page at its right end once filled in. */
+.fc-id { position: relative; display: flex; }
+.fc-id input { flex: 1; min-width: 0; padding-right: 1.8rem; }
+.fc-id-link {
+  position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%);
+  color: #7c3aed; text-decoration: none; font-size: 0.95rem;
+}
+.fc-id-link:hover { color: #4c1d95; }
+.fc-id-link:not([href]) { display: none; }
 #fc-status { display: block; min-height: 1.1em; margin: 0.75rem 0 0; font-size: 0.8rem; color: #6b7280; }
 .fc-actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.75rem; flex-wrap: wrap; }
+
+/* Choosing among the films found online. margin: auto centres the dialog,
+   which the reset at the top of this file would otherwise pin to the corner. */
+#film-choose, #song-choose {
+  margin: auto; width: min(560px, calc(100vw - 2rem)); max-height: calc(100vh - 4rem); overflow: auto;
+  background: #ffffff; color: #1e1b4b; border: 1px solid #ddd6fe; border-radius: 12px; padding: 1.25rem 1.5rem;
+  box-shadow: 0 8px 32px rgba(76,29,149,0.18);
+}
+#film-choose::backdrop, #song-choose::backdrop { background: rgba(30,27,75,0.35); }
+#film-choose h3, #song-choose h3 { margin: 0 0 0.75rem; color: #4c1d95; font-size: 1.05rem; }
+#fc-candidates { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.fc-candidate {
+  display: flex; gap: 0.75rem; width: 100%; padding: 0.6rem; text-align: left; font: inherit; color: inherit;
+  background: #ffffff; border: 1px solid #ede9fe; border-radius: 8px; cursor: pointer;
+}
+.fc-candidate:hover, .fc-candidate:focus-visible { outline: none; border-color: #a78bfa; background: #faf8ff; }
+.fc-poster { flex: none; width: 46px; height: 69px; border-radius: 4px; background: #ede9fe; object-fit: cover; }
+.fc-cand-text { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; font-size: 0.85rem; }
+.fc-cand-sub, .fc-overview { color: #6b7280; font-size: 0.78rem; line-height: 1.35; }
+.fc-overview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fc-match {
+  align-self: flex-start; padding: 0.05rem 0.5rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600; color: #6d28d9; background: #ede9fe;
+}
+
+/* Choosing a segment's song among those the providers found in it. */
+#song-choose { width: min(720px, calc(100vw - 2rem)); }
+#song-choose h4 {
+  margin: 1rem 0 0.4rem; font-size: 0.75rem; color: #7c3aed;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.sc-segment { display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; color: #6b7280; }
+.sc-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+.sc-song {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem;
+  border: 1px solid #ede9fe; border-radius: 8px; font-size: 0.85rem;
+}
+.sc-song.current { border-color: #a78bfa; background: #faf8ff; }
+.sc-text { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
+.sc-details { color: #6b7280; font-size: 0.75rem; }
+.sc-song .track-links { flex-direction: row; gap: 0.4rem; }
+.sc-current {
+  padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600; color: #6d28d9; background: #ede9fe;
+}
+.sc-button {
+  border: 1px solid #c4b5fd; background: #ffffff; color: #6d28d9; cursor: pointer; white-space: nowrap;
+  border-radius: 7px; padding: 0.25rem 0.7rem; font-size: 0.75rem; font-weight: 600;
+}
+.sc-button:hover { background: #f5f3ff; }
+.sc-button:disabled { opacity: 0.6; cursor: default; }
+.sc-typed { display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; margin-top: 1.25rem; }
+.sc-typed .fc-grid { flex: 1; }
+.sc-typed .sc-button { padding: 0.5rem 0.9rem; }
+.sc-none { margin: 0.75rem 0; color: #6b7280; font-size: 0.85rem; }
+#sc-status { display: block; min-height: 1.1em; margin-top: 0.75rem; font-size: 0.8rem; color: #6b7280; }
 
 /* Anachronism marking + hide-toggle. */
 #results-toolbar { display: flex; align-items: center; gap: 1rem; margin: 0.75rem 0; flex-wrap: wrap; }
@@ -609,6 +674,15 @@ input.cell-edit {
 
 .track-link:hover { opacity: 1; }
 .track-link svg { width: 15px; height: 15px; }
+
+/* Title cell: cover, title, then the platform links at the cell's end, so a
+   long title wraps beside them instead of pushing them onto a new line (under
+   the cover). Stacked in Tracks, side by side in the shorter Timeline rows. */
+.title-cell { display: flex; align-items: center; }
+.title-text { flex: auto; }
+.track-links { display: flex; flex-direction: column; gap: 2px; margin-left: 0.5rem; }
+.track-links .track-link { margin-left: 0; }
+#results-table .track-links { flex-direction: row; gap: 0.4rem; }
 
 /* History Panel */
 #history-panel {

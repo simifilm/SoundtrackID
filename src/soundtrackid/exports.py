@@ -1,17 +1,16 @@
-"""The exports of a run's results: a CSV, and the TSV and mapping MAVA imports.
+"""The exports of a run's results: a CSV, a VIAN project and a MAVA .mediapkg.
 
-MAVA (https://github.com/sdsc-ordes/mava-api) has no flat JSON export schema of
-its own — its API builds an in-memory RDF graph from either raw Turtle or a TSV
-file paired with a JSON "mapping" (`POST /graph/import_tsv`). Each row becomes a
-`mava:AnnotationSegment` (startTime/endTime/stringValue) belonging to a
-`mava:AnnotationSeries`. This module produces that TSV + mapping pair for a run's
-music cues so they can be imported straight into a MAVA graph, and from there
-into VIAN.
+VIAN (https://github.com/Movie-Analytics/VIAN) and MAVA
+(https://github.com/sdsc-ordes/mava-exchange) each get the run's music cues as
+one track, a segment per cue labelled "title — artist".
 """
 
 import csv
 import io
 import json
+import uuid
+import zipfile
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -46,11 +45,7 @@ def _flatten(fields: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return flat
 
 
-# ── MAVA ──────────────────────────────────────────────────────────────────────
-
-MAVA_TIME_COLUMN = "start_in_seconds"
-MAVA_DURATION_COLUMN = "duration_in_seconds"
-MAVA_VALUE_COLUMN = "annotation"
+# ── VIAN and MAVA ─────────────────────────────────────────────────────────────
 
 
 def _cue_label(cue: dict[str, Any]) -> str:
@@ -61,29 +56,131 @@ def _cue_label(cue: dict[str, Any]) -> str:
     return title or "Unidentified music"
 
 
-def build_mava_tsv(cues: list[dict[str, Any]]) -> str:
-    """Build the TSV body expected by MAVA's `POST /graph/import_tsv`."""
-    buf = io.StringIO()
-    writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
-    writer.writerow([MAVA_TIME_COLUMN, MAVA_DURATION_COLUMN, MAVA_VALUE_COLUMN])
-    for cue in cues:
-        writer.writerow([cue.get("start", 0), cue.get("duration", 0), _cue_label(cue)])
+def _cue_spans(cues: list[dict[str, Any]]) -> list[tuple[float, float, str]]:
+    """Each cue's start and end (s) and label, in time order."""
+    return sorted(
+        (cue["start"], cue["start"] + cue["duration"], _cue_label(cue)) for cue in cues
+    )
+
+
+def _zip(files: dict[str, str | bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
     return buf.getvalue()
 
 
-def build_mava_mapping(video_name: str | None = None) -> dict[str, Any]:
-    """Build the mapping JSON MAVA expects alongside the TSV.
+def build_vian_project(cues: list[dict[str, Any]], video: dict[str, Any]) -> bytes:
+    """The cues as a VIAN project: the zip VIAN's "Import project" takes, with
+    the video, which the user picks there.
 
-    MAVA takes it as its `mapping_json` form field.
+    A VIAN project is its two stores, main.json and undoable.json, at the root
+    of the zip. A track's segments are in frames, and VIAN takes the frame rate
+    from main.json, not from the video. `video` is thumbnails.video_info().
     """
-    description = (
-        f"SoundtrackID cues — {video_name}" if video_name else "SoundtrackID cues"
-    )
-    return {
-        "series_description": description,
-        "value_description": "Identified music cue (title — artist)",
-        "value_type": "string",
-        "time_column": MAVA_TIME_COLUMN,
-        "value_column": MAVA_VALUE_COLUMN,
-        "duration_column": MAVA_DURATION_COLUMN,
+    fps = video["fps"]
+    main = {
+        "fps": fps,
+        "numFrames": video["frames"],
+        "videoDuration": video["duration"],
+        "width": video["width"],
+        "height": video["height"],
     }
+    undoable = {
+        "subtitles": None,  # VIAN's import links a subtitles file unless null
+        "subtitlesVisible": True,
+        "timelines": [
+            {
+                "data": [
+                    {
+                        "annotation": label,
+                        "end": round(end * fps),
+                        "id": str(uuid.uuid4()),
+                        "start": round(start * fps),
+                        "vocabAnnotation": [],
+                    }
+                    for start, end, label in _cue_spans(cues)
+                ],
+                "hidden": False,
+                "id": str(uuid.uuid4()),
+                "locked": False,
+                "name": "Music cues (SoundtrackID)",
+                "type": "shots",
+                "vocabulary": None,
+            }
+        ],
+        "vocabularies": [],
+    }
+    return _zip({"main.json": json.dumps(main), "undoable.json": json.dumps(undoable)})
+
+
+MAVA = "http://example.org/mava/ontology#"
+MEDIAPKG_TRACK = "music_cues"
+
+
+def build_mediapkg(
+    cues: list[dict[str, Any]],
+    video_id: str,
+    src: str,
+    video: dict[str, Any] | None,
+) -> bytes:
+    """The cues as a .mediapkg (format 0.2), MAVA's exchange format, which VIAN
+    imports too: an AnnotationSeries track.
+
+    A zip of manifest.json and a Parquet file per track, in a folder named after
+    the video; see spec/SPEC.md of mava-exchange. `src` is the video's file
+    name, `video` thumbnails.video_info() or None without the video.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    schema = pa.schema(
+        [
+            ("start_seconds", pa.float64()),
+            ("end_seconds", pa.float64()),
+            ("annotations", pa.string()),
+        ]
+    )
+    rows = [
+        {"start_seconds": start, "end_seconds": end, "annotations": label}
+        for start, end, label in _cue_spans(cues)
+    ]
+    parquet = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), parquet)
+
+    path = f"{video_id}/{MEDIAPKG_TRACK}.parquet"
+    entry: dict[str, Any] = {"id": video_id, "src": src}
+    if video:
+        entry |= {
+            "width": video["width"],
+            "height": video["height"],
+            "fps": video["fps"],
+            "duration_seconds": video["duration"],
+        }
+    manifest = {
+        "version": "0.2",
+        "created": datetime.now(timezone.utc).isoformat(),
+        "description": f"Music cues identified by SoundtrackID in {src}",
+        "ontology": MAVA,
+        "context": {
+            "@context": {
+                "xsd": "http://www.w3.org/2001/XMLSchema#",
+                "mava": MAVA,
+                "start_seconds": {"@id": "mava:atTime", "@type": "xsd:decimal"},
+                "end_seconds": {"@id": "mava:endTime", "@type": "xsd:decimal"},
+                "annotations": {"@id": "mava:stringValue", "@type": "xsd:string"},
+            }
+        },
+        "tracks": {
+            MEDIAPKG_TRACK: {
+                "type": "mava:AnnotationSeries",
+                "description": "Music cues identified by SoundtrackID (title — artist)",
+                "columns": schema.names,
+            }
+        },
+        "videos": [{**entry, "files": {MEDIAPKG_TRACK: path}}],
+    }
+    return _zip(
+        {"manifest.json": json.dumps(manifest, indent=2), path: parquet.getvalue()}
+    )

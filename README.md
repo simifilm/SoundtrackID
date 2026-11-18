@@ -86,9 +86,10 @@ listed under **Recent runs** and can be downloaded again at any time.
 
 ### Metadata enrichment
 
-Before the analysis starts, a **Confirm film** panel shows the details read from the video
-file's own tags. Correct or complete them, or click **Look up online** to fill the empty
-fields. The year matters: it is used to flag music that was released after the film.
+Before the analysis starts, a **Confirm film or series** panel shows the details read from the video
+file's own tags. Correct or complete them, or click **Look up online** and choose the film
+or series from the ones found, which then replaces the details. The year matters: it is used to flag
+music that was released after the film.
 The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.
@@ -186,7 +187,7 @@ uv run --extra app soundtrackid analyze path/to/video.mp4
                       The film, where its file's tags lack it or are wrong; the
                       year flags music released after the film
 --lookup-film         Fill in what is missing about the film online (TMDb,
-                      Wikidata), like the app's Look up online
+                      Wikidata)
 --csv                 Also write results.csv: the same results as a spreadsheet
 ```
 
@@ -271,7 +272,7 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   │                           AudD) and ensemble voting
 │   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
-│   ├── exports.py              The CSV and MAVA (TSV and mapping) exports
+│   ├── exports.py              The CSV, VIAN (project zip) and MAVA (.mediapkg) exports
 │   └── metadata/               Film and composer enrichment
 │       ├── enricher.py         Looks up the composers of a run's cues
 │       ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev

@@ -15,8 +15,9 @@ function showResults(results) {
 
   setupVideo(results, videoName);
   renderFilmHeader(results.film);
-  // A re-run needs the video the server stored for this run.
+  // A re-run and the VIAN export need the video the server stored for this run.
   document.getElementById('rerun-btn').style.display = results.video ? '' : 'none';
+  document.getElementById('vian-export-btn').style.display = results.video ? '' : 'none';
 
   const tabs = document.getElementById('results-tabs');
   const tracksView = document.getElementById('tracks-view');

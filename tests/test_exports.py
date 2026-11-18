@@ -1,8 +1,8 @@
 """Tests for the exports (exports.py).
 
 Covers exports.results_to_csv, which the CLI's --csv also writes with, and
-GET /output/{video_name}/csv (the UI's download); and the MAVA/VIAN-Export
-compatible export and GET /output/{video_name}/mava.
+GET /output/{video_name}/csv (the UI's download); and the VIAN project and MAVA
+.mediapkg exports, GET /output/{video_name}/vian and .../mediapkg.
 """
 
 import csv
@@ -10,10 +10,12 @@ import io
 import json
 import zipfile
 
+import pyarrow.parquet as pq
 from fastapi.testclient import TestClient
 
-from soundtrackid.exports import build_mava_mapping, build_mava_tsv, results_to_csv
+from soundtrackid.exports import build_mediapkg, build_vian_project, results_to_csv
 from soundtrackid.web.app import app
+from tests.media import FPS, write_video
 
 client = TestClient(app)
 
@@ -114,63 +116,125 @@ def test_download_of_a_missing_run_is_404(runs_dir):
     assert client.get("/output/nope/csv").status_code == 404
 
 
-# ── MAVA ───────────────────────────────────────────────────────────────────
+# ── VIAN and MAVA ──────────────────────────────────────────────────────────
+
+# Not in time order: the exports put them in it.
+EXPORT_CUES = [
+    {"start": 100.0, "duration": 5.0, "title": None, "artist": None},
+    {"start": 12.5, "duration": 30.0, "title": "Main Theme", "artist": "John Williams"},
+]
+VIDEO = {"fps": 24.0, "frames": 2880, "width": 640, "height": 360, "duration": 120.0}
 
 
-def test_build_mava_tsv_uses_title_artist_label():
-    cues = [
-        {
-            "start": 12.5,
-            "duration": 30.0,
-            "title": "Main Theme",
-            "artist": "John Williams",
-        },
-        {"start": 100.0, "duration": 5.0, "title": None, "artist": None},
-    ]
-    tsv = build_mava_tsv(cues)
-    lines = tsv.strip("\n").split("\n")
-    assert lines[0].split("\t") == [
-        "start_in_seconds",
-        "duration_in_seconds",
-        "annotation",
-    ]
-    assert lines[1] == "12.5\t30.0\tMain Theme — John Williams"
-    assert lines[2] == "100.0\t5.0\tUnidentified music"
+def _unzip(content):
+    return zipfile.ZipFile(io.BytesIO(content))
 
 
-def test_build_mava_mapping_matches_import_tsv_contract():
-    mapping = build_mava_mapping("my_video")
-    assert mapping["time_column"] == "start_in_seconds"
-    assert mapping["duration_column"] == "duration_in_seconds"
-    assert mapping["value_column"] == "annotation"
-    assert mapping["value_type"] == "string"
-    assert "my_video" in mapping["series_description"]
-
-
-def test_export_endpoint_returns_zip_with_tsv_and_mapping(runs_dir):
+def _run_with_a_cue(runs_dir):
+    """A run with a cue from 1 s to 3 s, of a film.mp4 (not kept)."""
     run_dir = runs_dir / "myrun"
     run_dir.mkdir()
-    (run_dir / "results.json").write_text(
-        json.dumps(
-            {
-                "cues": [{"start": 1.0, "duration": 2.0, "title": "T", "artist": "A"}],
-            }
-        )
-    )
+    cue = {"start": 1.0, "duration": 2.0, "title": "T", "artist": "A"}
+    results = {"source": "film.mp4", "cues": [cue]}
+    (run_dir / "results.json").write_text(json.dumps(results))
+    return run_dir
 
-    r = client.get("/output/myrun/mava")
+
+def test_vian_project_holds_the_cues_as_a_track_in_frames():
+    zf = _unzip(build_vian_project(EXPORT_CUES, VIDEO))
+
+    # VIAN's two stores, at the root
+    assert sorted(zf.namelist()) == ["main.json", "undoable.json"]
+    assert json.loads(zf.read("main.json")) == {
+        "fps": 24.0,
+        "numFrames": 2880,
+        "videoDuration": 120.0,
+        "width": 640,
+        "height": 360,
+    }
+    undoable = json.loads(zf.read("undoable.json"))
+    assert undoable["subtitles"] is None  # else VIAN's import links a subtitles file
+    [track] = undoable["timelines"]
+    assert track["type"] == "shots"
+    assert [(s["start"], s["end"], s["annotation"]) for s in track["data"]] == [
+        (300, 1020, "Main Theme — John Williams"),
+        (2400, 2520, "Unidentified music"),
+    ]
+
+
+def test_mediapkg_holds_the_cues_as_an_annotation_series():
+    zf = _unzip(build_mediapkg(EXPORT_CUES, "my_video", "my_video.mp4", VIDEO))
+
+    manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["version"] == "0.2"
+    track = manifest["tracks"]["music_cues"]
+    assert track["type"] == "mava:AnnotationSeries"
+    assert manifest["videos"] == [
+        {
+            "id": "my_video",
+            "src": "my_video.mp4",
+            "width": 640,
+            "height": 360,
+            "fps": 24.0,
+            "duration_seconds": 120.0,
+            "files": {"music_cues": "my_video/music_cues.parquet"},
+        }
+    ]
+    table = pq.read_table(io.BytesIO(zf.read("my_video/music_cues.parquet")))
+    # The declared columns, in their order, each mapped to the ontology
+    assert table.column_names == track["columns"]
+    assert set(track["columns"]) <= set(manifest["context"]["@context"])
+    assert table.to_pydict() == {
+        "start_seconds": [12.5, 100.0],
+        "end_seconds": [42.5, 105.0],
+        "annotations": ["Main Theme — John Williams", "Unidentified music"],
+    }
+
+
+def test_mediapkg_without_the_video_leaves_out_its_frames_and_size():
+    zf = _unzip(build_mediapkg(EXPORT_CUES, "my_video", "my_video.mp4", None))
+
+    [video] = json.loads(zf.read("manifest.json"))["videos"]
+    assert set(video) == {"id", "src", "files"}
+
+
+def test_vian_export_counts_in_the_frames_of_the_runs_video(runs_dir):
+    run_dir = _run_with_a_cue(runs_dir)
+    write_video(run_dir / "source.mp4", seconds=2)
+
+    r = client.get("/output/myrun/vian")
+
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/zip"
+    assert r.headers["content-disposition"] == (
+        'attachment; filename="myrun_vian_project.zip"'
+    )
+    zf = _unzip(r.content)
+    main = json.loads(zf.read("main.json"))
+    assert (main["fps"], main["numFrames"]) == (FPS, 2 * FPS)
+    [segment] = json.loads(zf.read("undoable.json"))["timelines"][0]["data"]
+    assert (segment["start"], segment["end"]) == (1 * FPS, 3 * FPS)
 
-    zf = zipfile.ZipFile(io.BytesIO(r.content))
-    names = set(zf.namelist())
-    assert names == {"mava_annotations.tsv", "mava_mapping.json"}
-    tsv_body = zf.read("mava_annotations.tsv").decode("utf-8")
-    assert "T — A" in tsv_body
-    mapping = json.loads(zf.read("mava_mapping.json"))
-    assert mapping["time_column"] == "start_in_seconds"
+
+def test_vian_export_needs_the_runs_video(runs_dir):
+    _run_with_a_cue(runs_dir)
+
+    assert client.get("/output/myrun/vian").status_code == 404
 
 
-def test_export_endpoint_missing_run_is_404(runs_dir):
-    r = client.get("/output/nope/mava")
-    assert r.status_code == 404
+def test_mediapkg_export_names_the_film_and_its_video(runs_dir):
+    run_dir = _run_with_a_cue(runs_dir)
+    write_video(run_dir / "source.mp4", seconds=2)
+
+    r = client.get("/output/myrun/mediapkg")
+
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/vnd.mava.mediapkg+zip"
+    assert r.headers["content-disposition"] == 'attachment; filename="myrun.mediapkg"'
+    [video] = json.loads(_unzip(r.content).read("manifest.json"))["videos"]
+    assert (video["id"], video["src"], video["fps"]) == ("myrun", "film.mp4", FPS)
+
+
+def test_exports_of_a_missing_run_are_404(runs_dir):
+    assert client.get("/output/nope/vian").status_code == 404
+    assert client.get("/output/nope/mediapkg").status_code == 404

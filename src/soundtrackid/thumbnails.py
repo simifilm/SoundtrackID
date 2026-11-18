@@ -1,4 +1,4 @@
-"""Video thumbnail filmstrip extraction.
+"""Video thumbnail filmstrip extraction, and the video's frame rate and size.
 
 Produces a single horizontal sprite of evenly-spaced frames from a video, used
 by the web UI as a scrubbable timeline below the waveform (see web/static/js/video.js).
@@ -14,6 +14,51 @@ MAX_COLUMNS = 240  # cap on number of frames in the strip
 SECONDS_PER_THUMB = 4  # target spacing
 
 
+def _video_stream(container):
+    """The container's first real video stream, or None."""
+    # Skip embedded cover art (e.g. in MP3s), which PyAV exposes as a video stream.
+    streams = [
+        s
+        for s in container.streams.video
+        if not s.disposition & Disposition.attached_pic
+    ]
+    return streams[0] if streams else None
+
+
+def frame_rate(video_path: Path) -> float | None:
+    """Frames per second, for stepping through the video frame by frame in the
+    web UI; None if the file has no video stream or no known rate."""
+    try:
+        with av.open(str(video_path)) as container:
+            stream = _video_stream(container)
+            rate = stream.average_rate if stream else None
+            return float(rate) if rate else None
+    except Exception:
+        return None
+
+
+def video_info(video_path: Path) -> dict | None:
+    """The video's frame rate, frame count, size and duration (s), for the VIAN
+    and MAVA exports; None if the file has no video stream or no known rate."""
+    try:
+        with av.open(str(video_path)) as container:
+            stream = _video_stream(container)
+            if stream is None or not stream.average_rate:
+                return None
+            fps = float(stream.average_rate)
+            duration = (container.duration or 0) / av.time_base
+            return {
+                "fps": fps,
+                # 0 where the container doesn't store the count (e.g. MKV)
+                "frames": stream.frames or round(duration * fps),
+                "width": stream.codec_context.width,
+                "height": stream.codec_context.height,
+                "duration": duration,
+            }
+    except Exception:
+        return None
+
+
 def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
     """Extract an evenly-spaced frame strip and save it as one JPEG sprite.
 
@@ -27,15 +72,9 @@ def extract_filmstrip(video_path: Path, out_path: Path) -> dict | None:
         return None
 
     try:
-        # Skip embedded cover art (e.g. in MP3s), which PyAV exposes as a video stream.
-        streams = [
-            s
-            for s in container.streams.video
-            if not s.disposition & Disposition.attached_pic
-        ]
-        if not streams:
+        stream = _video_stream(container)
+        if stream is None:
             return None
-        stream = streams[0]
         time_base = stream.time_base
         if time_base is None:  # no times to seek the frames by
             return None

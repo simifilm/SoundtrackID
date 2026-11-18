@@ -112,6 +112,91 @@ def test_escape_keeps_the_value(page, run):
     assert saved(run)["cues"][0]["title"] == "Moonlight Serenade"
 
 
+COVER = {
+    "provider": "acrcloud",
+    "title": "It Had to Be You",
+    "artist": "Infinity Zan",
+    "isrc": "QZ1",
+    "release_year": 2017,
+    "score": 100.0,
+    "windows": 1,
+}
+ORIGINAL = {
+    "provider": "shazam",
+    "title": "It Had to Be You",
+    "artist": "Harry Connick, Jr.",
+    "isrc": "USSM18900491",
+    "release_year": 1989,
+    "score": None,
+    "windows": 2,
+}
+
+
+@pytest.fixture
+def covers(runs):
+    """Two segments identified as a cover, the original among the songs the
+    providers found in them."""
+    return make_run(
+        runs,
+        [
+            cue(
+                n,
+                "It Had to Be You",
+                artist="Infinity Zan",
+                isrc="QZ1",
+                alternatives=[dict(COVER), dict(ORIGINAL)],
+            )
+            for n in (1, 2)
+        ],
+    )
+
+
+def song_choice(page, row):
+    """Open the song choice of the Timeline's row `row` (from 0)."""
+    page.locator('.results-tab[data-view="timeline"]').click()
+    page.locator("#results-body tr").nth(row).locator(".song-choose-btn").click()
+    return page.locator("#song-choose")
+
+
+def test_choosing_another_song_for_a_segment(page, covers, fakes):
+    """Among those the providers found; only that segment takes it, and its
+    composer is looked up again."""
+    fakes.composers["USSM18900491"] = {"composer": "Isham Jones"}
+    open_run(page)
+
+    dialog = song_choice(page, 0)
+    expect(dialog.locator(".sc-song.current")).to_contain_text("Infinity Zan")
+    original = dialog.locator(".sc-song", has_text="Harry Connick, Jr.")
+    expect(original).to_contain_text("in 2 windows")
+    with page.expect_response(lambda r: r.url.endswith("/song")):
+        original.locator(".sc-use").click()
+
+    expect(dialog).to_be_hidden()
+    rows = page.locator("#results-body tr")
+    expect(rows.nth(0)).to_contain_text("Harry Connick, Jr.")
+    expect(rows.nth(1)).to_contain_text("Infinity Zan")
+    first, second = saved(covers)["cues"]
+    assert (first["artist"], first["enrichment"]["composer"]) == (
+        "Harry Connick, Jr.",
+        "Isham Jones",
+    )
+    assert second["artist"] == "Infinity Zan"
+
+
+def test_typing_in_a_song_none_of_the_providers_found(page, covers):
+    open_run(page)
+
+    dialog = song_choice(page, 0)
+    dialog.locator("#sc-title").fill("It Had to Be You")
+    dialog.locator("#sc-artist").fill("Frank Sinatra")
+    with page.expect_response(lambda r: r.url.endswith("/song")):
+        dialog.get_by_role("button", name="Use typed song").click()
+
+    expect(page.locator("#results-body tr").nth(0)).to_contain_text("Frank Sinatra")
+    first = saved(covers)["cues"][0]
+    assert (first["artist"], first["isrc"]) == ("Frank Sinatra", None)
+
+
 def test_removing_a_track(page, run):
     open_run(page)
     row = page.locator("#tracks-body tr", has_text="Moonlight Serenade")

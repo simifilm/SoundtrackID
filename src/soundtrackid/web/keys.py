@@ -1,10 +1,12 @@
-"""The API keys entered in the app (Settings → API keys): GET and POST /settings."""
+"""The API keys entered in the app (Settings → API keys) and the detection
+providers ticked there: GET and POST /settings."""
 
 import json
 import os
 
 from fastapi import APIRouter, Body
 
+from soundtrackid.detection.ensemble import PROVIDER_PRIORITY
 from soundtrackid.results import save_json
 from soundtrackid.web import data
 
@@ -57,12 +59,15 @@ def _settings_state() -> dict:
             "configured": bool(value),
             "preview": value if field in _PLAIN_FIELDS else _mask(value),
         }
+    # The providers ticked last time; empty when never changed (the page's default).
+    state["providers"] = saved.get("providers", [])
     return state
 
 
 @router.get("/settings")
 async def get_settings() -> dict:
-    """Which API keys are configured (masked, never the raw secret)."""
+    """Which API keys are configured (masked, never the raw secret), and the
+    providers ticked last time."""
     return _settings_state()
 
 
@@ -70,12 +75,21 @@ async def get_settings() -> dict:
 async def save_settings(payload: dict = Body(...)) -> dict:
     """Persist API keys entered in the settings page and apply them to the
     environment so subsequent analysis runs use them. An empty string clears a
-    field. Only known fields are accepted."""
+    field. Only known fields are accepted.
+
+    `providers` (a list of names) keeps the ticked providers for the next start;
+    only known names are kept, and an empty list clears the choice."""
     path = data.settings_path()
     try:
         saved = json.loads(path.read_text())
     except (OSError, ValueError):
         saved = {}
+    if "providers" in payload:
+        providers = [p for p in payload["providers"] if p in PROVIDER_PRIORITY]
+        if providers:
+            saved["providers"] = providers
+        else:
+            saved.pop("providers", None)
     for field, value in payload.items():
         if field not in _KEY_FIELDS:
             continue

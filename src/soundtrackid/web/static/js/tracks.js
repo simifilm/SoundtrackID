@@ -23,9 +23,10 @@ function buildTrackRowHTML(group) {
   const temporalBadge = cue.temporal_pick
     ? '<span class="temporal-badge" title="Re-ranked to a period-plausible match: the top result postdated the film, so an earlier candidate was chosen.">↻</span>'
     : '';
+  const links = platformLinkIcons(cue);
   return `
     <td class="expand-cell">${expander}</td>
-    <td class="editable" data-field="title" title="Double-click to edit">${cover}${fmt(cue.title)}${temporalBadge}${platformLinkIcons(cue)}</td>
+    <td class="editable" data-field="title" title="Double-click to edit"><div class="title-cell">${cover}<span class="title-text">${fmt(cue.title)}${temporalBadge}</span>${links ? `<span class="track-links">${links}</span>` : ''}</div></td>
     <td class="editable" data-field="artist" title="Double-click to edit">${fmt(cue.artist)}</td>
     <td class="${composerCls}" data-field="composer" title="Double-click to edit">${fmt(enr.composer)}${authorsInlineHTML(enr)}</td>
     <td class="editable" data-field="date" title="Double-click to edit"${dateCls}>${fmt(dateYear)}</td>
@@ -183,18 +184,24 @@ function buildTimelineRowHTML(cue, videoName) {
   const anaBadge = cue.anachronistic
     ? '<span class="anachronism-badge" title="Later than the film; likely a later work, not the original score.">⚠</span>'
     : '';
+  const links = platformLinkIcons(cue);
+  const choose = cue.title
+    ? '<button type="button" class="sc-button song-choose-btn" title="Every song the providers found in this segment, to choose from">Alternatives</button>'
+    : '';
   return `
     <td><span class="badge music">${+cue.segment_id.replace('seg_', '')}</span></td>
     <td>${fmtTime(cue.start)}</td>
     <td>${fmtTime(cue.duration)}</td>
-    <td>${fmt(cue.title)}${platformLinkIcons(cue)}${anaBadge}</td>
-    <td>${fmt(cue.artist)}</td>`;
+    <td><div class="title-cell"><span class="title-text">${fmt(cue.title)}${anaBadge}</span>${links ? `<span class="track-links">${links}</span>` : ''}</div></td>
+    <td>${fmt(cue.artist)}</td>
+    <td>${choose}</td>`;
 }
 
 // Clicking a timeline row plays that segment in the shared player (stops at its end).
 function attachTimelineRow(tr, cue) {
   tr.addEventListener('click', e => {
     if (e.target.closest('a')) return;
+    if (e.target.closest('.song-choose-btn')) { openSongChoose(cue); return; }
     const wfCue = wfCues.find(c => c.segment_id === cue.segment_id);
     focusCueOnTimeline(wfCue || { start: cue.start, duration: cue.duration, end: cue.start + cue.duration });
     playSegment(cue);
@@ -213,6 +220,121 @@ function renderTimeline(cues, videoName) {
     resultsBody.appendChild(tr);
   });
 }
+
+// Choosing a segment's song among those the providers found in it (its
+// alternatives), or typing one in. Only that segment changes; the server looks
+// its composer up again and answers with the results as saved.
+const songChoose = document.getElementById('song-choose');
+const scSongs = document.getElementById('sc-songs');
+const scTyped = document.getElementById('sc-typed');
+const scStatus = document.getElementById('sc-status');
+const scPlay = document.getElementById('sc-play');
+let songChooseCue = null;
+
+// The Play button pauses while the video runs, however it was started.
+function updateScPlay() { scPlay.textContent = videoEl.paused ? '▶ Play' : '❚❚ Pause'; }
+videoEl.addEventListener('play', updateScPlay);
+videoEl.addEventListener('pause', updateScPlay);
+
+function isCueSong(cue, song) {
+  return song.title === cue.title && song.artist === cue.artist && (song.isrc || null) === (cue.isrc || null);
+}
+
+function songChoiceHTML(cue, song, index) {
+  const current = isCueSong(cue, song);
+  const details = [
+    song.album,
+    song.release_year,
+    song.isrc && `ISRC ${song.isrc}`,
+    song.score != null && `score ${song.score}`,
+    song.windows > 1 && `in ${song.windows} windows`,
+  ].filter(Boolean).map(fmt).join(' · ');
+  const later = song.anachronistic
+    ? '<span class="anachronism-badge" title="Released well after the film: likely a later recording.">⚠ later</span>'
+    : '';
+  const action = current
+    ? '<span class="sc-current">Current</span>'
+    : `<button type="button" class="sc-button sc-use" data-index="${index}">Use</button>`;
+  return `<li class="sc-song${current ? ' current' : ''}">`
+       + `<span class="sc-text"><span><strong>${fmt(song.title)}</strong>${song.artist ? ' – ' + fmt(song.artist) : ''}${later}</span>`
+       + `<span class="sc-details">${details}</span></span>`
+       + `<span class="track-links">${platformLinkIcons(song)}</span>${action}</li>`;
+}
+
+// The songs by provider, each in the order the provider named them.
+function renderSongChoices(cue) {
+  const songs = (cue.alternatives || []).map((song, index) => ({ song, index }));
+  if (!songs.length) {
+    scSongs.innerHTML = '<p class="sc-none">This run kept no answers of the providers for this segment. Analyze the film again to list them.</p>';
+    return;
+  }
+  const providers = [...new Set(songs.map(s => s.song.provider))];
+  scSongs.innerHTML = providers.map(p => {
+    const items = songs.filter(s => s.song.provider === p).map(s => songChoiceHTML(cue, s.song, s.index));
+    return `<h4>${fmt(PROVIDER_LABELS[p] || p || 'Provider')}</h4><ul class="sc-list">${items.join('')}</ul>`;
+  }).join('');
+}
+
+function openSongChoose(cue) {
+  if (resumeRunning) return;
+  songChooseCue = cue;
+  document.getElementById('sc-segment').textContent =
+    `Segment ${+cue.segment_id.replace('seg_', '')} · ${fmtTime(cue.start)} – ${fmtTime(cue.start + cue.duration)}`;
+  scPlay.hidden = !hasVideo;
+  updateScPlay();
+  renderSongChoices(cue);
+  scTyped.reset();
+  scStatus.textContent = '';
+  songChoose.showModal();
+}
+
+async function chooseSong(choice) {
+  const cue = songChooseCue;
+  const controls = songChoose.querySelectorAll('button, input');
+  controls.forEach(el => { el.disabled = true; });
+  scStatus.textContent = 'Saving, and looking up the composer…';
+  try {
+    const r = await fetch(`/results/${encodeURIComponent(currentVideoName)}/cues/${encodeURIComponent(cue.segment_id)}/song`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(choice),
+    });
+    if (!r.ok) throw new Error('server returned ' + r.status);
+    const { results } = await r.json();
+    Object.assign(cue, results.cues.find(c => c.segment_id === cue.segment_id));
+    songChoose.close();
+    rerenderResults();
+  } catch (err) {
+    scStatus.textContent = 'Could not change the song: ' + err.message;
+  } finally {
+    controls.forEach(el => { el.disabled = false; });
+  }
+}
+
+scSongs.addEventListener('click', e => {
+  const use = e.target.closest('.sc-use');
+  if (use) chooseSong({ alternative: Number(use.dataset.index) });
+});
+scTyped.addEventListener('submit', e => {
+  e.preventDefault();
+  chooseSong({
+    title: document.getElementById('sc-title').value,
+    artist: document.getElementById('sc-artist').value,
+  });
+});
+// Pause; or play the segment: on from where it was paused in it, else from its
+// start, stopping at its end either way.
+scPlay.addEventListener('click', () => {
+  if (!videoEl.paused) { videoEl.pause(); return; }
+  const cue = songChooseCue, end = cue.start + cue.duration;
+  if (videoEl.currentTime >= cue.start && videoEl.currentTime < end) {
+    activeSegmentEnd = end;
+    const p = videoEl.play(); if (p && p.catch) p.catch(() => {});
+  } else {
+    playSegment(cue);
+  }
+});
+document.getElementById('sc-close').addEventListener('click', () => songChoose.close());
 
 // Classes: each classification window's music score and top 3 classes, to trace
 // where a wrong music / no-music verdict comes from. Music windows are badged.

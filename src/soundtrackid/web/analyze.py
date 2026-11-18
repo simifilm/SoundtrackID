@@ -1,6 +1,6 @@
 """Starting a run from the page: stage the film and confirm what it is
-(/identify, /film/lookup), analyze it (/analyze), analyze a run's film again
-(/rerun) or identify the cues a provider left pending (/resume)."""
+(/identify, /film/search, /film/lookup), analyze it (/analyze), analyze a run's
+film again (/rerun) or identify the cues a provider left pending (/resume)."""
 
 import json
 import logging
@@ -87,7 +87,8 @@ def _build_pipeline(threshold: float, api: str, bridge_gap: float, hop: float):
 async def identify(file: UploadFile) -> dict:
     """Stage an uploaded video and return prefilled film metadata for confirmation.
 
-    Reads MP4 container tags; /film/lookup fills the gaps online on request. The
+    Reads MP4 container tags; /film/search and /film/lookup find the film online
+    on request. The
     returned `staging_id` is passed to /analyze so the file is not re-uploaded.
     """
     _prune_staging()
@@ -116,30 +117,52 @@ async def identify(file: UploadFile) -> dict:
     return {"staging_id": staging_id, "original_name": original_name, "film": film}
 
 
+def _film_hint(hint: dict) -> dict:
+    """What a request knows about a film (imdb_id/tmdb_id/title/year), as the
+    lookup takes it: numbers typed into the form arrive as text, and what is
+    unusable becomes None."""
+
+    def number(key: str) -> int | None:
+        value = hint.get(key)
+        try:
+            return int(value) if value not in (None, "") else None
+        except (ValueError, TypeError):
+            return None
+
+    return {
+        "imdb_id": hint.get("imdb_id") or None,
+        "tmdb_id": number("tmdb_id"),
+        "title": hint.get("title") or None,
+        "year": number("year"),
+    }
+
+
+@router.post("/film/search")
+async def film_search(hint: dict = Body(default={})) -> dict:
+    """The films a hint may mean, for the user to choose from. No file needed."""
+    from soundtrackid.metadata.film import search_films
+
+    try:
+        candidates = search_films(**_film_hint(hint))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Film search failed: {exc}")
+    return {"candidates": candidates}
+
+
 @router.post("/film/lookup")
 async def film_lookup(hint: dict = Body(default={})) -> dict:
-    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year).
+    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year,
+    and media_type: whether the TMDb ID is a film's "movie" or a series' "tv").
 
     No file needed.
     """
-    from soundtrackid.metadata.film import lookup_film
+    from soundtrackid.metadata.film import MEDIA_TYPES, lookup_film
 
-    year = hint.get("year")
-    try:
-        year = int(year) if year not in (None, "") else None
-    except (ValueError, TypeError):
-        year = None
-    tmdb_id = hint.get("tmdb_id")
-    try:
-        tmdb_id = int(tmdb_id) if tmdb_id not in (None, "") else None
-    except (ValueError, TypeError):
-        tmdb_id = None
+    media_type = hint.get("media_type")
     try:
         film = lookup_film(
-            imdb_id=(hint.get("imdb_id") or None),
-            tmdb_id=tmdb_id,
-            title=(hint.get("title") or None),
-            year=year,
+            **_film_hint(hint),
+            media_type=media_type if media_type in MEDIA_TYPES else None,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Film lookup failed: {exc}")

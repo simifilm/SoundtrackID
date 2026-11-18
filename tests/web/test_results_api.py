@@ -20,6 +20,7 @@ from soundtrackid.results import (
     ANALYSIS_KEYS,
     MATCH_KEYS,
     RESULTS_VERSION,
+    SONG_KEYS,
     ResultsOutput,
     upgrade_results,
 )
@@ -199,6 +200,140 @@ def test_path_traversal_rejected(data_dir, runs_dir, name):
         assert json.loads((folder / "results.json").read_text()) == {"cues": ["keep"]}
 
 
+# ── A cue's song chosen by hand: POST /results/{video_name}/cues/{id}/song ──
+
+COVER = {
+    "provider": "acrcloud",
+    "title": "It Had to Be You",
+    "artist": "Infinity Zan",
+    "isrc": "QZ1",
+    "release_year": 2017,
+    "spotify_url": "https://open.spotify.com/track/1",
+    "score": 100.0,
+    "windows": 1,
+}
+ORIGINAL = {
+    "provider": "shazam",
+    "title": "It Had to Be You",
+    "artist": "Harry Connick, Jr.",
+    "isrc": "USSM18900491",
+    "release_year": 1989,
+    "apple_music_url": "https://music.apple.com/song/1",
+    "score": None,
+    "windows": 1,
+}
+
+
+def _run_with_covers(runs_dir, monkeypatch, composers):
+    """A run of a 1989 film with two cues identified as a cover, the original
+    among the songs the providers named; a composer lookup finds `composers`
+    by ISRC."""
+
+    def enrich(results, **kw):
+        for cue in results["cues"]:
+            if cue.get("isrc") in composers:
+                cue["enrichment"] = {"composer": composers[cue["isrc"]]}
+
+    monkeypatch.setattr("soundtrackid.metadata.enricher.enrich", enrich)
+    cue = {
+        **{k: COVER[k] for k in ("title", "artist", "isrc", "release_year")},
+        "spotify_url": COVER["spotify_url"],
+        "provider": "ensemble",
+        "agreement": {"count": 1, "total": 3, "providers": ["acrcloud"]},
+        "temporal_pick": True,
+        "enrichment": {"composer": "Looked up for the cover"},
+        "alternatives": [COVER, ORIGINAL],
+    }
+    run_dir = runs_dir / "myrun"
+    run_dir.mkdir()
+    results = {
+        "version": RESULTS_VERSION,
+        "film": {"title": "F", "year": 1989},
+        "cues": [{**cue, "segment_id": "seg_001"}, {**cue, "segment_id": "seg_002"}],
+    }
+    (run_dir / "results.json").write_text(json.dumps(results))
+    return run_dir
+
+
+def test_a_chosen_song_replaces_the_match_and_composer_of_its_cue_only(
+    runs_dir, monkeypatch
+):
+    """What the cover had and the original lacks (its Spotify link, the
+    providers' agreement) goes, and the date re-ranking no longer claims the
+    pick. The songs to choose from stay, the cover marked as later than the
+    film."""
+    run_dir = _run_with_covers(runs_dir, monkeypatch, {"USSM18900491": "Isham Jones"})
+
+    r = client.post("/results/myrun/cues/seg_001/song", json={"alternative": 1})
+
+    assert r.status_code == 200
+    chosen, other = json.loads((run_dir / "results.json").read_text())["cues"]
+    assert {k: chosen[k] for k in ("artist", "isrc", "release_year")} == {
+        "artist": "Harry Connick, Jr.",
+        "isrc": "USSM18900491",
+        "release_year": 1989,
+    }
+    assert chosen["apple_music_url"] == ORIGINAL["apple_music_url"]
+    assert (chosen["spotify_url"], chosen["agreement"]) == (None, None)
+    assert (chosen["temporal_pick"], chosen["provider"]) == (False, "ensemble")
+    assert chosen["enrichment"] == {"composer": "Isham Jones"}
+    assert [s["anachronistic"] for s in chosen["alternatives"]] == [True, False]
+    assert (other["artist"], other["enrichment"]["composer"]) == (
+        "Infinity Zan",
+        "Looked up for the cover",
+    )
+    assert r.json()["results"]["cues"][0]["artist"] == "Harry Connick, Jr."
+
+
+def test_a_typed_in_song_keeps_nothing_of_the_old_match(runs_dir, monkeypatch):
+    """Without an ISRC no composer is looked up, as after an analysis."""
+    run_dir = _run_with_covers(runs_dir, monkeypatch, {"QZ1": "Looked up again"})
+
+    r = client.post(
+        "/results/myrun/cues/seg_001/song", json={"title": " Original ", "artist": ""}
+    )
+
+    assert r.status_code == 200
+    chosen = json.loads((run_dir / "results.json").read_text())["cues"][0]
+    assert {k: chosen[k] for k in SONG_KEYS} == {
+        **dict.fromkeys(SONG_KEYS),
+        "title": "Original",
+    }
+    assert chosen["enrichment"] is None
+
+
+@pytest.mark.parametrize(
+    "choice",
+    [
+        {"alternative": 2},
+        {"alternative": -1},
+        {"alternative": True},
+        {"alternative": "1"},
+        {"title": " "},
+        {"title": "Song", "artist": 3},
+        {},
+    ],
+    ids=["past-end", "negative", "bool", "text", "blank", "artist-number", "empty"],
+)
+def test_a_choice_that_isnt_one_is_refused(runs_dir, monkeypatch, choice):
+    """And nothing is saved."""
+    run_dir = _run_with_covers(runs_dir, monkeypatch, {})
+    before = (run_dir / "results.json").read_text()
+
+    r = client.post("/results/myrun/cues/seg_001/song", json=choice)
+
+    assert r.status_code == 422
+    assert (run_dir / "results.json").read_text() == before
+
+
+def test_choosing_the_song_of_an_unknown_cue_is_404(runs_dir, monkeypatch):
+    _run_with_covers(runs_dir, monkeypatch, {})
+
+    r = client.post("/results/myrun/cues/seg_999/song", json={"alternative": 0})
+
+    assert r.status_code == 404
+
+
 # ── Reading runs: GET /results/{video_name} and the history list ───────────
 
 
@@ -321,8 +456,59 @@ def test_older_results_lose_their_confidence():
     }
 
     assert upgrade_results(data)["cues"] == [
-        {"title": "Song", "votes": [{"provider": "shazam", "title": "Song"}]}
+        {
+            "title": "Song",
+            "votes": [{"provider": "shazam", "title": "Song"}],
+            "alternatives": [],
+        }
     ]
+
+
+def test_older_results_list_the_songs_they_kept_to_choose_from():
+    """Of the cue's first window: ACRCloud's top matches, at the cue when its
+    answer won the vote, and each provider's title, artist and ISRC. A cue
+    without them gets none: its own song may have been edited by hand."""
+
+    def vote(provider, title):
+        return {
+            "provider": provider,
+            "title": title,
+            "artist": "A",
+            "isrc": None,
+            "matched": bool(title),
+            "error": None,
+        }
+
+    won = {
+        "title": "Cover",
+        "candidates": [
+            {"title": "Cover", "artist": "A", "score": 80.0},
+            {"title": "Original", "artist": "A", "score": 60.0},
+        ],
+        "votes": [
+            vote("acrcloud", "Cover"),
+            vote("shazam", "Other"),
+            vote("audd", None),
+        ],
+    }
+    lost = {
+        "title": "Other",
+        "votes": [vote("acrcloud", "Cover"), vote("shazam", "Other")],
+    }
+    edited = {"title": "Typed in"}
+
+    cues = upgrade_results({"version": 5, "cues": [won, lost, edited]})["cues"]
+
+    def songs(cue):
+        return [(s["provider"], s["title"], s["score"]) for s in cue["alternatives"]]
+
+    assert songs(cues[0]) == [
+        ("acrcloud", "Cover", 80.0),
+        ("acrcloud", "Original", 60.0),
+        ("shazam", "Other", None),
+    ]
+    assert songs(cues[1]) == [("acrcloud", "Cover", None), ("shazam", "Other", None)]
+    assert "alternatives" not in cues[2]
 
 
 def test_timeline_of_a_run_saved_before_it_had_its_own_file(runs_dir):
@@ -399,24 +585,26 @@ def test_resume_with_nothing_pending_changes_nothing(runs_dir):
 
 
 def test_resumed_cue_gets_the_same_fields_as_an_analyzed_one(runs_dir, monkeypatch):
-    """E.g. its candidates, without which the date re-ranking skips it."""
+    """E.g. its candidates, without which the date re-ranking skips it, and the
+    songs to choose from."""
     metadata = {
         key: f"<{key}>"
         for key in MATCH_KEYS
         if key not in ("provider", "title", "artist")
-    }
+    } | {"votes": [], "candidates": [{"title": "T", "artist": "A", "score": 90.0}]}
 
     def detect(segment):
         return DetectionResult(segment, "T", "A", "acrcloud", dict(metadata))
 
     clip = MusicSegment(np.zeros(1000, np.float32), 0.0, 1.0, 1000)
-    [analyzed], _ = build_cues([(clip, detect(clip))], bridge_gap=2.0)
+    analyzed, _ = build_cues([(clip, detect(clip))], bridge_gap=2.0)
+    [analyzed] = refresh({"cues": analyzed})["cues"]  # as saved
     cues = [{"segment_id": "s1", "title": None, "pending": True}]
     [resumed] = _resume(runs_dir, monkeypatch, detect, cues)["cues"]
 
-    assert {key: resumed[key] for key in MATCH_KEYS} == {
-        key: analyzed[key] for key in MATCH_KEYS
-    }
+    found = (*MATCH_KEYS, "alternatives")
+    assert {key: resumed[key] for key in found} == {key: analyzed[key] for key in found}
+    assert [song["score"] for song in resumed["alternatives"]] == [90.0]
 
 
 def _resume(runs_dir, monkeypatch, detect, cues, enrich=None, asked=None, **results):

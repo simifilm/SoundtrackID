@@ -62,6 +62,27 @@ def test_unknown_fields_ignored(tmp_path, monkeypatch):
     assert "evil" not in saved and saved["audd_api_token"] == "KEEP123456"
 
 
+def test_providers_none_chosen_by_default(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    assert client.get("/settings").json()["providers"] == []
+
+
+def test_providers_saved_beside_the_keys(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    client.post("/settings", json={"audd_api_token": "KEEP123456"})
+    client.post("/settings", json={"providers": ["acrcloud", "evil", "audd"]})
+    assert client.get("/settings").json()["providers"] == ["acrcloud", "audd"]
+    saved = json.loads((tmp_path / "settings.json").read_text())
+    assert saved == {"audd_api_token": "KEEP123456", "providers": ["acrcloud", "audd"]}
+
+
+def test_no_providers_clears_the_choice(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    client.post("/settings", json={"providers": ["shazam", "audd"]})
+    client.post("/settings", json={"providers": []})
+    assert json.loads((tmp_path / "settings.json").read_text()) == {}
+
+
 def test_load_settings_into_env(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     (tmp_path / "settings.json").write_text(json.dumps({"tmdb_key": "hex123"}))

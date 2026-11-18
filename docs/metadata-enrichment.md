@@ -7,10 +7,12 @@ domain 70 years after the **composer's** death.
 
 It runs in two places:
 
-- **Film** — before the analysis starts, in the **Confirm film** panel. The
-  fields are pre-filled from the video file's MP4 tags; **Look up online** fills
-  the empty ones. The confirmed film is passed to `/analyze`, so the film year is
-  known while matches are ranked.
+- **Film** — before the analysis starts, in the **Confirm film or series**
+  panel. The fields are pre-filled from the video file's MP4 tags; **Look up
+  online** lists the films and series they may mean, and the one the user
+  chooses replaces the fields. The
+  confirmed film is passed to `/analyze`, so the film year is known while
+  matches are ranked.
 - **Composer** — automatically at the end of `/analyze` (and of `/resume`), for
   every identified cue that carries an ISRC.
 
@@ -28,13 +30,19 @@ It runs in two places:
   "director_death_year": 2002,
   "imdb_id": "tt0043014",
   "tmdb_id": 599,
+  "media_type": "movie",
   "sources": ["tmdb"]
 }
 ```
 
-Rendered as a purple header above the results table. The director's death year
-is shown for **context only** — a copyright hint reminds the user that the
-operative PD date is the composer's death year, not the director's.
+`media_type` is TMDb's: `"movie"` for a film, `"tv"` for a series. It tells
+which the TMDb ID is, as a film and a series can have the same one. A series'
+`director` is every director of its episodes, most episodes first
+(`"Michelle MacLaren, Adam Bernstein, …"`), and it has no `director_death_year`.
+
+Rendered as a purple header above the results table, each director linked. The
+director's death year is not shown: the operative PD date is the composer's
+death year, not the director's.
 
 ### Per-cue enrichment (`cue.enrichment`)
 
@@ -112,9 +120,10 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
    Confirm film    │  Panel pre-filled from the tags; the user edits it    │
-                   │  "Look up online" → POST /film/lookup                 │
-                   │    (TMDb → Wikidata → imdbapi.dev, fills empty        │
-                   │    fields only)                                       │
+                   │  "Look up online" → POST /film/search → the user      │
+                   │    chooses a film or series → POST /film/lookup by    │
+                   │    its TMDb ID and media type (TMDb → Wikidata →      │
+                   │    imdbapi.dev), which replaces the fields            │
                    └───────────────────────────┬───────────────────────────┘
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
@@ -130,7 +139,7 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
 
 The CLI (`soundtrackid analyze`) runs the same analysis. Its
 `--title`, `--year` and `--imdb-id` options and `--lookup-film` take the place of
-the Confirm film panel.
+the Confirm film or series panel.
 
 ---
 
@@ -145,12 +154,30 @@ the Confirm film panel.
 | **imdbapi.dev** | Tertiary fallback | Unofficial, no SLA; only invoked when prior sources lack director or director death year; failures swallowed silently |
 
 Merge rule: first non-null value wins per field. The `sources` list records
-which API supplied which data.
+which API supplied which data. The IMDb and TMDb IDs given come last, kept only
+where no source found the film's own: a given ID can be wrong.
 
-TMDb chain for a film:
-1. `/3/find/{imdb_id}` (by IMDb ID) or `/3/search/movie?query=...` (by title)
-2. `/3/movie/{tmdb_id}` + `/3/movie/{tmdb_id}/credits`
-3. If director found but no death year: `/3/person/{director_id}` for `deathday`
+TMDb chain for a film or series:
+1. `/3/movie/{tmdb_id}`, or `/3/tv/{tmdb_id}` with `media_type: "tv"` (by TMDb
+   ID), else `/3/find/{imdb_id}` (by IMDb ID: its film, else its series), else
+   the first match of `/3/search/movie?query=...`, else of `/3/search/tv` (by
+   title): each tried when the one before finds nothing. The CLI, where no one
+   chooses, thus takes a film over a series of the same title, unless the year
+   rules it out.
+2. A film: `/3/movie/{tmdb_id}/credits`; if director found but no death year:
+   `/3/person/{director_id}` for `deathday`
+3. A series: `/3/tv/{tmdb_id}/external_ids` for its IMDb ID, and
+   `/3/tv/{tmdb_id}/aggregate_credits`, the crew of all its episodes, for its
+   directors and composers, most episodes first. With a title and a year a
+   series is complete: Wikidata and imdbapi.dev are not asked, as they would
+   add one of its directors as the director.
+
+The films and series to choose from (`FilmLookup.search`): those the TMDb and
+IMDb IDs point to (a TMDb ID as both a film's and a series'), then up to 10
+title matches, films and series alternately, searched again without the year
+when none match with it. A series matches the year of any of its episodes. When
+TMDb has none (no key, no match, unreachable), the one film Wikidata and
+imdbapi.dev find.
 
 ### Composer: MusicBrainz → Wikidata
 
@@ -226,11 +253,20 @@ Multipart upload of the video (`file`). Stages it for `/analyze` and reads its
 MP4 tags. Returns `{staging_id, original_name, film}`, where `film` holds
 whatever the tags provided.
 
+### `POST /film/search`
+
+JSON body with any of `imdb_id`, `tmdb_id`, `title`, `year`. Returns
+`{candidates: [...]}`, the films and series to choose from, each with `tmdb_id`,
+`media_type` (`"movie"` or `"tv"`), `title`, `original_title`, `year`,
+`overview`, `poster_url` and `match` (`"tmdb_id"` or `"imdb_id"` when a given ID
+points to it). A film found without TMDb also has
+`film`, its full record, already looked up. `502` on an unexpected failure.
+
 ### `POST /film/lookup`
 
-JSON body with any of `imdb_id`, `tmdb_id`, `title`, `year`. Runs the film
-chain (TMDb → Wikidata → imdbapi.dev) and returns `{film: {...}}`; `502` on an
-unexpected failure.
+JSON body with any of `imdb_id`, `tmdb_id`, `title`, `year`, and `media_type`
+(`"tv"` when the TMDb ID is a series'). Runs the film chain (TMDb → Wikidata →
+imdbapi.dev) and returns `{film: {...}}`; `502` on an unexpected failure.
 
 ### Composer progress
 
@@ -272,9 +308,13 @@ The analysis progress shows this as the **Identifying composers** step with a
 - **imdbapi.dev is unofficial.** No SLA, has already migrated v1 → v2.
   Treated as tertiary fallback only; failures are swallowed silently. If it
   goes dark permanently, TMDb + Wikidata still carry the feature.
-- **Director death year is informational, not authoritative for PD.** The UI
-  surfaces it for context with an explicit hint that the operative PD date is
-  the composer's death year.
+- **Director death year is informational, not authoritative for PD.** It is
+  kept in the film record but not shown: the operative PD date is the
+  composer's death year.
+- **Series need TMDb.** Wikidata and imdbapi.dev are asked as for a film:
+  Wikidata's title search finds films only, and for a series found by its IMDb
+  ID it has no year (a series has a start date, not a publication date) and
+  takes one of its many directors.
 
 ---
 

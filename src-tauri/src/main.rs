@@ -43,7 +43,7 @@ fn find_python() -> String {
     if cfg!(target_os = "windows") { "python".to_owned() } else { "python3".to_owned() }
 }
 
-/// Ask where to save a file from the page (results JSON/CSV, MAVA export zip) and
+/// Ask where to save a file from the page (results JSON/CSV, VIAN/MAVA exports) and
 /// write it there; the webview would otherwise drop downloads straight into
 /// Downloads. Returns `false` if the user cancelled the dialog.
 #[tauri::command]

@@ -126,18 +126,21 @@ def test_all_disagree_falls_back_to_priority():
 
 
 class _FakeClient(BaseMusicDetectionClient):
-    def __init__(self, title, *, isrc=None, raises=False, rate_limited=False):
+    def __init__(
+        self, title, *, isrc=None, raises=False, rate_limited=False, meta=None
+    ):
         self._title = title
         self._isrc = isrc
         self._raises = raises
         self._rate_limited = rate_limited
+        self._meta = meta or {}
 
     def detect(self, segment):
         if self._rate_limited:
             raise RateLimitError("limit reached")
         if self._raises:
             raise RuntimeError("provider quota exceeded")
-        meta = {"isrc": self._isrc} if self._isrc else {}
+        meta = dict(self._meta) | ({"isrc": self._isrc} if self._isrc else {})
         return DetectionResult(
             segment=segment,
             title=self._title,
@@ -175,6 +178,32 @@ def test_ensemble_detect_builds_consensus_and_votes():
     assert votes == {"acrcloud": True, "shazam": False, "audd": True}
     # No score: only ACRCloud gives one, and it is in its candidates.
     assert not any("confidence" in v for v in res.metadata["votes"])
+
+
+def test_votes_keep_each_providers_whole_answer_also_when_it_lost():
+    """For the cue to offer them to choose from: here ACRCloud's top matches,
+    though the vote went to Shazam's and AudD's song."""
+    candidates = [
+        {"title": "Cover", "artist": "Hans Zimmer", "score": 80.0},
+        {"title": "Original", "artist": "Hans Zimmer", "score": 60.0},
+    ]
+    acrcloud = _FakeClient("Cover", meta={"album": "Covers", "candidates": candidates})
+    ens = EnsembleDetectionClient(
+        [
+            ("acrcloud", acrcloud),
+            ("shazam", _FakeClient("Original", meta={"release_year": 1989})),
+            ("audd", _FakeClient("Original")),
+        ]
+    )
+
+    res = ens.detect(_segment())
+
+    assert res.title == "Original"
+    assert res.metadata.get("candidates") is None  # the cue's are the winner's
+    votes = {v["provider"]: v for v in res.metadata["votes"]}
+    assert votes["acrcloud"]["candidates"] == candidates
+    assert votes["acrcloud"]["album"] == "Covers"
+    assert votes["shazam"]["release_year"] == 1989
 
 
 def test_ensemble_survives_a_raising_provider():

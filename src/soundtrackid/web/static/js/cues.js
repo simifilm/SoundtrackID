@@ -63,9 +63,16 @@ function renderFilmHeader(film) {
   const yearPart = film.year ? ` (${fmt(film.year)})` : '';
   // The director's death year is not shown - PD status depends on the composer, not the director.
   const parts = [];
-  if (film.director) parts.push(`Director: <a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(film.director.replace(/ /g, '_'))}" target="_blank" rel="noopener noreferrer">${fmt(film.director)}</a>`);
+  if (film.director) {
+    // A series has several, "A, B": each is linked.
+    const directors = film.director.split(',').map(d => d.trim()).filter(Boolean);
+    const links = directors.map(d => `<a class="film-id-link" href="https://en.wikipedia.org/wiki/${encodeURIComponent(d.replace(/ /g, '_'))}" target="_blank" rel="noopener noreferrer">${fmt(d)}</a>`);
+    parts.push(`${directors.length > 1 ? 'Directors' : 'Director'}: ${links.join(', ')}`);
+  }
   if (film.imdb_id) parts.push(`IMDb: <a class="film-id-link" href="https://www.imdb.com/title/${fmt(film.imdb_id)}/" target="_blank" rel="noopener noreferrer">${fmt(film.imdb_id)}</a>`);
-  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/movie/${fmt(film.tmdb_id)}" target="_blank" rel="noopener noreferrer">${fmt(film.tmdb_id)}</a>`);
+  // A film and a series can have the same TMDb ID.
+  const tmdbPage = film.media_type === 'tv' ? 'tv' : 'movie';
+  if (film.tmdb_id) parts.push(`TMDb: <a class="film-id-link" href="https://www.themoviedb.org/${tmdbPage}/${fmt(film.tmdb_id)}" target="_blank" rel="noopener noreferrer">${fmt(film.tmdb_id)}</a>`);
   el.style.display = 'block';
   el.innerHTML = `
     <div class="film-title">${fmt(film.title || '')}${yearPart}</div>

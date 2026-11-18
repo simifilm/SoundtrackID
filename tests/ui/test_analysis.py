@@ -16,7 +16,8 @@ from soundtrackid.defaults import (
     MUSIC_THRESHOLD,
 )
 from soundtrackid.web import analyze as analyze_routes
-from tests.ui.helpers import saved
+from tests.media import FPS
+from tests.ui.helpers import cue, make_run, saved
 
 pytestmark = pytest.mark.browser
 
@@ -73,31 +74,196 @@ def test_the_film_is_prefilled_from_the_files_tags(page, fakes, tagged_video):
     )
 
 
-def test_look_up_online_fills_only_the_empty_fields(page, fakes, tagged_video, runs):
-    """And the analysis keeps all it found, also what the form doesn't show."""
+def test_cancelling_goes_back_to_the_start_with_the_recent_runs(
+    page, fakes, video, runs
+):
+    make_run(runs, [cue(1)])
+    page.goto("/")
+    upload(page, video)
+    expect(page.locator("#history-panel")).to_be_hidden()
+
+    page.locator("#fc-cancel").click()
+
+    expect(page.locator("#film-confirm")).to_be_hidden()
+    expect(page.locator("#drop-zone")).to_be_visible()
+    expect(page.locator("#history-panel")).to_be_visible()
+
+
+def test_look_up_online_lets_you_choose_the_film(page, fakes, tagged_video, runs):
+    """The chosen film replaces the form, also a title the tags spell otherwise,
+    and the analysis keeps all of it, also what the form doesn't show."""
+    fakes.candidates = [
+        {
+            "tmdb_id": 599,
+            "media_type": "movie",
+            "title": "Sunset Blvd.",
+            "year": 1950,
+            "match": "tmdb_id",
+        },
+        {"tmdb_id": 42, "media_type": "movie", "title": "Sunset", "year": 1988},
+    ]
     fakes.film = {
         "title": "Sunset Blvd.",
         "year": 1950,
         "director": "Billy Wilder",
         "director_death_year": 2002,
+        "tmdb_id": 599,
     }
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    choices = page.locator("#fc-candidates button")
+    expect(choices).to_have_count(2)
+    expect(choices.first).to_contain_text("Sunset Blvd. (1950)")
+    expect(choices.first).to_contain_text("Matches the TMDb ID")
+    choices.first.click()
+
+    expect(page.locator("#film-choose")).not_to_be_visible()
+    expect(page.locator("#fc-title")).to_have_value("Sunset Blvd.")
+    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
+    expect(page.locator("#fc-status")).to_have_text(
+        'Applied. Changed: Title "Sunset Boulevard" → "Sunset Blvd."; '
+        'Director (empty) → "Billy Wilder"; TMDb ID (empty) → "599".'
+    )
+    # Looked up by the chosen film's ID alone
+    assert fakes.film_hints == [
+        {
+            "imdb_id": None,
+            "tmdb_id": 599,
+            "title": None,
+            "year": None,
+            "media_type": "movie",
+        }
+    ]
+    page.locator("#fc-start").click()
+    expect(page.locator("#film-metadata-header")).to_contain_text("Sunset Blvd. (1950)")
+    [run] = runs.iterdir()
+    film = saved(run)["film"]
+    assert (film["title"], film["director_death_year"]) == ("Sunset Blvd.", 2002)
+
+
+def test_a_series_is_chosen_as_one_and_its_directors_linked(page, fakes, video):
+    """Breaking Bad's TMDb ID is also a film's (Mirror)."""
+    fakes.candidates = [
+        {"tmdb_id": 1396, "media_type": "movie", "title": "Mirror", "year": 1975},
+        {"tmdb_id": 1396, "media_type": "tv", "title": "Breaking Bad", "year": 2008},
+    ]
+    fakes.film = {
+        "title": "Breaking Bad",
+        "year": 2008,
+        "director": "Michelle MacLaren, Adam Bernstein",
+        "tmdb_id": 1396,
+        "media_type": "tv",
+    }
+    page.goto("/")
+    upload(page, video)
+
+    page.locator("#fc-lookup").click()
+    choices = page.locator("#fc-candidates button")
+    expect(choices.first).to_contain_text("Film")
+    expect(choices.last).to_contain_text("Series")
+    choices.last.click()
+
+    expect(page.locator("#fc-title")).to_have_value("Breaking Bad")
+    assert fakes.film_hints[0]["media_type"] == "tv"
+    expect(page.locator("#fc-tmdb-link")).to_have_attribute(
+        "href", "https://www.themoviedb.org/tv/1396"
+    )
+    page.locator("#fc-start").click()
+    header = page.locator("#film-metadata-header")
+    expect(header).to_contain_text("Directors: Michelle MacLaren, Adam Bernstein")
+    links = header.locator("a")
+    expect(links.filter(has_text="Adam Bernstein")).to_have_attribute(
+        "href", "https://en.wikipedia.org/wiki/Adam_Bernstein"
+    )
+    expect(links.filter(has_text="1396")).to_have_attribute(
+        "href", "https://www.themoviedb.org/tv/1396"
+    )
+
+
+def test_a_typed_tmdb_id_is_no_longer_the_chosen_series(page, fakes, video):
+    fakes.candidates = [
+        {"tmdb_id": 1396, "media_type": "tv", "title": "Breaking Bad", "year": 2008}
+    ]
+    fakes.film = {
+        "title": "Breaking Bad",
+        "year": 2008,
+        "tmdb_id": 1396,
+        "media_type": "tv",
+    }
+    page.goto("/")
+    upload(page, video)
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-candidates button").click()
+    link = page.locator("#fc-tmdb-link")
+    expect(link).to_have_attribute("href", "https://www.themoviedb.org/tv/1396")
+
+    page.locator("#fc-tmdb").fill("599")
+
+    expect(link).to_have_attribute("href", "https://www.themoviedb.org/movie/599")
+    page.locator("#fc-start").click()
+    expect(
+        page.locator("#film-metadata-header a").filter(has_text="599")
+    ).to_have_attribute("href", "https://www.themoviedb.org/movie/599")
+
+
+def test_the_id_fields_link_to_the_ids_pages(page, fakes, video):
+    page.goto("/")
+    upload(page, video)
+    imdb = page.locator("#fc-imdb-link")
+    expect(imdb).to_be_hidden()
+
+    page.locator("#fc-imdb").fill("tt0043014")
+    page.locator("#fc-tmdb").fill("599")
+
+    expect(imdb).to_be_visible()
+    expect(imdb).to_have_attribute("href", "https://www.imdb.com/title/tt0043014/")
+    expect(page.locator("#fc-tmdb-link")).to_have_attribute(
+        "href", "https://www.themoviedb.org/movie/599"
+    )
+    page.locator("#fc-imdb").fill("")
+    expect(imdb).to_be_hidden()
+
+
+def test_a_film_found_without_tmdb_is_applied_as_found(page, fakes, tagged_video):
+    film = {"title": "Sunset Boulevard", "year": 1950, "director": "Billy Wilder"}
+    fakes.candidates = [{"title": "Sunset Boulevard", "year": 1950, "film": film}]
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-candidates button").click()
+
+    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
+    assert fakes.film_hints == []
+
+
+def test_choosing_no_film_leaves_the_form(page, fakes, tagged_video):
+    fakes.candidates = [{"tmdb_id": 42, "title": "Sunset", "year": 1988}]
+    page.goto("/")
+    upload(page, tagged_video)
+
+    page.locator("#fc-lookup").click()
+    page.locator("#fc-choose-cancel").click()
+
+    expect(page.locator("#film-choose")).not_to_be_visible()
+    expect(page.locator("#fc-title")).to_have_value("Sunset Boulevard")
+    expect(page.locator("#fc-status")).to_have_text(
+        "Nothing chosen; the form is unchanged."
+    )
+
+
+def test_look_up_online_finding_nothing_says_so(page, fakes, tagged_video):
     page.goto("/")
     upload(page, tagged_video)
 
     page.locator("#fc-lookup").click()
 
     expect(page.locator("#fc-status")).to_have_text(
-        "Online data applied (empty fields filled)."
+        "Nothing found online. Please fill in manually."
     )
-    expect(page.locator("#fc-title")).to_have_value("Sunset Boulevard")
-    expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
-    page.locator("#fc-start").click()
-    expect(page.locator("#film-metadata-header")).to_contain_text(
-        "Sunset Boulevard (1950)"
-    )
-    [run] = runs.iterdir()
-    film = saved(run)["film"]
-    assert (film["title"], film["director_death_year"]) == ("Sunset Boulevard", 2002)
+    expect(page.locator("#film-choose")).not_to_be_visible()
 
 
 def test_the_results_show_tracks_timeline_and_classes(page, fakes, video):
@@ -187,6 +353,13 @@ def test_the_finished_run_is_in_recent_runs(page, fakes, video, runs):
     [run] = runs.iterdir()
     page.locator("#history-panel > summary").click()
     expect(page.locator(".history-item")).to_have_text([re.compile(run.name)])
+
+
+def test_the_run_keeps_the_videos_frame_rate(page, fakes, video, runs):
+    analyze(page, video)
+
+    [run] = runs.iterdir()
+    assert saved(run)["video"]["fps"] == FPS  # the arrow keys step by its frames
 
 
 def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):

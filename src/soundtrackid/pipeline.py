@@ -23,7 +23,7 @@ from soundtrackid.detection import (
 from soundtrackid.isolators import BaseMusicIsolator, DummyIsolator
 from soundtrackid.loaders import VideoLoader
 from soundtrackid.models import ClassificationResult, DetectionResult, MusicSegment
-from soundtrackid.results import Cue, ResultsOutput, match_fields
+from soundtrackid.results import Cue, ResultsOutput, alternatives, match_fields
 from soundtrackid.slots import merge_spans, stream_slots, top_classes
 
 log = logging.getLogger(__name__)
@@ -117,6 +117,7 @@ def build_cues(
             "audio_file": None,
             "pending": pending,
             **match_fields(identified[0] if identified else None),
+            "alternatives": alternatives([match_fields(d) for d in identified]),
             "enrichment": None,
         }
         if identified:

@@ -113,8 +113,7 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument(
         "--lookup-film",
         action="store_true",
-        help="Fill in what is missing about the film online (TMDb, Wikidata), "
-        "like the app's Look up online",
+        help="Fill in what is missing about the film online (TMDb, Wikidata)",
     )
     a.add_argument(
         "--csv",
@@ -181,7 +180,8 @@ def _film(args: argparse.Namespace) -> dict[str, Any] | None:
         from soundtrackid.metadata.film import lookup_film
 
         hint = {k: film.get(k) for k in ("imdb_id", "tmdb_id", "title", "year")}
-        # As in the app: what is known stays, the lookup fills the gaps.
+        # Unlike the app, no one chooses among the films found: what is known
+        # stays, the lookup fills the gaps.
         found = {**lookup_film(**hint), **film}
         film = {k: v for k, v in found.items() if v not in (None, "")}
     return film or None
