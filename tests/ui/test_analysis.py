@@ -78,8 +78,14 @@ def test_look_up_online_lets_you_choose_the_film(page, fakes, tagged_video, runs
     """The chosen film replaces the form, also a title the tags spell otherwise,
     and the analysis keeps all of it, also what the form doesn't show."""
     fakes.candidates = [
-        {"tmdb_id": 599, "title": "Sunset Blvd.", "year": 1950, "match": "tmdb_id"},
-        {"tmdb_id": 42, "title": "Sunset", "year": 1988, "match": None},
+        {
+            "tmdb_id": 599,
+            "media_type": "movie",
+            "title": "Sunset Blvd.",
+            "year": 1950,
+            "match": "tmdb_id",
+        },
+        {"tmdb_id": 42, "media_type": "movie", "title": "Sunset", "year": 1988},
     ]
     fakes.film = {
         "title": "Sunset Blvd.",
@@ -102,18 +108,60 @@ def test_look_up_online_lets_you_choose_the_film(page, fakes, tagged_video, runs
     expect(page.locator("#fc-title")).to_have_value("Sunset Blvd.")
     expect(page.locator("#fc-director")).to_have_value("Billy Wilder")
     expect(page.locator("#fc-status")).to_have_text(
-        'Film applied. Changed: Title "Sunset Boulevard" → "Sunset Blvd."; '
+        'Applied. Changed: Title "Sunset Boulevard" → "Sunset Blvd."; '
         'Director (empty) → "Billy Wilder"; TMDb ID (empty) → "599".'
     )
     # Looked up by the chosen film's ID alone
     assert fakes.film_hints == [
-        {"imdb_id": None, "tmdb_id": 599, "title": None, "year": None}
+        {
+            "imdb_id": None,
+            "tmdb_id": 599,
+            "title": None,
+            "year": None,
+            "media_type": "movie",
+        }
     ]
     page.locator("#fc-start").click()
     expect(page.locator("#film-metadata-header")).to_contain_text("Sunset Blvd. (1950)")
     [run] = runs.iterdir()
     film = saved(run)["film"]
     assert (film["title"], film["director_death_year"]) == ("Sunset Blvd.", 2002)
+
+
+def test_a_series_is_chosen_as_one_and_its_directors_linked(page, fakes, video):
+    """Breaking Bad's TMDb ID is also a film's (Mirror)."""
+    fakes.candidates = [
+        {"tmdb_id": 1396, "media_type": "movie", "title": "Mirror", "year": 1975},
+        {"tmdb_id": 1396, "media_type": "tv", "title": "Breaking Bad", "year": 2008},
+    ]
+    fakes.film = {
+        "title": "Breaking Bad",
+        "year": 2008,
+        "director": "Michelle MacLaren, Adam Bernstein",
+        "tmdb_id": 1396,
+        "media_type": "tv",
+    }
+    page.goto("/")
+    upload(page, video)
+
+    page.locator("#fc-lookup").click()
+    choices = page.locator("#fc-candidates button")
+    expect(choices.first).to_contain_text("Film")
+    expect(choices.last).to_contain_text("Series")
+    choices.last.click()
+
+    expect(page.locator("#fc-title")).to_have_value("Breaking Bad")
+    assert fakes.film_hints[0]["media_type"] == "tv"
+    page.locator("#fc-start").click()
+    header = page.locator("#film-metadata-header")
+    expect(header).to_contain_text("Directors: Michelle MacLaren, Adam Bernstein")
+    links = header.locator("a")
+    expect(links.filter(has_text="Adam Bernstein")).to_have_attribute(
+        "href", "https://en.wikipedia.org/wiki/Adam_Bernstein"
+    )
+    expect(links.filter(has_text="1396")).to_have_attribute(
+        "href", "https://www.themoviedb.org/tv/1396"
+    )
 
 
 def test_a_film_found_without_tmdb_is_applied_as_found(page, fakes, tagged_video):
@@ -140,7 +188,7 @@ def test_choosing_no_film_leaves_the_form(page, fakes, tagged_video):
     expect(page.locator("#film-choose")).not_to_be_visible()
     expect(page.locator("#fc-title")).to_have_value("Sunset Boulevard")
     expect(page.locator("#fc-status")).to_have_text(
-        "No film chosen; the form is unchanged."
+        "Nothing chosen; the form is unchanged."
     )
 
 

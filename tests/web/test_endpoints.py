@@ -67,6 +67,7 @@ def test_film_lookup_passes_the_hint_and_the_keys(film_lookup, monkeypatch):
             "tmdb_id": "599",
             "title": "Sunset Boulevard",
             "year": "1950",
+            "media_type": "movie",
         },
     )
 
@@ -80,6 +81,7 @@ def test_film_lookup_passes_the_hint_and_the_keys(film_lookup, monkeypatch):
         "tmdb_id": 599,
         "title": "Sunset Boulevard",
         "year": 1950,
+        "media_type": "movie",
     }
 
 
@@ -88,7 +90,13 @@ def test_film_lookup_drops_unusable_values(film_lookup, monkeypatch):
     monkeypatch.delenv("FIWI_TMDB_KEY", raising=False)
     r = client.post(
         "/film/lookup",
-        json={"imdb_id": "", "tmdb_id": "abc", "title": "", "year": "unknown"},
+        json={
+            "imdb_id": "",
+            "tmdb_id": "abc",
+            "title": "",
+            "year": "unknown",
+            "media_type": "film",
+        },
     )
 
     assert r.status_code == 200
@@ -98,6 +106,7 @@ def test_film_lookup_drops_unusable_values(film_lookup, monkeypatch):
         "tmdb_id": None,
         "title": None,
         "year": None,
+        "media_type": None,
     }
 
 

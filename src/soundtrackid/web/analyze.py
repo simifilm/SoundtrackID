@@ -151,14 +151,19 @@ async def film_search(hint: dict = Body(default={})) -> dict:
 
 @router.post("/film/lookup")
 async def film_lookup(hint: dict = Body(default={})) -> dict:
-    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year).
+    """Resolve film metadata online from a hint (imdb_id/tmdb_id/title/year,
+    and media_type: whether the TMDb ID is a film's "movie" or a series' "tv").
 
     No file needed.
     """
-    from soundtrackid.metadata.film import lookup_film
+    from soundtrackid.metadata.film import MEDIA_TYPES, lookup_film
 
+    media_type = hint.get("media_type")
     try:
-        film = lookup_film(**_film_hint(hint))
+        film = lookup_film(
+            **_film_hint(hint),
+            media_type=media_type if media_type in MEDIA_TYPES else None,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Film lookup failed: {exc}")
     return {"film": film}

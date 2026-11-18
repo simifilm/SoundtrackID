@@ -113,11 +113,11 @@
   <!-- Film confirmation (shown after a file is picked, before analysis) -->
   <div id="film-confirm" style="display:none">
     <div class="fc-card">
-      <h3>Confirm film</h3>
-      <p class="fc-hint">Before analysis: review or complete the film details. The <strong>release year</strong>
-        is used to flag temporally implausible music matches (e.g. later songs that sample the film).</p>
+      <h3>Confirm film or series</h3>
+      <p class="fc-hint">Before analysis: review or complete the details. The <strong>release year</strong>
+        is used to flag temporally implausible music matches (e.g. later songs that sample it).</p>
       <div class="fc-grid">
-        <label>Title <input type="text" id="fc-title" placeholder="Film title"></label>
+        <label>Title <input type="text" id="fc-title" placeholder="Title"></label>
         <label>Year <input type="text" id="fc-year" inputmode="numeric" placeholder="YYYY"></label>
         <label>Director <input type="text" id="fc-director" placeholder="Director"></label>
         <label>IMDb ID <input type="text" id="fc-imdb" placeholder="tt…"></label>
@@ -134,7 +134,7 @@
 
   <!-- Choosing among the films "Look up online" found -->
   <dialog id="film-choose" aria-labelledby="fc-choose-title">
-    <h3 id="fc-choose-title">Choose the film</h3>
+    <h3 id="fc-choose-title">Choose the film or series</h3>
     <ul id="fc-candidates"></ul>
     <div class="fc-actions">
       <button type="button" id="fc-choose-cancel" class="reset-btn">Cancel</button>

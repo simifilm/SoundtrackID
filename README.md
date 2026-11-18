@@ -86,9 +86,9 @@ listed under **Recent runs** and can be downloaded again at any time.
 
 ### Metadata enrichment
 
-Before the analysis starts, a **Confirm film** panel shows the details read from the video
+Before the analysis starts, a **Confirm film or series** panel shows the details read from the video
 file's own tags. Correct or complete them, or click **Look up online** and choose the film
-from the ones found, which then replaces the details. The year matters: it is used to flag
+or series from the ones found, which then replaces the details. The year matters: it is used to flag
 music that was released after the film.
 The composers are then looked up automatically during the analysis:
 

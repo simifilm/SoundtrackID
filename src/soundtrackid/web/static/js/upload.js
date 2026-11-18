@@ -76,6 +76,7 @@ const filmChoose   = document.getElementById('film-choose');
 const fcCandidates = document.getElementById('fc-candidates');
 const FC_FIELD_NAMES = { title: 'Title', year: 'Year', director: 'Director', imdb_id: 'IMDb ID', tmdb_id: 'TMDb ID' };
 const FC_MATCHES = { tmdb_id: 'Matches the TMDb ID', imdb_id: 'Matches the IMDb ID' };
+const FC_KINDS = { movie: 'Film', tv: 'Series' };  // TMDb's media types
 
 function postFilm(path, body) {
   return fetch(path, {
@@ -99,6 +100,7 @@ function showCandidates(candidates) {
       : fcElement('span', 'fc-poster');
     const text = fcElement('span', 'fc-cand-text');
     text.append(fcElement('strong', '', c.year ? `${c.title} (${c.year})` : c.title));
+    if (FC_KINDS[c.media_type]) text.append(fcElement('span', 'fc-cand-sub', FC_KINDS[c.media_type]));
     if (c.original_title && c.original_title !== c.title) {
       text.append(fcElement('span', 'fc-cand-sub', `Original title: ${c.original_title}`));
     }
@@ -117,12 +119,13 @@ function showCandidates(candidates) {
 
 function chooseFilm(c) {
   filmChoose.close();
-  fcStatus.textContent = 'Looking up the film…';
-  // By its TMDb ID alone, so nothing typed in the form mixes another film in; a
-  // film found without TMDb comes already looked up.
+  fcStatus.textContent = 'Looking up the details…';
+  // By its TMDb ID alone, so nothing typed in the form mixes another film in,
+  // and whether it is a film's or a series'; a film found without TMDb comes
+  // already looked up.
   const film = c.film
     ? Promise.resolve(c.film)
-    : postFilm('/film/lookup', { tmdb_id: c.tmdb_id }).then(data => data.film || {});
+    : postFilm('/film/lookup', { tmdb_id: c.tmdb_id, media_type: c.media_type }).then(data => data.film || {});
   film.then(applyFilm).catch(() => { fcStatus.textContent = 'Online lookup failed.'; });
 }
 
@@ -138,8 +141,8 @@ function applyFilm(film) {
     .filter(k => String(before[k] ?? '') !== String(after[k] ?? ''))
     .map(k => `${FC_FIELD_NAMES[k]} ${shown(before[k])} → ${shown(after[k])}`);
   fcStatus.textContent = changes.length
-    ? `Film applied. Changed: ${changes.join('; ')}.`
-    : 'Film applied. Nothing changed.';
+    ? `Applied. Changed: ${changes.join('; ')}.`
+    : 'Applied. Nothing changed.';
 }
 
 document.getElementById('fc-lookup').addEventListener('click', () => {
@@ -151,7 +154,7 @@ document.getElementById('fc-lookup').addEventListener('click', () => {
         fcStatus.textContent = 'Nothing found online. Please fill in manually.';
         return;
       }
-      fcStatus.textContent = 'Choose the film.';
+      fcStatus.textContent = 'Choose the film or series.';
       showCandidates(candidates);
     })
     .catch(err => {
@@ -162,7 +165,7 @@ document.getElementById('fc-lookup').addEventListener('click', () => {
 });
 
 function cancelChoice() {
-  fcStatus.textContent = 'No film chosen; the form is unchanged.';
+  fcStatus.textContent = 'Nothing chosen; the form is unchanged.';
 }
 document.getElementById('fc-choose-cancel').addEventListener('click', () => {
   filmChoose.close();
