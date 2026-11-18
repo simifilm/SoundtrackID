@@ -1,9 +1,9 @@
-"""Tests for the data models (soundtrackID.models)."""
+"""Tests for the data models (soundtrackid.models)."""
 
 import numpy as np
 from scipy.io import wavfile
 
-from soundtrackID.models import MusicSegment, parse_year
+from soundtrackid.models import MusicSegment, parse_year
 
 
 def test_a_clip_is_written_as_16_bit_wav_and_clipped_at_full_scale(tmp_path):

@@ -43,7 +43,7 @@ fn find_python() -> String {
     if cfg!(target_os = "windows") { "python".to_owned() } else { "python3".to_owned() }
 }
 
-/// Ask where to save a file from the page (results JSON/CSV, MAVA export zip) and
+/// Ask where to save a file from the page (results JSON/CSV, VIAN/MAVA exports) and
 /// write it there; the webview would otherwise drop downloads straight into
 /// Downloads. Returns `false` if the user cancelled the dialog.
 #[tauri::command]
@@ -121,7 +121,7 @@ fn main() {
         // Dev fallback: spawn via Python interpreter
         let python = find_python();
         let mut c = Command::new(&python);
-        c.args(["-m", "soundtrackID", "--port", &port.to_string(), "--host", "127.0.0.1"]);
+        c.args(["-m", "soundtrackid", "--port", &port.to_string(), "--host", "127.0.0.1"]);
         c
     };
 

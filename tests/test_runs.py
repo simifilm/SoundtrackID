@@ -6,8 +6,8 @@ import time
 
 import numpy as np
 
-from soundtrackID.models import MusicSegment
-from soundtrackID.runs import Run
+from soundtrackid.models import MusicSegment
+from soundtrackid.runs import Run
 
 SR = 1000
 

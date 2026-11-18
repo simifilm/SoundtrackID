@@ -53,3 +53,20 @@ def test_a_provider_without_its_keys_is_flagged(page, fakes):
     )
     page.locator('.opt-provider[value="audd"]').uncheck()
     expect(warning).to_be_hidden()
+
+
+def test_the_chosen_providers_are_kept_for_the_next_start(page, fakes, tmp_path):
+    page.goto("/")
+    page.locator("#settings-panel > summary").click()
+    expect(page.locator('.opt-provider[value="shazam"]')).to_be_checked()
+
+    for name in ("acrcloud", "audd"):
+        with page.expect_response(lambda r: r.request.method == "POST"):
+            page.locator(f'.opt-provider[value="{name}"]').check()
+    stored = json.loads((tmp_path / "settings.json").read_text())
+    assert stored == {"providers": ["acrcloud", "shazam", "audd"]}
+
+    page.reload()
+    page.locator("#settings-panel > summary").click()
+    for name in ("acrcloud", "shazam", "audd"):
+        expect(page.locator(f'.opt-provider[value="{name}"]')).to_be_checked()

@@ -7,8 +7,8 @@ import av
 import numpy as np
 import pytest
 
-from soundtrackID.loaders import VideoLoader
-from soundtrackID.thumbnails import extract_filmstrip
+from soundtrackid.loaders import VideoLoader
+from soundtrackid.thumbnails import extract_filmstrip, frame_rate
 
 SR = 44100
 DURATION = 3.0
@@ -52,6 +52,11 @@ def test_loader_reads_audio_files(tmp_path, filename, codec):
 def test_filmstrip_none_for_audio_only(tmp_path):
     path = _write_tone(tmp_path / "a.wav", "pcm_s16le")
     assert extract_filmstrip(path, tmp_path / "filmstrip.jpg") is None
+
+
+def test_frame_rate_none_for_audio_only(tmp_path):
+    path = _write_tone(tmp_path / "a.wav", "pcm_s16le")
+    assert frame_rate(path) is None
 
 
 def test_filmstrip_ignores_mp3_cover_art(tmp_path):

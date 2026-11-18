@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from soundtrackID.metadata.music import (
+from soundtrackid.metadata.music import (
     MusicLookup,
     _artist_birth,
     _artist_death,

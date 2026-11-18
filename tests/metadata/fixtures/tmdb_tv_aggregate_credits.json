@@ -1,0 +1,14 @@
+{
+  "id": 1396,
+  "crew": [
+    {"name": "Adam Bernstein", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 8}]},
+    {"name": "Bryan Cranston", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 3}]},
+    {"name": "Dave Porter", "department": "Sound", "jobs": [{"job": "Original Music Composer", "episode_count": 62}]},
+    {"name": "Michael Slovis", "department": "Camera", "jobs": [{"job": "Director of Photography", "episode_count": 48}]},
+    {"name": "Michael Slovis", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 4}]},
+    {"name": "Michelle MacLaren", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 11}]},
+    {"name": "Michelle MacLaren", "department": "Production", "jobs": [{"job": "Co-Executive Producer", "episode_count": 13}, {"job": "Executive Producer", "episode_count": 29}]},
+    {"name": "Rian Johnson", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 3}]},
+    {"name": "Vince Gilligan", "department": "Directing", "jobs": [{"job": "Director", "episode_count": 5}]}
+  ]
+}

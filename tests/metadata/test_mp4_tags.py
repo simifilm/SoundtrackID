@@ -5,7 +5,7 @@ import plistlib
 import pytest
 from mutagen.mp4 import MP4, MP4FreeForm
 
-from soundtrackID.metadata.mp4_tags import read_mp4_tags
+from soundtrackid.metadata.mp4_tags import read_mp4_tags
 from tests.media import write_video
 
 ITUNES = "----:com.apple.iTunes:"

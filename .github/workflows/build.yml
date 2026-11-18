@@ -1,7 +1,7 @@
 # Builds the desktop app for macOS and Windows, as described in README.md
 # ("Building a release"). The macOS app is signed, notarized and stapled
 # (Option A); the Windows installer stays unsigned. The builds only start once
-# ruff and the Python tests pass.
+# ruff, pyright and the Python tests pass.
 #
 # Pull requests to main and manual runs (Actions -> Build -> Run workflow) are
 # test builds. Pushing a tag releases that version (see README, "Building a release"):
@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 jobs:
-  # Ruff and the Python tests, from test.yml.
+  # Ruff, pyright and the Python tests, from test.yml.
   test:
     uses: ./.github/workflows/test.yml
 
@@ -149,7 +149,7 @@ jobs:
           fi
 
       - name: Bundle the Python server
-        run: uv run --extra app --group build pyinstaller --noconfirm fiwi-server.spec
+        run: uv run --locked --extra app --group build pyinstaller --noconfirm fiwi-server.spec
 
       # Overrides the version in tauri.conf.json on a tag push; it ends up in the
       # app and in the DMG and installer file names.
