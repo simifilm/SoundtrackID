@@ -271,7 +271,7 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   │                           AudD) and ensemble voting
 │   ├── temporal.py             Prefers a candidate from the film's time over a later top hit
 │   ├── thumbnails.py           Builds the filmstrip sprite shown under the waveform
-│   ├── exports.py              The CSV and MAVA (TSV and mapping) exports
+│   ├── exports.py              The CSV, VIAN (project zip) and MAVA (.mediapkg) exports
 │   └── metadata/               Film and composer enrichment
 │       ├── enricher.py         Looks up the composers of a run's cues
 │       ├── film.py             Film lookup: TMDb → Wikidata → imdbapi.dev

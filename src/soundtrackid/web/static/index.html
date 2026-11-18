@@ -277,7 +277,13 @@
           <button type="button" role="menuitem" data-format="csv">CSV (spreadsheet)</button>
         </div>
       </div>
-      <button class="download-btn" id="mava-export-btn" title="Download a TSV + mapping JSON that MAVA's POST /graph/import_tsv accepts, for import into VIAN">Export for MAVA/VIAN</button>
+      <div class="download-menu">
+        <button class="download-btn" id="export-btn" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
+        <div class="download-options" id="export-options" role="menu" hidden>
+          <button type="button" role="menuitem" id="vian-export-btn" title="A VIAN project with the music cues as a track, for VIAN's Import project (together with the video)">VIAN (project zip)</button>
+          <button type="button" role="menuitem" id="mava-export-btn" title="A .mediapkg, MAVA's exchange format, with the music cues as a track">MAVA (.mediapkg)</button>
+        </div>
+      </div>
     </div>
   </div>
 

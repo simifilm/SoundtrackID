@@ -1,10 +1,11 @@
-"""Tests for the filmstrip built from a video's frames, and its frame rate."""
+"""Tests for the filmstrip built from a video's frames, its frame rate and size."""
 
 import numpy as np
+import pytest
 from PIL import Image
 
-from soundtrackid.thumbnails import extract_filmstrip, frame_rate
-from tests.media import FPS, write_video
+from soundtrackid.thumbnails import extract_filmstrip, frame_rate, video_info
+from tests.media import FPS, HEIGHT, WIDTH, write_video
 
 
 def test_filmstrip_from_video(tmp_path):
@@ -50,3 +51,21 @@ def test_frame_rate_none_for_unreadable_file(tmp_path):
     path.write_bytes(b"not a video")
 
     assert frame_rate(path) is None
+
+
+def test_video_info_of_video(tmp_path):
+    video = write_video(tmp_path / "film.mp4", seconds=2)
+
+    info = video_info(video)
+
+    assert info is not None
+    assert (info["fps"], info["frames"]) == (FPS, 2 * FPS)
+    assert (info["width"], info["height"]) == (WIDTH, HEIGHT)
+    assert info["duration"] == pytest.approx(2.0, abs=0.1)
+
+
+def test_video_info_none_for_unreadable_file(tmp_path):
+    path = tmp_path / "broken.mp4"
+    path.write_bytes(b"not a video")
+
+    assert video_info(path) is None
