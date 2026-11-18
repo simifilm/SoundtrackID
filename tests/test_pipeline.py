@@ -25,6 +25,7 @@ from soundtrackid.models import DetectionResult, MusicSegment
 from soundtrackid.pipeline import (
     Pipeline,
     _group_detections,
+    build_cues,
     waveform_peaks,
 )
 from soundtrackid.results import MATCH_KEYS
@@ -138,7 +139,7 @@ class AudDLikeClient:
         key: f"<{key}>"
         for key in MATCH_KEYS
         if key not in ("provider", "title", "artist")
-    }
+    } | {"votes": [], "candidates": []}  # lists, as the providers give them
 
     def detect(self, segment):
         return DetectionResult(segment, "T", "A", "audd", dict(self.metadata))
@@ -166,6 +167,75 @@ def test_a_cue_has_the_fields_of_its_answer_and_no_confidence():
         "artist": "A",
         **AudDLikeClient.metadata,
     }
+
+
+def _ensemble_window(start, acrcloud):
+    """A 1 s window an ensemble identified as ACRCloud's top match, a "Cover",
+    with ACRCloud's (title, score) matches, the original by Shazam, nothing by
+    AudD."""
+    seg = MusicSegment(np.zeros(SR, dtype=np.float32), start, start + 1.0, SR)
+    candidates = [{"title": t, "artist": "A", "score": s} for t, s in acrcloud]
+    votes = [
+        {
+            "provider": "acrcloud",
+            "title": "Cover",
+            "artist": "A",
+            "matched": True,
+            "candidates": candidates,
+        },
+        {
+            "provider": "shazam",
+            "title": "Original",
+            "artist": "B",
+            "matched": True,
+            "release_year": 1989,
+        },
+        {"provider": "audd", "title": None, "artist": None, "matched": False},
+    ]
+    metadata = {"votes": votes, "candidates": candidates}
+    return seg, DetectionResult(seg, "Cover", "A", "ensemble", metadata)
+
+
+def test_a_cue_lists_every_song_its_windows_were_named():
+    """Each provider's, of every window, once: with ACRCloud's best score for
+    it, and in how many windows it was named."""
+    [cue], _ = build_cues(
+        [
+            _ensemble_window(0.0, [("Cover", 80.0), ("Karaoke", 60.0)]),
+            _ensemble_window(1.0, [("Cover", 90.0)]),
+        ],
+        bridge_gap=0.0,
+    )
+
+    songs = cue["alternatives"]
+    assert [(s["provider"], s["title"], s["score"], s["windows"]) for s in songs] == [
+        ("acrcloud", "Cover", 90.0, 2),
+        ("acrcloud", "Karaoke", 60.0, 1),
+        ("shazam", "Original", None, 2),
+    ]
+    assert (songs[2]["artist"], songs[2]["release_year"]) == ("B", 1989)
+
+
+def test_a_recordings_original_and_its_reissue_are_both_listed():
+    """ACRCloud lists one recording (one ISRC) on two albums: the year tells
+    the original from the reissue, so neither hides the other."""
+    seg = MusicSegment(np.zeros(SR, dtype=np.float32), 0.0, 1.0, SR)
+    song = {"title": "Jumping Jack", "artist": "Mac Prindy", "isrc": "X"}
+    candidates = [
+        {**song, "album": "Reissue", "release_year": 2018, "score": 100.0},
+        {**song, "album": "Original", "release_year": 1996, "score": 100.0},
+        {**song, "album": "Reissue", "release_year": 2018, "score": 90.0},
+    ]
+    det = DetectionResult(
+        seg, "Jumping Jack", "Mac Prindy", "acrcloud", {"candidates": candidates}
+    )
+
+    [cue], _ = build_cues([(seg, det)], bridge_gap=0.0)
+
+    assert [(s["album"], s["release_year"]) for s in cue["alternatives"]] == [
+        ("Reissue", 2018),
+        ("Original", 1996),
+    ]
 
 
 def test_the_pending_cues_come_with_their_audio(tmp_path, monkeypatch):

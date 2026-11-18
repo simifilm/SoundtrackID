@@ -256,7 +256,7 @@
         <table id="results-table">
           <thead>
             <tr>
-              <th>Segment</th><th>Start</th><th>Duration</th><th>Title</th><th>Artist</th>
+              <th>Segment</th><th>Start</th><th>Duration</th><th>Title</th><th>Artist</th><th></th>
             </tr>
           </thead>
           <tbody id="results-body"></tbody>
@@ -295,6 +295,27 @@
       </div>
     </div>
   </div>
+
+  <!-- Choosing a segment's song among those the providers found in it, or typing one in -->
+  <dialog id="song-choose" aria-labelledby="sc-heading">
+    <h3 id="sc-heading">Choose the song</h3>
+    <div class="sc-segment">
+      <span id="sc-segment"></span>
+      <button type="button" id="sc-play" class="sc-button" title="Play or pause the segment">▶ Play</button>
+    </div>
+    <div id="sc-songs"></div>
+    <form id="sc-typed" class="sc-typed">
+      <div class="fc-grid">
+        <label>Title <input type="text" id="sc-title" placeholder="Title" required></label>
+        <label>Artist <input type="text" id="sc-artist" placeholder="Artist"></label>
+      </div>
+      <button type="submit" class="sc-button">Use typed song</button>
+    </form>
+    <small id="sc-status"></small>
+    <div class="fc-actions">
+      <button type="button" id="sc-close" class="reset-btn">Close</button>
+    </div>
+  </dialog>
 
   <!-- History Panel (under the results' buttons; alone under the drop zone on the start page) -->
   <details id="history-panel" style="display:none">

@@ -42,10 +42,21 @@ MATCH_KEYS = (
     "candidates",
 )
 
-# Then "enrichment", the composers (metadata.enricher), and "temporal_pick" when
-# the date re-ranking chose another candidate (temporal). "anachronistic" and
+# Then "alternatives", every song the providers named in the cue's windows, to
+# choose from (alternatives); "enrichment", the composers (metadata.enricher);
+# and "temporal_pick", whether the date re-ranking chose another candidate
+# (temporal), False once a song is chosen by hand. "anachronistic" and
 # "track_key" follow from the rest, worked out whenever a run is read or saved
 # (derived).
+
+# The fields a cue takes over from another song than the one it was identified
+# as (the date re-ranking, a choice by hand): all of the match but the provider,
+# ACRCloud's candidates and each provider's answer (votes), which still hold for
+# the cue. Those the song lacks (a cover, the providers' agreement) belonged to
+# the song replaced, and are cleared.
+SONG_KEYS = tuple(
+    key for key in MATCH_KEYS if key not in ("provider", "candidates", "votes")
+)
 
 # The fields a hand edit changes, and what each must be when it isn't None.
 EDITED_TYPES = {"title": str, "artist": str, "album": str, "enrichment": dict}
@@ -60,6 +71,81 @@ def match_fields(det: DetectionResult | None) -> dict[str, Any]:
     fields = {key: det.metadata.get(key) for key in MATCH_KEYS}
     fields.update(provider=det.provider, title=det.title, artist=det.artist)
     return fields
+
+
+def alternatives(answers: list[Cue]) -> list[dict[str, Any]]:
+    """Every song the providers named in `answers`, the match fields of each of
+    a cue's windows (match_fields): each provider's of an ensemble (votes),
+    ACRCloud's top matches (candidates), else the one answer. Each once per
+    provider, in the order first named, with ACRCloud's best score for it, and
+    in how many windows it was named. Entries of a recording on different albums
+    or in different years stay apart: the date tells an original from a
+    reissue."""
+    songs: dict[tuple, dict[str, Any]] = {}
+    for fields in answers:
+        named: dict[tuple, dict[str, Any]] = {}  # in this window, each once
+        for provider, song in _songs_named(fields):
+            entry = {
+                "provider": provider,
+                **{key: song.get(key) for key in SONG_KEYS if key != "agreement"},
+                "score": song.get("score"),
+            }
+            key = (provider, *(entry[k] for k in _SAME_ENTRY))
+            named.setdefault(key, entry)
+        for key, entry in named.items():
+            if key not in songs:
+                songs[key] = {**entry, "windows": 1}
+                continue
+            songs[key]["windows"] += 1
+            scores = [s for s in (songs[key]["score"], entry["score"]) if s is not None]
+            songs[key]["score"] = max(scores, default=None)
+    return list(songs.values())
+
+
+# What makes two of a provider's entries one, in alternatives.
+_SAME_ENTRY = ("title", "artist", "isrc", "album", "release_year")
+
+
+def _songs_named(fields: Cue) -> list[tuple[str | None, dict[str, Any]]]:
+    """(provider, song) for each song one window's answer names."""
+    votes = fields.get("votes")
+    if not votes:
+        songs = fields.get("candidates") or ([fields] if fields.get("title") else [])
+        return [(fields.get("provider"), song) for song in songs]
+    return [
+        (vote.get("provider"), song)
+        for vote in votes
+        if vote.get("matched")
+        # Runs saved before the votes kept ACRCloud's candidates have them only
+        # at the cue, when ACRCloud's answer won the vote.
+        for song in vote.get("candidates")
+        or (vote.get("provider") == "acrcloud" and fields.get("candidates"))
+        or [vote]
+    ]
+
+
+def chosen_song(cue: Cue, choice: dict[str, Any]) -> dict[str, Any]:
+    """The song a hand choice names for `cue`: one of its alternatives,
+    {"alternative": <its index>}, or one typed in, {"title": ..., "artist": ...}.
+    ValueError for anything else."""
+    if "alternative" in choice:
+        index = choice["alternative"]
+        songs = cue.get("alternatives") or []
+        if type(index) is not int or not 0 <= index < len(songs):
+            raise ValueError(f"Not one of the cue's alternatives: {index!r}")
+        return songs[index]
+    title, artist = choice.get("title"), choice.get("artist")
+    if not (isinstance(title, str) and title.strip()) or not isinstance(
+        artist, (str, type(None))
+    ):
+        raise ValueError("A song typed in needs a title, and its artist as text")
+    return {"title": title.strip(), "artist": (artist or "").strip() or None}
+
+
+def take_song(cue: Cue, song: dict[str, Any]) -> None:
+    """Make `song` the cue's, in place (SONG_KEYS)."""
+    for key in SONG_KEYS:
+        cue[key] = song.get(key)
 
 
 def apply_edits(saved: list[Cue], edited: list[Any]) -> list[Cue]:
@@ -168,7 +254,8 @@ class ResultsOutput:
 #   5: no confidence, in the cues or their votes: it was ACRCloud's score, a
 #      constant 1.0 for Shazam and AudD, the share of agreeing providers for an
 #      ensemble, and nothing used it. ACRCloud's score is in the candidates.
-RESULTS_VERSION = 5
+#   6: every cue lists the songs the providers named in it (alternatives).
+RESULTS_VERSION = 6
 
 # What a run's timeline.json holds.
 TIMELINE_KEYS = ("waveform", "classification", "classification_windows")
@@ -197,6 +284,14 @@ def upgrade_results(data: dict[str, Any]) -> dict[str, Any]:
             cue.pop("confidence", None)
             for vote in cue.get("votes") or []:
                 vote.pop("confidence", None)
+    if data.get("version", 1) < 6:
+        for cue in cues:
+            # From what the run kept of the answers, of the cue's first window
+            # only: each provider's title, artist and ISRC (votes) and ACRCloud's
+            # top matches (candidates). Not the cue's own song alone: it may
+            # have been edited by hand since.
+            if cue.get("votes") or cue.get("candidates"):
+                cue["alternatives"] = alternatives([cue])
     data["version"] = RESULTS_VERSION
     return data
 

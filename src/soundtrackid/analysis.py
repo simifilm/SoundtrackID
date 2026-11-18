@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from soundtrackid.defaults import DEFAULT_API
-from soundtrackid.results import MATCH_KEYS, match_fields
+from soundtrackid.results import MATCH_KEYS, alternatives, match_fields
 from soundtrackid.runs import Run
 
 log = logging.getLogger(__name__)
@@ -139,7 +139,8 @@ def resume(
             log.exception("Identifying %s failed", cue.get("segment_id"))
             continue  # stays pending: a later resume tries again
         if det.title:
-            cue.update(match_fields(det))
+            fields = match_fields(det)
+            cue.update(fields, alternatives=alternatives([fields]))
             identified.append(cue)
         # Answered, a match or not; only pending cues keep their audio.
         changes[cue["segment_id"]] = {"pending": False, "audio_file": None}
@@ -149,7 +150,7 @@ def resume(
 
     _rerank_and_look_up_composers(results.get("film"), identified, progress)
     for cue in identified:
-        found = (*MATCH_KEYS, "enrichment", "temporal_pick")
+        found = (*MATCH_KEYS, "alternatives", "enrichment", "temporal_pick")
         changes[cue["segment_id"]].update({k: cue[k] for k in found if k in cue})
 
     def apply(saved: dict[str, Any]) -> None:

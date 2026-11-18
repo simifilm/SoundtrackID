@@ -1,6 +1,6 @@
 """The saved runs: listing and deleting them (/history), their results and the
-edits made to them (/results), and their timeline, video, filmstrip and exports
-(/output)."""
+edits made to them (/results), a cue's song chosen by hand among others
+(/results/…/song), and their timeline, video, filmstrip and exports (/output)."""
 
 import logging
 import mimetypes
@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from soundtrackid.exports import build_mediapkg, build_vian_project, results_to_csv
-from soundtrackid.results import apply_edits
+from soundtrackid.results import SONG_KEYS, apply_edits, chosen_song, take_song
 from soundtrackid.runs import Run
 from soundtrackid.thumbnails import video_info
 from soundtrackid.web import data
@@ -111,6 +111,50 @@ async def save_cues(video_name: str, payload: dict = Body(...)) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {"status": "saved", "cues": len(cues), "results": results}
+
+
+@router.post("/results/{video_name}/cues/{segment_id}/song")
+def choose_song(video_name: str, segment_id: str, choice: dict = Body(...)) -> dict:
+    """Give one cue the song chosen by hand: one of those the providers named in
+    it, {"alternative": <its index>}, or one typed in, {"title", "artist"}. Its
+    composer is looked up again, as after an analysis: the one found was the
+    old song's. The run's other cues keep theirs. Returns the results as saved.
+    """
+    run = data.find_run(video_name)
+    cues = data.read_results(run).get("cues") or []
+    cue = next((c for c in cues if c.get("segment_id") == segment_id), None)
+    if cue is None:
+        raise HTTPException(status_code=404, detail="Cue not found")
+    try:
+        song = chosen_song(cue, choice)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    take_song(cue, song)
+    cue.update(temporal_pick=False, enrichment=None)
+    _look_up_composer(cue)
+    # The lookup takes a while: saved into the results as they are by then.
+    changes = {key: cue[key] for key in (*SONG_KEYS, "temporal_pick", "enrichment")}
+
+    def choose(results: dict) -> None:
+        for saved in results.get("cues") or []:
+            if saved.get("segment_id") == segment_id:
+                saved.update(changes)
+
+    return {"status": "saved", "results": run.update(choose)}
+
+
+def _look_up_composer(cue: dict) -> None:
+    """The composer of the cue's song, as after an analysis (by its ISRC).
+    Best-effort: without it, the cue has none."""
+    try:
+        import httpx
+
+        from soundtrackid.metadata.enricher import enrich
+
+        with httpx.Client(timeout=15.0) as client:
+            enrich(results={"cues": [cue]}, http_client=client)
+    except Exception:
+        log.exception("Composer lookup failed")
 
 
 @router.get("/output/{video_name}/video")

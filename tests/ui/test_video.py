@@ -37,6 +37,22 @@ def test_space_plays_and_pauses_the_video(page, run_with_video):
     page.wait_for_function(PAUSED)
 
 
+def test_the_song_choice_plays_and_pauses_its_segment(page, run_with_video):
+    """Its Play button turns into Pause while the video runs."""
+    page.locator('.results-tab[data-view="timeline"]').click()
+    page.locator("#results-body .song-choose-btn").click()
+    play = page.locator("#sc-play")
+    expect(play).to_have_text("▶ Play")
+
+    play.click()
+    page.wait_for_function(f"!{PAUSED}")
+    expect(play).to_have_text("❚❚ Pause")
+
+    play.click()
+    page.wait_for_function(PAUSED)
+    expect(play).to_have_text("▶ Play")
+
+
 def test_space_in_a_text_field_types_a_space(page, run_with_video):
     row = page.locator("#tracks-body tr:not(.cue-detail)", has_text="Song")
     row.locator('td[data-field="title"]').dblclick()

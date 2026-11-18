@@ -11,23 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from soundtrackid.results import MATCH_KEYS
+from soundtrackid.results import take_song
 
 TOLERANCE = 3  # years of slack for reissues / tagging noise
 MIN_ALT_SCORE = 40.0  # ACRCloud score is 0-100; require a decent alternative
 
-# Cue fields describing the match, all taken from a chosen candidate: those it
-# lacks (cover, Apple Music link, provider agreement) belonged to the replaced
-# match and are cleared. The provider, its candidates and each provider's own
-# answer (votes) still hold for the segment.
-_APPLY_KEYS = tuple(
-    key for key in MATCH_KEYS if key not in ("provider", "candidates", "votes")
-)
-
 
 def _apply_candidate(cue: dict[str, Any], cand: dict[str, Any]) -> None:
-    for key in _APPLY_KEYS:
-        cue[key] = cand.get(key)
+    take_song(cue, cand)
     cue["temporal_pick"] = True
 
 

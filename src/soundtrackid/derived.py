@@ -3,7 +3,8 @@ saved (runs.Run), so it follows the year, the film and every hand edit, and the
 app, its exports and the CLI all see the same:
 
 - each cue's rights verdict (metadata.rights), which changes with the year;
-- whether a cue's music came out well after the film (anachronistic);
+- whether a cue's music came out well after the film (anachronistic), and
+  each song it could be (its alternatives);
 - which piece a cue is (track_key): cues with the same key are one track.
 """
 
@@ -26,6 +27,8 @@ def refresh(results: dict[str, Any]) -> dict[str, Any]:
             partial = bool(enrichment.get("authors_partial"))
             enrichment.update(rights.verdict(enrichment["authors"], partial, year))
         cue["anachronistic"] = is_anachronistic(cue, film)
+        for song in cue.get("alternatives") or []:
+            song["anachronistic"] = is_anachronistic(song, film)
         cue["track_key"] = track_key(cue)
     return results
 
