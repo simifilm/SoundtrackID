@@ -202,9 +202,7 @@ filmChoose.addEventListener('cancel', cancelChoice);  // Escape
 document.getElementById('fc-cancel').addEventListener('click', () => {
   pendingStagingId = null;
   pendingFilm = {};
-  filmConfirm.style.display = 'none';
-  dropZone.style.display = 'block';
-  fileInput.value = '';
+  showStartPage();   // with the recent runs, hidden while confirming
 });
 
 document.getElementById('fc-start').addEventListener('click', () => {

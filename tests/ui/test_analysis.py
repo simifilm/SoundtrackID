@@ -17,7 +17,7 @@ from soundtrackid.defaults import (
 )
 from soundtrackid.web import analyze as analyze_routes
 from tests.media import FPS
-from tests.ui.helpers import saved
+from tests.ui.helpers import cue, make_run, saved
 
 pytestmark = pytest.mark.browser
 
@@ -72,6 +72,21 @@ def test_the_film_is_prefilled_from_the_files_tags(page, fakes, tagged_video):
     expect(page.locator("#fc-status")).to_have_text(
         "Prefilled from file tags. Please review, especially the year."
     )
+
+
+def test_cancelling_goes_back_to_the_start_with_the_recent_runs(
+    page, fakes, video, runs
+):
+    make_run(runs, [cue(1)])
+    page.goto("/")
+    upload(page, video)
+    expect(page.locator("#history-panel")).to_be_hidden()
+
+    page.locator("#fc-cancel").click()
+
+    expect(page.locator("#film-confirm")).to_be_hidden()
+    expect(page.locator("#drop-zone")).to_be_visible()
+    expect(page.locator("#history-panel")).to_be_visible()
 
 
 def test_look_up_online_lets_you_choose_the_film(page, fakes, tagged_video, runs):
