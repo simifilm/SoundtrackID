@@ -1,6 +1,8 @@
-"""Command line: analyze a video, or resume a run a provider stopped.
+"""Command line: analyze a video, or several as a batch, or resume a run a
+provider stopped.
 
     soundtrackid analyze path/to/film.mp4
+    soundtrackid analyze film1.mp4 film2.mkv path/to/folder
     soundtrackid resume output/cache/<run>
 
 Runs the same analysis as the app (soundtrackid.analysis): pipeline, date
@@ -9,11 +11,12 @@ re-ranking, composer lookup, one results.json per run.
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
 from soundtrackid import paths
-from soundtrackid.analysis import analyze, resume
+from soundtrackid.analysis import analyze, analyze_batch, resume
 from soundtrackid.classifiers import OnnxClassifier, load_classifier
 from soundtrackid.defaults import (
     BRIDGE_GAP_S,
@@ -25,6 +28,23 @@ from soundtrackid.defaults import (
 from soundtrackid.envfiles import load_env_files
 from soundtrackid.exports import results_to_csv
 from soundtrackid.pipeline import build_pipeline
+from soundtrackid.runs import Run
+
+# The files of a folder analyzed: those the app accepts (upload.js).
+MEDIA_SUFFIXES = {
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".m4v",
+    ".mpg",
+    ".mpeg",
+    ".wmv",
+    ".flv",
+    ".mp3",
+    ".wav",
+}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -40,8 +60,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    a = commands.add_parser("analyze", help="Analyze a video as a new run")
-    a.add_argument("video_path", type=Path, help="Path to the video file")
+    a = commands.add_parser(
+        "analyze", help="Analyze a video as a new run, or several as a batch"
+    )
+    a.add_argument(
+        "video_paths",
+        type=Path,
+        nargs="+",
+        metavar="video_path",
+        help="A video file, or a folder of them; several are analyzed one after "
+        "another as a batch, each a run in the batch's folder",
+    )
     a.add_argument(
         "--output-dir",
         type=Path,
@@ -107,18 +136,24 @@ def main(argv: list[str] | None = None) -> None:
         help="Join clips of the same track across up to N seconds without music "
         f"(default: {BRIDGE_GAP_S:g})",
     )
-    a.add_argument("--title", help="The film's title (instead of its file's tag)")
-    a.add_argument("--year", type=int, help="The film's year (instead of its tag)")
-    a.add_argument("--imdb-id", help="The film's IMDb ID, e.g. tt0043014")
+    a.add_argument(
+        "--title", help="The film's title (instead of its file's tag; one film only)"
+    )
+    a.add_argument(
+        "--year", type=int, help="The film's year (instead of its tag; one film only)"
+    )
+    a.add_argument(
+        "--imdb-id", help="The film's IMDb ID, e.g. tt0043014 (one film only)"
+    )
     a.add_argument(
         "--lookup-film",
         action="store_true",
-        help="Fill in what is missing about the film online (TMDb, Wikidata)",
+        help="Fill in what is missing about each film online (TMDb, Wikidata)",
     )
     a.add_argument(
         "--csv",
         action="store_true",
-        help="Also write results.csv: the same results as a spreadsheet",
+        help="Also write each run's results.csv: the same results as a spreadsheet",
     )
 
     r = commands.add_parser(
@@ -137,43 +172,92 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
-    if args.command == "analyze":
-        pipeline = build_pipeline(
-            load_classifier(hf=args.classifier == "hf"),
-            args.api,
-            threshold=args.threshold,
-            hop=args.hop,
-            window=args.chunk_duration,
-            bridge_gap=args.bridge_gap,
-            isolation=args.isolation,
-        )
+    if args.command == "resume":
+        results = resume(args.run_dir, args.api)
+        print()
+        _finish(results, args.run_dir, args.csv)
+        return
+
+    videos = _videos(args.video_paths, a)
+    if len(videos) > 1 and any(
+        option is not None for option in (args.title, args.year, args.imdb_id)
+    ):
+        a.error("--title, --year and --imdb-id describe one film, not several")
+    pipeline = build_pipeline(
+        load_classifier(hf=args.classifier == "hf"),
+        args.api,
+        threshold=args.threshold,
+        hop=args.hop,
+        window=args.chunk_duration,
+        bridge_gap=args.bridge_gap,
+        isolation=args.isolation,
+    )
+    if len(videos) == 1:
         results = analyze(
             pipeline,
-            args.video_path,
+            videos[0],
             args.api,
             args.output_dir,
-            film=_film(args),
+            film=_film(videos[0], args),
             max_segment_duration=args.max_segment or None,
         )
-        run_dir = args.output_dir / results["video_name"]
-    else:
-        run_dir = args.run_dir
-        results = resume(run_dir, args.api)
+        print()
+        _finish(results, args.output_dir / results["video_name"], args.csv)
+        return
 
-    if args.csv:
+    record = analyze_batch(
+        pipeline,
+        [(video, _film(video, args)) for video in videos],
+        args.api,
+        args.output_dir,
+        max_segment_duration=args.max_segment or None,
+    )
+    batch_dir = args.output_dir / record["name"]
+    print()
+    for film in record["films"]:
+        if film["status"] == "done":
+            run = Run(batch_dir / film["run"])
+            _finish(run.load(), run.path, args.csv, f"{film['source']}: ")
+        else:
+            print(f"{film['source']}: {film['status']}: {film['error']}")
+    done = sum(film["status"] == "done" for film in record["films"])
+    print(f"\n{done} of {len(videos)} films analyzed. The batch: {batch_dir}")
+    if done < len(videos):
+        sys.exit(1)
+
+
+def _videos(paths: list[Path], parser: argparse.ArgumentParser) -> list[Path]:
+    """The videos to analyze: each path given, a folder's media files instead
+    of the folder, by name."""
+    videos = []
+    for path in paths:
+        if not path.is_dir():
+            videos.append(path)
+            continue
+        found = sorted(p for p in path.iterdir() if p.suffix.lower() in MEDIA_SUFFIXES)
+        if not found:
+            parser.error(f"no video or audio files in {path}")
+        videos += found
+    return videos
+
+
+def _finish(results: dict[str, Any], run_dir: Path, csv: bool, label: str = "") -> None:
+    """Write the run's results.csv if asked to, and say how it went, after
+    `label`: in a batch, the film's file."""
+    if csv:
         # newline="": the CSV brings its own line endings.
         (run_dir / "results.csv").write_text(
             results_to_csv(results), encoding="utf-8", newline=""
         )
-    _summarize(results, run_dir)
+    _summarize(results, run_dir, label)
 
 
-def _film(args: argparse.Namespace) -> dict[str, Any] | None:
+def _film(video: Path, args: argparse.Namespace) -> dict[str, Any] | None:
     """What is known about the film: its file's MP4 tags, then the options; with
     --lookup-film, what is missing is looked up online."""
     from soundtrackid.metadata.mp4_tags import read_mp4_tags
 
-    film = read_mp4_tags(args.video_path) or {}
+    film = read_mp4_tags(video) or {}
     given = {"title": args.title, "year": args.year, "imdb_id": args.imdb_id}
     film.update({k: v for k, v in given.items() if v is not None})
     if args.lookup_film:
@@ -187,11 +271,11 @@ def _film(args: argparse.Namespace) -> dict[str, Any] | None:
     return film or None
 
 
-def _summarize(results: dict[str, Any], run_dir: Path) -> None:
+def _summarize(results: dict[str, Any], run_dir: Path, label: str = "") -> None:
     cues = results.get("cues") or []
     identified = sum(1 for c in cues if c.get("title"))
     pending = sum(1 for c in cues if c.get("pending"))
-    print(f"\n{identified} of {len(cues)} cues identified. Results in: {run_dir}")
+    print(f"{label}{identified} of {len(cues)} cues identified. Results in: {run_dir}")
     if pending:
         print(
             f"{pending} cue(s) still pending: a provider hit its limit, couldn't "

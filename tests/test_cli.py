@@ -16,7 +16,7 @@ from soundtrackid.defaults import (
 )
 from soundtrackid.isolators import BaseMusicIsolator
 from soundtrackid.models import DetectionResult
-from tests.fakes import FakeClassifier, ThrottledClient, fake_components
+from tests.fakes import FakeClassifier, FakeLoader, ThrottledClient, fake_components
 
 
 def _analyze(tmp_path, monkeypatch, *options, client=None):
@@ -136,7 +136,7 @@ def test_the_clis_runs_are_the_apps_from_any_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "load_classifier", lambda hf: None)
     monkeypatch.setattr(cli, "build_pipeline", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "analyze", analyze)
-    monkeypatch.setattr(cli, "_summarize", lambda results, run_dir: None)
+    monkeypatch.setattr(cli, "_summarize", lambda *args: None)
     monkeypatch.chdir(tmp_path)
 
     cli.main(["analyze", "film.mp4"])
@@ -179,6 +179,91 @@ def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
         "year": 1950,
         "director": "Billy Wilder",
     }
+
+
+def _analyze_batch(tmp_path, monkeypatch, *paths, broken=()):
+    """Run `cli analyze` on these paths into tmp_path/runs, each film 30 s of
+    music; those `broken` can't be read. Returns the batch's folder and record."""
+    classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
+    get_classifier = fake_components(monkeypatch, None, classifier)
+    monkeypatch.setattr(cli, "load_classifier", lambda hf: get_classifier())
+
+    class Loader(FakeLoader):
+        def load(self, path):
+            if path.name in broken:
+                raise ValueError(f"Could not read the audio of {path.name}")
+            return super().load(path)
+
+    monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", Loader)
+    runs = tmp_path / "runs"
+
+    cli.main(["analyze", *map(str, paths), "--output-dir", str(runs), "--csv"])
+
+    [batch_dir] = runs.iterdir()
+    return batch_dir, json.loads((batch_dir / "batch.json").read_text())
+
+
+def test_several_films_are_analyzed_as_a_batch(tmp_path, monkeypatch, capsys):
+    """Each a run in the batch's folder, as a single film's."""
+    batch_dir, record = _analyze_batch(tmp_path, monkeypatch, "a.mp4", "b.mp4")
+
+    assert batch_dir.name.startswith("batch_")
+    assert [(f["source"], f["status"]) for f in record["films"]] == [
+        ("a.mp4", "done"),
+        ("b.mp4", "done"),
+    ]
+    for film in record["films"]:
+        assert (batch_dir / film["run"] / "results.csv").exists()
+    out = capsys.readouterr().out
+    # The provider finds nothing in the film's one stretch of music.
+    assert f"a.mp4: 0 of 1 cues identified. Results in: {batch_dir}" in out
+    assert f"2 of 2 films analyzed. The batch: {batch_dir}" in out
+
+
+def test_a_folder_is_analyzed_as_its_films(tmp_path, monkeypatch):
+    """Its video and audio files, by name."""
+    folder = tmp_path / "films"
+    folder.mkdir()
+    for name in ("b.MKV", "a.mp4", "notes.txt"):
+        (folder / name).write_bytes(b"")
+
+    _, record = _analyze_batch(tmp_path, monkeypatch, folder)
+
+    assert [f["source"] for f in record["films"]] == ["a.mp4", "b.MKV"]
+
+
+def test_a_folder_without_films_is_refused(tmp_path, capsys):
+    (tmp_path / "notes.txt").write_text("")
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["analyze", str(tmp_path)])
+
+    assert exc.value.code == 2
+    assert f"no video or audio files in {tmp_path}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("option", ["--title=X", "--year=1950", "--imdb-id=tt1"])
+def test_the_options_of_one_film_are_refused_for_several(option, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["analyze", "a.mp4", "b.mp4", option])
+
+    assert exc.value.code == 2
+    assert "describe one film, not several" in capsys.readouterr().err
+
+
+def test_a_film_that_fails_fails_the_command_after_the_others(
+    tmp_path, monkeypatch, capsys
+):
+    with pytest.raises(SystemExit) as exc:
+        _analyze_batch(tmp_path, monkeypatch, "a.mp4", "b.mp4", broken=["a.mp4"])
+
+    assert exc.value.code == 1
+    [batch_dir] = (tmp_path / "runs").iterdir()
+    record = json.loads((batch_dir / "batch.json").read_text())
+    assert [f["status"] for f in record["films"]] == ["failed", "done"]
+    out = capsys.readouterr().out
+    assert "a.mp4: failed: Could not read the audio of a.mp4" in out
+    assert "1 of 2 films analyzed" in out
 
 
 def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, capsys):

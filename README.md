@@ -168,6 +168,15 @@ identification, the date re-ranking and the composer lookup, saved as one run.
 uv run --extra app soundtrackid analyze path/to/video.mp4
 ```
 
+Several videos, or a folder of them, are analyzed one after another as a batch,
+each a run in the batch's folder. A film that fails doesn't stop the others; the
+command then ends with exit code 1, once all are done:
+
+```bash
+uv run --extra app soundtrackid analyze film1.mp4 film2.mkv
+uv run --extra app soundtrackid analyze path/to/films
+```
+
 ```
 --output-dir DIR      Folder of the runs (default: output/cache in the project
                       folder, the app's, so its history lists them)
@@ -187,15 +196,16 @@ uv run --extra app soundtrackid analyze path/to/video.mp4
                       music (default: 0)
 --title, --year, --imdb-id
                       The film, where its file's tags lack it or are wrong; the
-                      year flags music released after the film
---lookup-film         Fill in what is missing about the film online (TMDb,
+                      year flags music released after the film (one film only)
+--lookup-film         Fill in what is missing about each film online (TMDb,
                       Wikidata)
---csv                 Also write results.csv: the same results as a spreadsheet
+--csv                 Also write each run's results.csv: the same results as a
+                      spreadsheet
 ```
 
 When a provider leaves cues pending (a rate limit, unreachable, or a failed answer),
 continue the run later; it identifies only the cues still pending. Wrong API keys
-stop the run instead, with a message:
+stop the run instead, or the batch, with a message:
 
 ```bash
 uv run --extra app soundtrackid resume "output/cache/My Film_2026-11-11_10-15-00"
@@ -210,7 +220,8 @@ reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 Each analysis is a run of its own, in `output/cache/<video_name>_<date>_<time>/`
 in the project folder from source, whether the app or the CLI made it and wherever
-it was started (the installed app keeps its runs in its data folder):
+it was started (the installed app keeps its runs in its data folder). A batch's
+runs are in the batch's folder there:
 
 ```
 output/cache/
@@ -220,6 +231,11 @@ output/cache/
     results.csv         # with --csv: the same results as a spreadsheet
     segments/
       seg_004.wav       # audio of a cue left pending, for Resume
+  batch_2026-11-11_11-00-00/
+    batch.json          # the batch's films, each queued, analyzing, done (with its
+                        # run), failed (with why) or cancelled
+    Film A_2026-11-11_11-00-01/   # each film's run, as a single one's
+    Film B_2026-11-11_11-42-17/
 ```
 
 ## Tests

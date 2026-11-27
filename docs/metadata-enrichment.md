@@ -138,8 +138,8 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
 ```
 
 The CLI (`soundtrackid analyze`) runs the same analysis. Its
-`--title`, `--year` and `--imdb-id` options and `--lookup-film` take the place of
-the Confirm film or series panel.
+`--title`, `--year` and `--imdb-id` options (for one film) and `--lookup-film`
+(for each film of a batch too) take the place of the Confirm film or series panel.
 
 ---
 
