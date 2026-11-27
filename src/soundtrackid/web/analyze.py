@@ -1,15 +1,17 @@
 """Starting a run from the page: stage the film and confirm what it is
 (/identify, /film/search, /film/lookup), analyze it (/analyze), or several as a
-batch (/batches), analyze a run's film again (/rerun) or identify the cues a
-provider left pending (/resume). The last four each start a job (web/jobs.py)
-and return its ID, whose progress the page follows."""
+batch (/batches), analyze a run's film again (/rerun), continue a batch
+(/batches/…/continue), or identify the cues a provider left pending, of a run
+(/resume) or of each run of a batch (/batches/…/resume). All but the first
+three each start a job (web/jobs.py) and return its ID, whose progress the
+page follows."""
 
 import json
 import logging
 import os
 import shutil
-import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -37,27 +39,34 @@ _classifier_lock = threading.Lock()
 # ── Pre-analysis upload staging ───────────────────────────────────────────────
 # /identify stores the uploaded file here and returns a staging_id; /analyze then
 # consumes it by id, so a large film is uploaded only once even though the user
-# confirms film metadata in between.
+# confirms film metadata in between. The film a single analysis took stays in its
+# staging folder until the run has it.
 _staging: dict[str, Path] = {}
 _staging_lock = threading.Lock()
 _STAGING_TTL_S = 6 * 3600
 
 
 def _prune_staging() -> None:
-    """Best-effort removal of staged uploads left behind by abandoned confirmations."""
-    import time
-
-    try:
-        for d in data.staging_dir().iterdir():
+    """Remove the uploads staged more than _STAGING_TTL_S ago that no analysis
+    took: their confirmation was left. An analysis removes the one it took once
+    it ends, and the server those left when it stopped (clear_staging)."""
+    now = time.time()
+    with _staging_lock:
+        for staging_id, path in list(_staging.items()):
             try:
-                if time.time() - d.stat().st_mtime > _STAGING_TTL_S:
-                    shutil.rmtree(d, ignore_errors=True)
-                    with _staging_lock:
-                        _staging.pop(d.name, None)
+                expired = now - path.parent.stat().st_mtime > _STAGING_TTL_S
             except OSError:
-                pass
-    except (OSError, FileNotFoundError):
-        pass
+                expired = True  # gone
+            if expired:
+                del _staging[staging_id]
+                shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def clear_staging() -> None:
+    """Remove what the staging folder holds as the server starts: uploads and
+    the films of analyses the server left when it stopped (e.g. the app
+    closed), none of which it can use any more."""
+    shutil.rmtree(data.staging_dir(), ignore_errors=True)
 
 
 def get_classifier():
@@ -184,11 +193,7 @@ async def analyze(
     `staging_id` references a file staged by /identify; `film` carries the
     user-confirmed metadata.
     """
-    [staged_path] = _take_staged([staging_id])
-    # The run takes the staged file over, moved rather than read.
-    video = Path(tempfile.mkdtemp()) / staged_path.name
-    shutil.move(staged_path, video)
-    shutil.rmtree(staged_path.parent, ignore_errors=True)
+    [video] = _take_staged([staging_id])
 
     try:
         film_override = _confirmed_film(json.loads(film)) if film else None
@@ -228,8 +233,9 @@ async def rerun(
     # The new run is named after the film's file, not after this run.
     file_name = Path(results.get("source") or video_name).stem + source.suffix
     # Hard-linked, so both runs share the video on disk; copied where the drive
-    # has no hard links.
-    video = Path(tempfile.mkdtemp()) / file_name
+    # has no hard links. In a staging folder of its own, as an upload taken.
+    video = data.staging_dir() / str(uuid.uuid4()) / file_name
+    video.parent.mkdir(parents=True)
     try:
         os.link(source, video)
     except OSError:
@@ -257,7 +263,7 @@ def _start_analysis(
 ) -> dict:
     """Analyze `video` as a job; returns {"job_id": its ID}.
 
-    `video`, named like the film's file, lies in a temporary folder of its own,
+    `video`, named like the film's file, lies in a staging folder of its own,
     removed when the run ends; the run keeps the video in its run folder.
     """
 
@@ -300,7 +306,8 @@ async def start_batch(
 
     `films` lists them in order, as JSON: each {"staging_id": …, "film": {…}},
     a file staged by /identify and the user-confirmed metadata. The batch's
-    folder is there once this returns, holding the films until their turn.
+    folder is there once this returns, holding the films until their run has
+    them, so that the batch can be continued (/batches/…/continue).
     """
     try:
         items = json.loads(films)
@@ -313,34 +320,76 @@ async def start_batch(
     if not staging_ids:
         raise HTTPException(status_code=422, detail="No films")
     staged = _take_staged(staging_ids)
-    batch = Batch.create(
-        data.runs_dir(),
-        [
-            (path.name, _confirmed_film(item.get("film")))
-            for path, item in zip(staged, items)
-        ],
-    )
+    settings = {
+        "classifier": "hf" if os.environ.get("FIWI_HF") else "onnx",
+        "api": api,
+        "threshold": threshold,
+        "hop": hop,
+        "window": None,
+        "bridge_gap": bridge_gap,
+        "isolation": False,
+        "max_segment_duration": max_segment or None,
+    }
+    try:
+        batch = Batch.create(
+            data.runs_dir(),
+            [
+                (path, _confirmed_film(item.get("film")))
+                for path, item in zip(staged, items)
+            ],
+            settings,
+            take_files=True,
+        )
+    finally:
+        for path in staged:
+            shutil.rmtree(path.parent, ignore_errors=True)
+    return _analyze_batch(batch)
+
+
+@router.post("/batches/{name}/continue")
+async def continue_batch(name: str) -> dict:
+    """Analyze the films the batch didn't get to (it was cancelled, the app
+    closed) and those that failed, with its settings, as a job."""
+    batch = data.find_batch(name)
+    _check_idle(batch)
+    return _analyze_batch(batch)
+
+
+def _analyze_batch(batch: Batch) -> dict:
+    """Analyze the batch's films that have no run, as a job; returns
+    {"job_id": its ID}."""
 
     def work(on_progress, cancel):
-        try:
-            pipeline = _build_pipeline(
-                threshold=threshold, api=api, bridge_gap=bridge_gap, hop=hop
-            )
-            return analysis.analyze_batch(
-                pipeline,
-                batch,
-                staged,
-                api,
-                max_segment_duration=max_segment or None,
-                keep_videos=True,
-                on_progress=on_progress,
-                cancel=cancel,
-            )
-        finally:
-            for path in staged:
-                shutil.rmtree(path.parent, ignore_errors=True)
+        pipeline = analysis.pipeline_for(get_classifier(), batch.load()["settings"])
+        return analysis.analyze_batch(
+            pipeline, batch, on_progress=on_progress, cancel=cancel
+        )
 
     return {"job_id": jobs.start("batch", work, name=batch.name).id}
+
+
+@router.post("/batches/{name}/resume")
+async def resume_batch(name: str) -> dict:
+    """Identify the cues providers left pending in each of the batch's runs,
+    from their saved audio, each run with its own providers, as a job."""
+    batch = data.find_batch(name)
+    _check_idle(batch)
+    if any(batch.run(run) is not None for run in jobs.under_way("resume")):
+        raise HTTPException(status_code=409, detail="A run of the batch is resuming")
+    job = jobs.start(
+        "batch_resume",
+        lambda on_progress, cancel: analysis.resume_batch(
+            batch, on_progress=on_progress, cancel=cancel
+        ),
+        name=batch.name,
+    )
+    return {"job_id": job.id}
+
+
+def _check_idle(batch: Batch) -> None:
+    """A 409 while the batch is analyzed or resumed."""
+    if batch.name in jobs.under_way("batch", "batch_resume"):
+        raise HTTPException(status_code=409, detail="The batch is under way")
 
 
 def _take_staged(staging_ids: list[str]) -> list[Path]:
@@ -380,6 +429,11 @@ async def resume_run(
     run = data.find_run(video_name)
     if not run.exists():
         raise HTTPException(status_code=404, detail="Run not found")
+    # Not twice at once: both would ask the provider about the same cues.
+    if run.name in jobs.under_way("resume") or run.path.parent.name in (
+        jobs.under_way("batch_resume")
+    ):
+        raise HTTPException(status_code=409, detail="The run is resuming")
     api = (payload or {}).get("api") or None  # None: the run's own providers
     job = jobs.start(
         "resume",

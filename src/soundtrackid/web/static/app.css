@@ -809,9 +809,16 @@ input.cell-edit {
 .history-batch .history-chevron { transition: color 0.15s, transform 0.15s; }
 .history-batch.open .history-chevron { transform: rotate(90deg); }
 .history-batch-films .history-item { padding-left: 2rem; }
-.history-film { cursor: default; }
-.history-film:hover { background: none; box-shadow: none; }
+.history-film, .history-interrupted { cursor: default; }
+.history-film:hover, .history-interrupted:hover { background: none; box-shadow: none; }
 .history-film .history-meta { overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+/* A batch's row opens its page (batch.js). */
+.history-open-btn {
+  background: none; border: 1px solid #ddd6fe; border-radius: 6px; cursor: pointer;
+  font: inherit; font-size: 0.75rem; color: #7c3aed; padding: 0.15rem 0.6rem; flex-shrink: 0;
+  transition: background 0.15s;
+}
+.history-open-btn:hover { background: #ede9fe; }
 
 .history-delete-btn {
   background: none;

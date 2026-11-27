@@ -162,13 +162,10 @@
 
   <!-- Progress View -->
   <div id="progress-view">
-    <!-- A batch's films: what became of each, the one under way's steps below -->
+    <!-- A batch's page: what became of each film, the one under way's steps below -->
     <div id="batch-queue" hidden>
       <h3 id="batch-heading"></h3>
       <ol id="batch-films"></ol>
-      <div class="fc-actions" id="batch-done" hidden>
-        <button type="button" id="batch-close" class="reset-btn">Analyze other files</button>
-      </div>
     </div>
     <div class="steps" id="steps-list">
       <div class="step" data-step="loading">
@@ -193,6 +190,20 @@
     </div>
     <div id="error-area"></div>
     <button class="cancel-btn" id="cancel-btn">Cancel analysis</button>
+    <!-- Once it ended without results to show, or a batch ended: the way on -->
+    <div class="fc-actions" id="progress-end" hidden>
+      <button type="button" id="reconnect-btn" class="reset-btn" hidden>Reconnect</button>
+      <button type="button" id="batch-resume" class="reset-btn" hidden title="Identify the cues a provider left pending in each of the batch's runs">Resume pending cues</button>
+      <button type="button" id="batch-continue" class="reset-btn" hidden title="Analyze the films the batch didn't get to, and those that failed">Continue the batch</button>
+      <div class="download-menu" id="batch-download" hidden>
+        <button type="button" class="download-btn" id="batch-download-btn" aria-haspopup="menu" aria-expanded="false">Download all results ▾</button>
+        <div class="download-options" id="batch-download-options" role="menu" hidden>
+          <button type="button" role="menuitem" data-format="json">JSON (zip)</button>
+          <button type="button" role="menuitem" data-format="csv">CSV (zip)</button>
+        </div>
+      </div>
+      <button type="button" id="progress-back" class="reset-btn">Analyze another file</button>
+    </div>
   </div>
 
   <!-- Video preview (dedicated container, collapsible) -->
@@ -304,6 +315,7 @@
     </div>
 
     <div class="results-actions">
+      <button class="reset-btn" id="batch-back" hidden>Back to the batch</button>
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="reset-btn" id="rerun-btn" title="Analyze this video again with the current settings, without uploading it again">Re-run with current settings</button>
       <div class="download-menu">
@@ -375,6 +387,7 @@
 <script src="/static/js/run.js"></script>
 <script src="/static/js/exports.js"></script>
 <script src="/static/js/history.js"></script>
+<script src="/static/js/batch.js"></script>
 <script src="/static/js/video.js"></script>
 <script src="/static/js/main.js"></script>
 </body>

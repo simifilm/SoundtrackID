@@ -3,7 +3,7 @@
 analyze: the pipeline, then the date re-ranking and the composer lookup, then the
 run's results.json, saved once the run is complete. analyze_batch: several
 videos, one after another, as a batch. resume: identify the cues a provider left
-pending, from their saved audio.
+pending, from their saved audio; resume_batch: those of each run of a batch.
 """
 
 import copy
@@ -86,25 +86,39 @@ def analyze(
         raise
 
 
+def pipeline_for(classifier, settings: dict[str, Any]):
+    """The pipeline that analyzes with `settings`, as a batch saves them
+    (Batch.create)."""
+    from soundtrackid.pipeline import build_pipeline
+
+    return build_pipeline(
+        classifier,
+        settings["api"],
+        threshold=settings["threshold"],
+        hop=settings["hop"],
+        window=settings["window"],
+        bridge_gap=settings["bridge_gap"],
+        isolation=settings["isolation"],
+    )
+
+
 def analyze_batch(
     pipeline,
     batch: Batch,
-    videos: list[Path],
-    api: str,
-    max_segment_duration: float | None = None,
-    keep_videos: bool = False,
     on_progress: ProgressCb | None = None,
     cancel: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Analyze the films of a new `batch` (Batch.create), one after another,
-    each as analyze() does, into the batch's folder; return the batch's record:
-    its name, and its films (batches). `videos` are the films', in order.
+    """Analyze the films of `batch` that have no run, one after another, each
+    as analyze() does, into the batch's folder, with the batch's settings
+    (`pipeline` built from them: pipeline_for); return the batch's record: its
+    name, and its films (batches). Those of a new batch are all to analyze;
+    one continued analyzes those it didn't get to, and those that failed.
 
     A film that fails is recorded as failed, with why, and the batch goes on.
     Wrong API keys stop it, as they would fail every film after, and so does a
-    cancel: they are raised, and the runs done stay. `keep_videos` moves the
-    videos into the batch, each kept in its run as analyze's keep_video does;
-    those of films not done are removed when the batch ends.
+    cancel: they are raised, and the runs done stay. A film whose file the
+    batch took over keeps it in its run, as analyze's keep_video does, and in
+    the batch's queue until then, also if it fails, to be tried again.
 
     Reports the record ("batch") as the batch starts and as each film starts
     and ends, and each film's progress in between, as analyze() does.
@@ -112,6 +126,8 @@ def analyze_batch(
     from soundtrackid.detection import ProviderAuthError
 
     record = batch.load()
+    settings = record["settings"]
+    films = record["films"]
 
     def report() -> None:
         if on_progress:
@@ -123,44 +139,47 @@ def analyze_batch(
         batch.save(record)
         report()
 
-    try:
-        videos = [
-            batch.queue(number, video) if keep_videos else video
-            for number, video in enumerate(videos, start=1)
-        ]
-        report()  # all queued
-        for number, (video, entry) in enumerate(zip(videos, record["films"]), 1):
-            if cancel is not None and cancel.is_set():
-                raise Cancelled()
-            log.info("Film %d of %d: %s", number, len(videos), video.name)
-            update(entry, status="analyzing")
-            try:
-                results = analyze(
-                    pipeline,
-                    video,
-                    api,
-                    batch.path,
-                    film=entry["film"],
-                    max_segment_duration=max_segment_duration,
-                    keep_video=keep_videos,
-                    on_progress=on_progress,
-                    cancel=cancel,
-                )
-            except Cancelled:
-                update(entry, status="cancelled")
-                raise
-            except ProviderAuthError as exc:
-                update(entry, status="failed", error=str(exc))
-                raise
-            except Exception as exc:
-                log.exception("Analyzing %s failed", video.name)
-                update(entry, status="failed", error=str(exc))
-                continue
-            update(entry, status="done", run=results["video_name"])
-        return {"name": batch.name, **record}
-    finally:
-        if keep_videos:
-            batch.clear_queue()
+    todo = [(n, entry) for n, entry in enumerate(films, 1) if entry["status"] != "done"]
+    batch.remove_unfinished_runs()
+    for _, entry in todo:
+        entry.update(status="queued", error=None)
+    batch.save(record)
+    report()  # all to do queued
+    for number, entry in todo:
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        log.info("Film %d of %d: %s", number, len(films), entry["source"])
+        video = batch.film_file(number, entry)
+        if not video.is_file():
+            update(entry, status="failed", error=f"Its file is gone: {video}")
+            continue
+        update(entry, status="analyzing")
+        try:
+            results = analyze(
+                pipeline,
+                video,
+                settings["api"],
+                batch.path,
+                film=entry["film"],
+                max_segment_duration=settings["max_segment_duration"],
+                keep_video=batch.took_over(entry),
+                on_progress=on_progress,
+                cancel=cancel,
+            )
+        except Cancelled:
+            update(entry, status="cancelled")
+            raise
+        except ProviderAuthError as exc:
+            update(entry, status="failed", error=str(exc))
+            raise
+        except Exception as exc:
+            log.exception("Analyzing %s failed", entry["source"])
+            update(entry, status="failed", error=str(exc))
+            continue
+        if batch.took_over(entry):
+            batch.dequeue(number)
+        update(entry, status="done", run=results["video_name"])
+    return {"name": batch.name, **record}
 
 
 def resume(
@@ -188,8 +207,7 @@ def resume(
     progress = _checked(on_progress, cancel)
     run = Run(run_dir)
     results = run.load()
-    cues = results.get("cues") or []
-    todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
+    todo = _pending(results)
     total = len(todo)
     if total == 0:
         return results
@@ -243,6 +261,45 @@ def resume(
     for audio_file in answered_audio:
         run.remove_audio(audio_file)
     return results
+
+
+def resume_batch(
+    batch: Batch,
+    api: str | None = None,
+    on_progress: ProgressCb | None = None,
+    cancel: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Resume each of the batch's runs with pending cues, one after another,
+    as resume() does; return the batch's record, as analyze_batch does.
+
+    Reports each run as its resume starts ("batch_resume": the run, its number
+    and how many), then its progress as resume() does. Wrong API keys stop it,
+    and so does a cancel: the runs resumed before keep what they found.
+    """
+    record = batch.load()
+    runs = [
+        run
+        for film in record["films"]
+        if film["status"] == "done"
+        and (run := batch.run(film["run"])) is not None
+        and run.exists()
+        and _pending(run.load())
+    ]
+    for number, run in enumerate(runs, 1):
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        log.info("Run %d of %d: %s", number, len(runs), run.name)
+        if on_progress:
+            on_progress("batch_resume", run=run.name, number=number, total=len(runs))
+        resume(run.path, api, on_progress=on_progress, cancel=cancel)
+    return {"name": batch.name, **record}
+
+
+def _pending(results: dict[str, Any]) -> list[dict[str, Any]]:
+    """The cues a resume identifies: pending, with their audio."""
+    return [
+        c for c in results.get("cues") or [] if c.get("pending") and c.get("audio_file")
+    ]
 
 
 def _checked(

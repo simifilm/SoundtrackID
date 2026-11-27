@@ -1,9 +1,10 @@
-"""Command line: analyze a video, or several as a batch, or resume a run a
-provider stopped.
+"""Command line: analyze a video, or several as a batch, continue a batch, or
+resume a run, or each run of a batch, a provider stopped.
 
     soundtrackid analyze path/to/film.mp4
     soundtrackid analyze film1.mp4 film2.mkv path/to/folder
-    soundtrackid resume output/cache/<run>
+    soundtrackid continue output/cache/<batch>
+    soundtrackid resume output/cache/<run or batch>
 
 Runs the same analysis as the app (soundtrackid.analysis): pipeline, date
 re-ranking, composer lookup, one results.json per run.
@@ -16,7 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from soundtrackid import paths
-from soundtrackid.analysis import analyze, analyze_batch, resume
+from soundtrackid.analysis import (
+    analyze,
+    analyze_batch,
+    pipeline_for,
+    resume,
+    resume_batch,
+)
 from soundtrackid.batches import Batch
 from soundtrackid.classifiers import OnnxClassifier, load_classifier
 from soundtrackid.defaults import (
@@ -28,8 +35,6 @@ from soundtrackid.defaults import (
 )
 from soundtrackid.envfiles import load_env_files
 from soundtrackid.exports import results_to_csv
-from soundtrackid.pipeline import build_pipeline
-from soundtrackid.runs import Run
 
 # The files of a folder analyzed: those the app accepts (upload.js).
 MEDIA_SUFFIXES = {
@@ -157,14 +162,27 @@ def main(argv: list[str] | None = None) -> None:
         help="Also write each run's results.csv: the same results as a spreadsheet",
     )
 
+    c = commands.add_parser(
+        "continue",
+        help="Analyze the films a batch didn't get to, and those that failed",
+    )
+    c.add_argument("batch_dir", type=Path, help="The batch's folder")
+    c.add_argument(
+        "--csv",
+        action="store_true",
+        help="Also write each run's results.csv: the same results as a spreadsheet",
+    )
+
     r = commands.add_parser(
         "resume", help="Identify the cues a provider's limit left pending"
     )
-    r.add_argument("run_dir", type=Path, help="The run's folder")
+    r.add_argument(
+        "run_dir", type=Path, help="The run's folder, or a batch's: each of its runs"
+    )
     r.add_argument(
         "--api",
         default=None,
-        help="Detection provider(s) (default: the ones the run was analyzed with)",
+        help="Detection provider(s) (default: the ones each run was analyzed with)",
     )
     r.add_argument(
         "--csv",
@@ -174,9 +192,20 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     if args.command == "resume":
+        batch = Batch(args.run_dir)
+        if batch.exists():
+            _finish_batch(batch, resume_batch(batch, args.api), args.csv)
+            return
         results = resume(args.run_dir, args.api)
         print()
         _finish(results, args.run_dir, args.csv)
+        return
+
+    if args.command == "continue":
+        batch = Batch(args.batch_dir)
+        if not batch.exists():
+            c.error(f"no batch in {args.batch_dir}")
+        _analyze_batch(batch, args.csv)
         return
 
     videos = _videos(args.video_paths, a)
@@ -184,50 +213,61 @@ def main(argv: list[str] | None = None) -> None:
         option is not None for option in (args.title, args.year, args.imdb_id)
     ):
         a.error("--title, --year and --imdb-id describe one film, not several")
-    pipeline = build_pipeline(
-        load_classifier(hf=args.classifier == "hf"),
-        args.api,
-        threshold=args.threshold,
-        hop=args.hop,
-        window=args.chunk_duration,
-        bridge_gap=args.bridge_gap,
-        isolation=args.isolation,
-    )
+    settings = {
+        "classifier": args.classifier,
+        "api": args.api,
+        "threshold": args.threshold,
+        "hop": args.hop,
+        "window": args.chunk_duration,
+        "bridge_gap": args.bridge_gap,
+        "isolation": args.isolation,
+        "max_segment_duration": args.max_segment or None,
+    }
     if len(videos) == 1:
         results = analyze(
-            pipeline,
+            pipeline_for(load_classifier(hf=args.classifier == "hf"), settings),
             videos[0],
             args.api,
             args.output_dir,
             film=_film(videos[0], args),
-            max_segment_duration=args.max_segment or None,
+            max_segment_duration=settings["max_segment_duration"],
         )
         print()
         _finish(results, args.output_dir / results["video_name"], args.csv)
         return
 
     batch = Batch.create(
-        args.output_dir, [(video.name, _film(video, args)) for video in videos]
+        args.output_dir, [(video, _film(video, args)) for video in videos], settings
     )
-    record = analyze_batch(
-        pipeline,
-        batch,
-        videos,
-        args.api,
-        max_segment_duration=args.max_segment or None,
+    _analyze_batch(batch, args.csv)
+
+
+def _analyze_batch(batch: Batch, csv: bool) -> None:
+    """Analyze the batch's films that have no run, with its settings, and say
+    how each went; exit 1 when one is not done."""
+    settings = batch.load()["settings"]
+    pipeline = pipeline_for(
+        load_classifier(hf=settings["classifier"] == "hf"), settings
     )
-    batch_dir = batch.path
+    if not _finish_batch(batch, analyze_batch(pipeline, batch), csv):
+        print(f'Continue it with: soundtrackid continue "{batch.path}"')
+        sys.exit(1)
+
+
+def _finish_batch(batch: Batch, record: dict[str, Any], csv: bool) -> bool:
+    """Say how each of the batch's films went, writing its run's results.csv
+    if asked to (_finish); return whether every film is done."""
     print()
-    for film in record["films"]:
-        if film["status"] == "done":
-            run = Run(batch_dir / film["run"])
-            _finish(run.load(), run.path, args.csv, f"{film['source']}: ")
+    films = record["films"]
+    for film in films:
+        run = batch.run(film["run"]) if film["run"] else None
+        if film["status"] == "done" and run is not None and run.exists():
+            _finish(run.load(), run.path, csv, f"{film['source']}: ")
         else:
             print(f"{film['source']}: {film['status']}: {film['error']}")
-    done = sum(film["status"] == "done" for film in record["films"])
-    print(f"\n{done} of {len(videos)} films analyzed. The batch: {batch_dir}")
-    if done < len(videos):
-        sys.exit(1)
+    done = sum(film["status"] == "done" for film in films)
+    print(f"\n{done} of {len(films)} films analyzed. The batch: {batch.path}")
+    return done == len(films)
 
 
 def _videos(paths: list[Path], parser: argparse.ArgumentParser) -> list[Path]:

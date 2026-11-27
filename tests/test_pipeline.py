@@ -550,6 +550,35 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
     assert (second / "source.mp4").read_bytes() == b"film"
 
 
+@pytest.mark.parametrize("rerun", [False, True])
+def test_the_film_waits_in_the_staging_folder_until_its_run_has_it(
+    tmp_path, monkeypatch, rerun
+):
+    """Not in the system's temporary folder: one the app closed on is removed
+    as the server starts again (clear_staging)."""
+    from fastapi.testclient import TestClient
+
+    from soundtrackid import analysis
+    from soundtrackid.web.app import app
+
+    analyzed = []
+    real_analyze = analysis.analyze
+
+    def analyze(pipeline, video, *args, **kwargs):
+        analyzed.append(video)
+        return real_analyze(pipeline, video, *args, **kwargs)
+
+    monkeypatch.setattr(analysis, "analyze", analyze)
+    events = _analyze(tmp_path, monkeypatch)
+    if rerun:
+        client = TestClient(app)
+        r = client.post(f"/rerun/{events[-1]['results']['video_name']}")
+        job_events(client, r)
+
+    assert analyzed[-1].parent.parent == tmp_path / "staging"
+    assert list((tmp_path / "staging").iterdir()) == []
+
+
 def test_analyze_streams_progress_fields_unwrapped(tmp_path, monkeypatch):
     """The SSE events carry the pipeline's fields at their top level."""
     events = _analyze(tmp_path, monkeypatch)

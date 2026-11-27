@@ -134,7 +134,7 @@ def test_the_clis_runs_are_the_apps_from_any_folder(tmp_path, monkeypatch):
         return {"video_name": "film"}
 
     monkeypatch.setattr(cli, "load_classifier", lambda hf: None)
-    monkeypatch.setattr(cli, "build_pipeline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "pipeline_for", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "analyze", analyze)
     monkeypatch.setattr(cli, "_summarize", lambda *args: None)
     monkeypatch.chdir(tmp_path)
@@ -181,11 +181,10 @@ def test_lookup_film_fills_in_what_is_missing(tmp_path, monkeypatch):
     }
 
 
-def _analyze_batch(tmp_path, monkeypatch, *paths, broken=()):
-    """Run `cli analyze` on these paths into tmp_path/runs, each film 30 s of
-    music; those `broken` can't be read. Returns the batch's folder and record."""
+def _batch_components(monkeypatch, broken=(), client=None):
+    """Each film 30 s of music; those `broken` can't be read."""
     classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
-    get_classifier = fake_components(monkeypatch, None, classifier)
+    get_classifier = fake_components(monkeypatch, client, classifier)
     monkeypatch.setattr(cli, "load_classifier", lambda hf: get_classifier())
 
     class Loader(FakeLoader):
@@ -195,9 +194,21 @@ def _analyze_batch(tmp_path, monkeypatch, *paths, broken=()):
             return super().load(path)
 
     monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", Loader)
+
+
+def _analyze_batch(tmp_path, monkeypatch, *paths, broken=(), client=None):
+    """Run `cli analyze` on these paths into tmp_path/runs: a file's name is
+    one made in tmp_path. Returns the batch's folder and record."""
+    _batch_components(monkeypatch, broken, client)
+    files = []
+    for path in paths:
+        if isinstance(path, str):
+            path = tmp_path / path
+            path.write_bytes(b"video")
+        files.append(path)
     runs = tmp_path / "runs"
 
-    cli.main(["analyze", *map(str, paths), "--output-dir", str(runs), "--csv"])
+    cli.main(["analyze", *map(str, files), "--output-dir", str(runs), "--csv"])
 
     [batch_dir] = runs.iterdir()
     return batch_dir, json.loads((batch_dir / "batch.json").read_text())
@@ -264,6 +275,52 @@ def test_a_film_that_fails_fails_the_command_after_the_others(
     out = capsys.readouterr().out
     assert "a.mp4: failed: Could not read the audio of a.mp4" in out
     assert "1 of 2 films analyzed" in out
+    assert f'Continue it with: soundtrackid continue "{batch_dir}"' in out
+
+
+def test_a_batch_is_continued_where_it_stopped(tmp_path, monkeypatch, capsys):
+    """Its films that failed, or that it didn't get to, from where they are."""
+    with pytest.raises(SystemExit):
+        _analyze_batch(tmp_path, monkeypatch, "a.mp4", "b.mp4", broken=["a.mp4"])
+    [batch_dir] = (tmp_path / "runs").iterdir()
+    _batch_components(monkeypatch)
+    capsys.readouterr()
+
+    cli.main(["continue", str(batch_dir)])
+
+    record = json.loads((batch_dir / "batch.json").read_text())
+    assert [f["status"] for f in record["films"]] == ["done", "done"]
+    assert "2 of 2 films analyzed" in capsys.readouterr().out
+
+
+def test_continue_needs_a_batch(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["continue", str(tmp_path)])
+
+    assert exc.value.code == 2
+    assert f"no batch in {tmp_path}" in capsys.readouterr().err
+
+
+def test_resuming_a_batch_resumes_each_of_its_runs(tmp_path, monkeypatch, capsys):
+    batch_dir, record = _analyze_batch(
+        tmp_path, monkeypatch, "a.mp4", "b.mp4", client=ThrottledClient()
+    )
+    monkeypatch.setattr(
+        "soundtrackid.detection.build_detection_client",
+        lambda api: SimpleNamespace(
+            detect=lambda seg: DetectionResult(seg, "Song", "A", "acrcloud")
+        ),
+    )
+    capsys.readouterr()
+
+    cli.main(["resume", str(batch_dir)])
+
+    for film in record["films"]:
+        cues = json.loads((batch_dir / film["run"] / "results.json").read_text())
+        assert [c["title"] for c in cues["cues"]] == ["Song"]
+    out = capsys.readouterr().out
+    assert "a.mp4: 1 of 1 cues identified" in out
+    assert "b.mp4: 1 of 1 cues identified" in out
 
 
 def test_resume_identifies_what_a_limit_left_pending(tmp_path, monkeypatch, capsys):

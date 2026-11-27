@@ -557,7 +557,8 @@ def test_a_batch_analyzes_the_films_one_after_another(
 
 
 def test_a_batch_can_be_cancelled(page, fakes, tagged_video, video, runs):
-    """The films after the one cancelled aren't analyzed."""
+    """The films after the one cancelled aren't analyzed: the batch's page
+    says so, and offers to continue."""
     fakes.classifying.clear()  # the first film waits after its first window
     page.goto("/")
     upload(page, tagged_video, video)
@@ -567,6 +568,11 @@ def test_a_batch_can_be_cancelled(page, fakes, tagged_video, video, runs):
     page.locator("#cancel-btn").click()
     fakes.classifying.set()
 
+    expect(page.locator(".batch-film")).to_have_text(
+        [re.compile(r"sunset\.mp4.*Cancelled"), re.compile(r"film\.mp4.*Not analyzed")]
+    )
+    expect(page.locator("#batch-continue")).to_have_text("Continue the batch (2 films)")
+    page.locator("#progress-back").click()
     expect(page.locator("#drop-zone")).to_be_visible()
     page.locator("#history-panel > summary").click()
     page.locator(".history-batch").click()

@@ -559,6 +559,7 @@ def test_history_lists_every_run_newest_first(runs_dir):
         "video_name": "run11",
         "total": 1,
         "identified": 1,
+        "pending": 0,
     }
 
 

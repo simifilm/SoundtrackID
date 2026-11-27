@@ -1,4 +1,5 @@
-// Recent runs: the runs, and the batches, each showing its films under it.
+// Recent runs: the runs, and the batches, each showing its films under it and
+// opening its page (batch.js).
 
 const DELETE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg>';
 // What became of a batch's film that has no run; "failed" shows why.
@@ -17,7 +18,8 @@ async function loadHistory() {
   try {
     const entries = await fetch('/history').then(r => r.json());
     if (!entries.length) { panel.style.display = 'none'; return; }
-    list.replaceChildren(...entries.flatMap(e => e.kind === 'batch' ? batchRows(e) : [runRow(e)]));
+    list.replaceChildren(...entries.flatMap(e =>
+      e.kind === 'batch' ? batchRows(e) : [e.kind === 'interrupted' ? interruptedRow(e) : runRow(e)]));
     panel.style.display = 'block';
   } catch (_) { panel.style.display = 'none'; }
 }
@@ -46,13 +48,22 @@ function historyTime(timestamp) {
   return `${dateStr}, ${timeStr}`;
 }
 
-// A run's row, named `name`: it opens the run.
-function runRow(run, name = run.video_name) {
+// A run's row, named `name`: it opens the run, of `batch` if one's.
+function runRow(run, name = run.video_name, batch = null) {
   const meta = `${historyTime(run.timestamp)} · ${run.total} seg${run.total !== 1 ? 's' : ''}` +
     (run.identified > 0 ? ` · ${run.identified} identified` : '');
   const row = historyRow(name, meta, 'Delete run', () => deleteRun(run.video_name));
   row.classList.add('history-run');
-  row.addEventListener('click', () => openRun(run.video_name));
+  row.addEventListener('click', () => openRun(run.video_name, batch));
+  return row;
+}
+
+// A run stopped before it was saved (e.g. the app closed during it): only to
+// delete.
+function interruptedRow(run) {
+  const row = historyRow(run.video_name, `${historyTime(run.timestamp)} · Interrupted`, 'Delete run', () => deleteRun(run.video_name));
+  row.classList.add('history-run', 'history-interrupted');
+  row.querySelector('.history-chevron').remove();
   return row;
 }
 
@@ -71,9 +82,12 @@ function batchRows(batch) {
   const name = 'Batch: ' + batch.films.map(f => f.source).join(', ');
   const row = historyRow(name, meta, 'Delete batch', () => deleteBatch(batch.name, runs));
   row.classList.add('history-batch');
+  const open = Object.assign(document.createElement('button'), { type: 'button', className: 'history-open-btn', textContent: 'Open', title: "Open the batch's page" });
+  open.addEventListener('click', e => { e.stopPropagation(); showBatch(batch.name); });
+  row.insertBefore(open, row.querySelector('.history-delete-btn'));
   const films = document.createElement('div');
   films.className = 'history-batch-films';
-  films.append(...batch.films.map(filmRow));
+  films.append(...batch.films.map(film => filmRow(film, batch.name)));
   const show = () => {
     films.hidden = !openBatches.has(batch.name);
     row.classList.toggle('open', !films.hidden);
@@ -87,8 +101,8 @@ function batchRows(batch) {
 }
 
 // A film's row in its batch: its run's, once done, else what became of it.
-function filmRow(film) {
-  if (film.run) return runRow(film.run, film.source);
+function filmRow(film, batch) {
+  if (film.run) return runRow(film.run, film.source, batch);
   const status = film.status === 'failed' ? `Failed: ${film.error}` : FILM_STATUS[film.status] || film.status;
   const row = historyRow(film.source, status);
   row.classList.add('history-film');
@@ -108,8 +122,9 @@ async function deleteBatch(name, runs) {
   if (runs.some(run => run.video_name === currentVideoName)) showStartPage(); else loadHistory();
 }
 
-// Show a saved run: its results, waveform and classes. Returns whether it opened.
-async function openRun(videoName) {
+// Show a saved run: its results, waveform and classes; with "Back to the
+// batch" when it is one of `batch`'s. Returns whether it opened.
+async function openRun(videoName, batch = null) {
   const res = await fetch('/results/' + encodeURIComponent(videoName));
   if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return false; }
   const results = await res.json();
@@ -128,6 +143,8 @@ async function openRun(videoName) {
   }
   showResults(results);
   renderClasses(timeline.classification_windows);
+  shownBatch = batch;
+  batchBack.hidden = !batch;
   return true;
 }
 

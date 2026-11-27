@@ -1,9 +1,13 @@
 """Tests for batches in the app: starting one (POST /batches), listing them
-with their films (GET /history) and deleting one (DELETE /batches/{name})."""
+with their films (GET /history, /batches/{name}), deleting one (DELETE
+/batches/{name}), continuing and resuming one, and downloading its results."""
 
+import io
 import json
 import os
 import threading
+import zipfile
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +15,7 @@ from fastapi.testclient import TestClient
 from soundtrackid.batches import Batch
 from soundtrackid.web import analyze, jobs
 from soundtrackid.web.app import app
-from tests.fakes import FakeClassifier, fake_components
+from tests.fakes import BATCH_SETTINGS, FakeClassifier, FakeLoader, fake_components
 from tests.jobs import job_events
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -31,8 +35,11 @@ def _stage(name):
 
 def _batch(runs_dir, *films):
     """A batch on disk: `films` are (source, status, run); a run named is made,
-    as a done film's."""
-    batch = Batch.create(runs_dir, [(source, None) for source, _, _ in films])
+    as a done film's. Their files are where the command line left them, but
+    gone."""
+    batch = Batch.create(
+        runs_dir, [(runs_dir / source, None) for source, _, _ in films], BATCH_SETTINGS
+    )
     record = batch.load()
     for entry, (_, status, run) in zip(record["films"], films):
         entry.update(status=status, run=run)
@@ -129,6 +136,7 @@ def test_the_history_says_what_became_of_each_film(runs_dir):
         "video_name": "a_2026-11-11_10-00-00",
         "total": 2,
         "identified": 1,
+        "pending": 0,
     }
     assert c["error"] == "Could not read the audio"
 
@@ -183,13 +191,138 @@ def test_only_a_batch_is_deleted_as_one(runs_dir):
 
 def test_a_batch_under_way_is_not_deleted(runs_dir):
     batch = _batch(runs_dir, ("a.mp4", "analyzing", None))
-    gate = threading.Event()
-    job = jobs.start("batch", lambda on_progress, cancel: gate.wait(10), batch.name)
-    try:
+    with _under_way("batch", batch.name):
         r = client.delete(f"/batches/{batch.name}")
+        client.delete("/history")
 
         assert r.status_code == 409
         assert batch.exists()
+
+
+@contextmanager
+def _under_way(kind, name):
+    """A job of this kind, of this batch or run, under way meanwhile."""
+    gate = threading.Event()
+    job = jobs.start(kind, lambda on_progress, cancel: gate.wait(10), name)
+    try:
+        yield
     finally:
         gate.set()
         client.get(f"/jobs/{job.id}/events")  # once it ended
+
+
+def test_a_batch_is_continued_with_its_settings(data_dir, monkeypatch):
+    """Its films not done, from their files the batch kept."""
+    classifier = FakeClassifier(music_starts=(0.0, 5.0, 10.0, 15.0, 20.0))
+    monkeypatch.setattr(
+        analyze, "get_classifier", fake_components(monkeypatch, None, classifier)
+    )
+
+    class Loader(FakeLoader):
+        def load(self, path):
+            if path.name == "b.mp4":
+                raise ValueError("Could not read the audio")
+            return super().load(path)
+
+    monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", Loader)
+    films = [{"staging_id": _stage(name)} for name in ("a.mp4", "b.mp4")]
+    r = client.post("/batches", data={"films": json.dumps(films), "hop": "2.5"})
+    batch = Batch(data_dir / "cache" / job_events(client, r)[-1]["results"]["name"])
+    assert [f["status"] for f in batch.load()["films"]] == ["done", "failed"]
+    assert client.get(f"/batches/{batch.name}").json()["to_continue"] == 1
+    monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", FakeLoader)
+
+    r = client.post(f"/batches/{batch.name}/continue")
+
+    events = job_events(client, r)
+    assert [f["status"] for f in events[-1]["results"]["films"]] == ["done", "done"]
+    run = batch.path / events[-1]["results"]["films"][1]["run"]
+    assert (run / "source.mp4").read_bytes() == b"b.mp4"
+    assert json.loads((run / "results.json").read_text())["settings"]["hop"] == 2.5
+
+
+def test_a_batch_under_way_is_not_continued_or_resumed(runs_dir):
+    batch = _batch(runs_dir, ("a.mp4", "analyzing", None))
+    for kind in ("batch", "batch_resume"):
+        with _under_way(kind, batch.name):
+            for action in ("continue", "resume"):
+                r = client.post(f"/batches/{batch.name}/{action}")
+
+                assert r.status_code == 409
+
+
+def test_a_batch_is_resumed_run_by_run(runs_dir, monkeypatch):
+    batch = _batch(runs_dir, ("a.mp4", "done", "a_2026-11-11_10-00-00"))
+    resumed = []
+    monkeypatch.setattr(
+        analyze.analysis,
+        "resume_batch",
+        lambda batch, **kwargs: resumed.append(batch.name) or {},
+    )
+
+    r = client.post(f"/batches/{batch.name}/resume")
+
+    assert job_events(client, r)[-1]["step"] == "done"
+    assert resumed == [batch.name]
+
+
+def test_a_run_is_resumed_once_at_a_time(runs_dir):
+    """Also not while its batch is."""
+    batch = _batch(runs_dir, ("a.mp4", "done", "a_2026-11-11_10-00-00"))
+    with _under_way("batch_resume", batch.name):
+        assert client.post("/resume/a_2026-11-11_10-00-00").status_code == 409
+    with _under_way("resume", "a_2026-11-11_10-00-00"):
+        assert client.post("/resume/a_2026-11-11_10-00-00").status_code == 409
+        assert client.post(f"/batches/{batch.name}/resume").status_code == 409
+
+
+def test_a_batch_says_what_its_films_need(runs_dir):
+    """Its runs' pending cues, to resume, and the films whose files it has, to
+    continue; and its providers, whose keys that takes."""
+    batch = _batch(
+        runs_dir,
+        ("a.mp4", "done", "a_2026-11-11_10-00-00"),
+        ("b.mp4", "failed", None),
+        ("c.mp4", "cancelled", None),
+    )
+    cues = [{"title": None, "pending": True, "audio_file": "segments/s.wav"}]
+    run = batch.path / "a_2026-11-11_10-00-00"
+    (run / "results.json").write_text(json.dumps({"cues": cues}))
+    (runs_dir / "c.mp4").write_bytes(b"video")  # b's is gone
+
+    entry = client.get(f"/batches/{batch.name}").json()
+
+    assert entry["films"][0]["run"]["pending"] == 1
+    assert entry["to_continue"] == 1
+    assert entry["providers"] == [BATCH_SETTINGS["api"]]
+    assert client.get("/batches/nope").status_code == 404
+
+
+@pytest.mark.parametrize("fmt", ["json", "csv"])
+def test_a_batchs_results_download_together(runs_dir, fmt):
+    """Each run's as Download results has it, in a zip."""
+    batch = _batch(
+        runs_dir,
+        ("a.mp4", "done", "a_2026-11-11_10-00-00"),
+        ("b.mp4", "failed", None),
+        ("c.mp4", "done", "c_2026-11-11_10-10-00"),
+    )
+
+    r = client.get(f"/batches/{batch.name}/results/{fmt}")
+
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert (
+        f'filename="{batch.name}_results_{fmt}.zip"' in r.headers["content-disposition"]
+    )
+    archive = zipfile.ZipFile(io.BytesIO(r.content))
+    names = ["a_2026-11-11_10-00-00", "c_2026-11-11_10-10-00"]
+    assert archive.namelist() == [f"{name}_results.{fmt}" for name in names]
+    for name in names:
+        single = (
+            client.get(f"/output/{name}/csv").text
+            if fmt == "csv"
+            else json.dumps(client.get(f"/results/{name}").json(), indent=2)
+        )
+        assert archive.read(f"{name}_results.{fmt}").decode() == single
+    assert client.get(f"/batches/{batch.name}/results/xml").status_code == 404

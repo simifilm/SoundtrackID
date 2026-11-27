@@ -1,22 +1,21 @@
-// Running an analysis: its steps, its progress events, a stall, cancelling.
+// Running an analysis: its steps, its progress events, a stall, cancelling, and
+// the way on once it ended without results (an error, a lost connection).
 
 let currentJobId      = null;    // POST /jobs/{currentJobId}/cancel cancels the run
 let streaming         = false;   // until done, error or cancelled ends the run
+let following         = null;    // the AbortController of the job's events being read
 let identFarthestEnd  = 0;       // farthest processed window end (identification frontier)
 let identReaped       = 0;       // identification windows processed so far
 let identTotal        = 0;       // total identification windows (known once classification finishes)
 let lastEventAt       = 0;       // timestamp of the last SSE event (stall detection)
 let stallTimer        = null;
 
-// A batch: its films above the progress of the one under way.
-const batchQueue   = document.getElementById('batch-queue');
-const batchHeading = document.getElementById('batch-heading');
-const batchFilms   = document.getElementById('batch-films');
-const batchDone    = document.getElementById('batch-done');
 const stepsList    = document.getElementById('steps-list');
-let batchRecord    = null;       // the batch as last reported: its films
-let batchFilmShown = -1;         // the film whose progress shows, by its place
-const runCounts    = new Map();  // a done film's run → its counts, once read
+// The way on from a run that ended without results to show.
+const progressEnd  = document.getElementById('progress-end');
+const reconnectBtn = document.getElementById('reconnect-btn');
+const progressBack = document.getElementById('progress-back');
+let reconnectTo    = null;       // follows the job again, once the connection broke
 
 // Steps helper
 const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing', 'enriching'];
@@ -63,15 +62,6 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
   startJob(url, formData, handleEvent);
 }
 
-// Analyze several staged films one after another as a batch: `films` are
-// each {stagingId, film}.
-function startBatch(films) {
-  showProgress(true);
-  const formData = analysisSettings();
-  formData.append('films', JSON.stringify(films.map(f => ({ staging_id: f.stagingId, film: f.film }))));
-  startJob('/batches', formData, handleBatchEvent);
-}
-
 // The settings in the Settings panel, as the server takes them.
 function analysisSettings() {
   const formData = new FormData();
@@ -91,33 +81,27 @@ function startJob(url, formData, onEvent) {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         // Refused before the run started (e.g. an expired staged upload).
-        finishRun();
-        errorArea.textContent = 'ERROR: ' + (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`);
-        errorArea.style.display = 'block';
-        if (onEvent === handleBatchEvent) batchDone.hidden = false;
+        runEnded('ERROR: ' + (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`));
         return;
       }
       followAnalysis(body.job_id, onEvent);
     })
-    .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
+    .catch(err => runEnded('Connection error: ' + err.message));
 }
 
 // The progress view, empty, in place of the rest of the page; with `batch`,
 // with the batch's films above.
 function showProgress(batch = false) {
+  stopFollowing();   // a job shown before
   resetProgress();
   errorArea.style.display = 'none';
   errorArea.textContent = '';
-  currentJobId = null;
   cancelBtn.disabled = false;
   cancelBtn.textContent = batch ? 'Cancel batch' : 'Cancel analysis';
   cancelBtn.style.display = 'block';
-  batchQueue.hidden = !batch;
-  batchDone.hidden = true;
-  batchFilms.replaceChildren();
-  batchHeading.textContent = '';
-  batchRecord = null;
-  batchFilmShown = -1;
+  progressEnd.hidden = true;
+  progressBack.textContent = batch ? 'Analyze other files' : 'Analyze another file';
+  resetBatchPage(batch);
   stepsList.hidden = false;
 
   document.getElementById('history-panel').style.display = 'none';
@@ -154,12 +138,23 @@ function resetProgress() {
 }
 
 // Show the progress of the analysis or batch job `jobId` with `onEvent`, from
-// its start, also of one already under way (the page reloaded), until it ends.
+// its start, also of one already under way (the page reloaded), until it ends
+// or the page shows something else (stopFollowing).
 async function followAnalysis(jobId, onEvent = handleEvent) {
   currentJobId = jobId;
   streaming = true;
+  const reading = following = new AbortController();
+  // Once the connection broke: the job from its start again, or the batch.
+  const reconnect = onEvent === handleEvent
+    ? () => { showProgress(); followAnalysis(jobId); }
+    : () => showBatch(shownBatch);
   try {
-    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}/events`);
+    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}/events`, { signal: reading.signal });
+    if (res.status === 404) {
+      // The server forgot it: it restarted, or the job ended long ago.
+      runEnded('This analysis is no longer under way: the server was restarted.');
+      return;
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     await readEvents(res, onEvent, (err, text) => {
       // A bug handling one event: keep reading the stream, but show it
@@ -171,21 +166,42 @@ async function followAnalysis(jobId, onEvent = handleEvent) {
     });
     // Stream ended. If no terminal event (done/error/cancelled) ended the
     // run, the server dropped the connection mid-analysis.
-    if (streaming) {
-      finishRun();
-      errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
-      errorArea.style.display = 'block';
+    if (streaming && !reading.signal.aborted) {
+      runEnded('The server closed the connection before finishing. It may have crashed.', reconnect);
     }
   } catch (err) {
     // Abrupt drop mid-stream (server killed, network offline). Surface it
-    // instead of hanging.
-    if (streaming) {
-      finishRun();
-      errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
-      errorArea.style.display = 'block';
+    // instead of hanging; not when the page stopped reading.
+    if (streaming && !reading.signal.aborted) {
+      runEnded('Lost connection to the server during analysis (' + err.message + ').', reconnect);
     }
   }
 }
+
+// Stop reading the job's events, not the job: the page shows something else.
+function stopFollowing() {
+  if (following) following.abort();
+  following = null;
+  finishRun();
+}
+
+// The run ended without results to show: why, and the way on; with
+// `reconnect`, following the job again too.
+function runEnded(message, reconnect = null) {
+  finishRun();
+  errorArea.textContent = message;
+  errorArea.style.display = 'block';
+  showRunEnd(reconnect);
+}
+
+function showRunEnd(reconnect = null) {
+  reconnectTo = reconnect;
+  reconnectBtn.hidden = !reconnect;
+  progressEnd.hidden = false;
+}
+
+reconnectBtn.addEventListener('click', () => reconnectTo());
+progressBack.addEventListener('click', () => showStartPage());
 
 const STALL_WARN_MS = 12000;   // no SSE event for this long during a run → warn
 const STALL_HARD_MS = 40000;   // still nothing → stronger warning
@@ -299,9 +315,7 @@ function handleEvent(ev) {
   }
 
   if (step === 'error') {
-    finishRun();
-    errorArea.textContent = 'ERROR: ' + detail;
-    errorArea.style.display = 'block';
+    runEnded('ERROR: ' + detail);
     return;
   }
 
@@ -328,86 +342,6 @@ function handleEvent(ev) {
     if (wfDuration > 0) classFill.style.width = (ev.end / wfDuration * 100) + '%';
   }
 }
-
-// A batch job's events: the batch's record as it starts and as each film
-// starts and ends, each film's progress in between, and the batch's end.
-function handleBatchEvent(ev) {
-  if (ev.step === 'batch') {
-    lastEventAt = performance.now();
-    batchRecord = ev;
-    const analyzing = ev.films.findIndex(f => f.status === 'analyzing');
-    if (analyzing !== -1 && analyzing !== batchFilmShown) {
-      batchFilmShown = analyzing;
-      resetProgress();   // for the next film's
-    }
-    renderBatch(false);
-    return;
-  }
-  if (ev.step === 'done') {
-    finishRun();
-    batchRecord = ev.results;
-    endBatch();
-    return;
-  }
-  handleEvent(ev);   // a film's progress; "cancelled" and "error" end the batch
-  if (ev.step === 'error') endBatch();
-}
-
-// The batch's films as it ended, in place of the last one's progress: those
-// done to open.
-function endBatch() {
-  stepsList.hidden = true;
-  waveformContainer.style.display = 'none';
-  setupVideo(null, null);
-  batchDone.hidden = false;
-  renderBatch(true);
-}
-
-const BATCH_STATUS = { queued: 'Queued', analyzing: 'Analyzing…', cancelled: 'Cancelled' };
-
-function renderBatch(ended) {
-  const films = batchRecord ? batchRecord.films : [];
-  const done = films.filter(f => f.status === 'done').length;
-  batchHeading.textContent = `Batch: ${done} of ${films.length} films analyzed`;
-  batchFilms.replaceChildren(...films.map(film => {
-    const status = Object.assign(document.createElement('span'), { className: 'batch-film-status' });
-    if (film.status === 'done') {
-      status.textContent = 'Done';
-      countsOf(film.run).then(text => { status.textContent = text; });
-    } else if (film.status === 'failed') {
-      status.textContent = `Failed: ${film.error}`;
-    } else if (ended && film.status !== 'cancelled') {
-      status.textContent = 'Not analyzed';   // the batch stopped before it
-    } else {
-      status.textContent = BATCH_STATUS[film.status];
-    }
-    const item = document.createElement('li');
-    item.className = `batch-film ${film.status}`;
-    item.append(Object.assign(document.createElement('span'), { className: 'batch-film-name', textContent: film.source }), status);
-    if (ended && film.status === 'done') {
-      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'reset-btn', textContent: 'Open' });
-      open.addEventListener('click', () => openRun(film.run));
-      item.append(open);
-    }
-    return item;
-  }));
-}
-
-// "12 of 15 cues identified", of a done film's run, once its results are read.
-function countsOf(run) {
-  if (!runCounts.has(run)) {
-    runCounts.set(run, fetch('/results/' + encodeURIComponent(run))
-      .then(res => res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)))
-      .then(results => {
-        const cues = results.cues || [];
-        return `${cues.filter(c => c.title).length} of ${cues.length} cues identified`;
-      })
-      .catch(() => 'Done'));
-  }
-  return runCounts.get(run);
-}
-
-document.getElementById('batch-close').addEventListener('click', () => showStartPage());
 
 cancelBtn.addEventListener('click', async () => {
   if (!currentJobId) return;

@@ -3,6 +3,7 @@ history."""
 
 import json
 import os
+import threading
 import time
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from soundtrackid.metadata import film as film_module
 from soundtrackid.metadata.film import FilmInfo
-from soundtrackid.web import analyze
+from soundtrackid.web import analyze, jobs
 from soundtrackid.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -161,6 +162,31 @@ def test_identify_removes_stale_staged_uploads(data_dir, monkeypatch):
     assert set(analyze._staging) == {"recent", new_id}
 
 
+def test_identify_leaves_the_film_an_analysis_took(data_dir, monkeypatch):
+    """However long ago it was staged: the analysis removes it as it ends."""
+    taken = data_dir / "staging" / "taken"
+    taken.mkdir(parents=True)
+    (taken / "film.mp4").write_bytes(b"video")
+    seven_hours_ago = time.time() - 7 * 3600
+    os.utime(taken, (seven_hours_ago, seven_hours_ago))
+    monkeypatch.setattr(analyze, "_staging", {})
+
+    client.post("/identify", files={"file": ("new.mp4", b"video")})
+
+    assert (taken / "film.mp4").exists()
+
+
+def test_the_server_starts_with_no_staged_uploads(data_dir, monkeypatch):
+    """Nor films of analyses it left: the app closed during them."""
+    staging = data_dir / "staging"
+    (staging / "left").mkdir(parents=True)
+    (staging / "left" / "film.mp4").write_bytes(b"video")
+
+    analyze.clear_staging()
+
+    assert not staging.exists()
+
+
 @pytest.mark.parametrize("staging_id", ["unknown", "pruned"])
 def test_analyze_needs_a_staged_upload(tmp_path, monkeypatch, staging_id):
     # "pruned" is still registered, but its file is gone
@@ -211,19 +237,44 @@ def test_missing_video_or_filmstrip_is_404(run_dir, what):
 
 
 def test_history_lists_only_runs_with_readable_results(runs_dir):
-    (runs_dir / "running").mkdir()  # no results.json yet
+    """And those interrupted before they were saved, only to delete."""
+    (runs_dir / "interrupted").mkdir()  # no results.json
     (runs_dir / "broken").mkdir()
     (runs_dir / "broken" / "results.json").write_text("{not json")
     (runs_dir / "done").mkdir()
     cues = [{"title": "A"}, {"title": None}]
     (runs_dir / "done" / "results.json").write_text(json.dumps({"cues": cues}))
     (runs_dir / "notes.txt").write_text("not a run")
+    os.utime(runs_dir / "interrupted", (1000, 1000))
 
-    items = client.get("/history").json()
+    done, interrupted = client.get("/history").json()
 
-    assert [(i["video_name"], i["total"], i["identified"]) for i in items] == [
-        ("done", 2, 1)
-    ]
+    assert (done["kind"], done["video_name"], done["total"], done["identified"]) == (
+        "run",
+        "done",
+        2,
+        1,
+    )
+    assert interrupted == {
+        "kind": "interrupted",
+        "video_name": "interrupted",
+        "timestamp": 1000,
+    }
+    assert client.delete("/history/interrupted").status_code == 200
+    assert not (runs_dir / "interrupted").exists()
+
+
+def test_no_run_is_interrupted_while_one_is_analyzed(runs_dir, monkeypatch):
+    """The one under way isn't saved yet either."""
+    monkeypatch.setattr(jobs, "_jobs", {})
+    (runs_dir / "film_2026-11-11_10-00-00").mkdir()
+    gate = threading.Event()
+    job = jobs.start("analysis", lambda on_progress, cancel: gate.wait(10))
+    try:
+        assert client.get("/history").json() == []
+    finally:
+        gate.set()
+        client.get(f"/jobs/{job.id}/events")  # once it ended
 
 
 def test_history_is_empty_without_a_cache_folder(data_dir):

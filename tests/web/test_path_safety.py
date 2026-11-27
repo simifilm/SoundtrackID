@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from soundtrackid.batches import Batch
 from soundtrackid.web import analyze, data
 from soundtrackid.web.app import app
+from tests.fakes import BATCH_SETTINGS
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app)
@@ -44,7 +45,7 @@ def test_delete_history_keeps_the_cache_folder(runs_dir):
 
 
 def test_a_run_in_a_batch_is_found_by_its_name(runs_dir):
-    batch = Batch.create(runs_dir, [("film.mp4", None)])
+    batch = Batch.create(runs_dir, [(runs_dir / "film.mp4", None)], BATCH_SETTINGS)
     run = batch.path / "film_2026-11-11_10-00-00"
     run.mkdir()
     (run / "results.json").write_text(json.dumps({"cues": []}))
@@ -59,8 +60,7 @@ def test_a_batch_or_its_queue_is_no_run(runs_dir, tmp_path):
     """Deleting one as a run would delete the batch's runs or films at once."""
     video = tmp_path / "film.mp4"
     video.write_bytes(b"video")
-    batch = Batch.create(runs_dir, [("film.mp4", None)])
-    batch.queue(1, video)
+    batch = Batch.create(runs_dir, [(video, None)], BATCH_SETTINGS, take_files=True)
 
     assert client.delete(f"/history/{batch.name}").status_code == 404
     assert client.delete("/history/queue").status_code == 404

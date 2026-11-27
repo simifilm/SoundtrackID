@@ -42,7 +42,7 @@ _ENDED_KEPT_S = 300
 class Job:
     def __init__(self, kind: str, name: str | None = None) -> None:
         self.id = str(uuid.uuid4())
-        self.kind = kind  # "analysis", "batch" or "resume"
+        self.kind = kind  # "analysis", "batch", "resume" or "batch_resume"
         self.name = name  # what it is of: a batch's folder, a resume's run
         self.cancel = threading.Event()
         self.ended_at: float | None = None  # time.monotonic()
@@ -120,9 +120,9 @@ def start(kind: str, work: Work, name: str | None = None) -> Job:
     return job
 
 
-def under_way(kind: str) -> set[str]:
-    """What the jobs of this kind under way are of, e.g. the batches."""
-    return {job["name"] for job in _under_way() if job["kind"] == kind}
+def under_way(*kinds: str) -> set[str]:
+    """What the jobs of these kinds under way are of, e.g. the batches."""
+    return {job["name"] for job in _under_way() if job["kind"] in kinds}
 
 
 @router.get("/jobs")

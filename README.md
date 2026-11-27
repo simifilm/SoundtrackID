@@ -65,10 +65,19 @@ Drag a video file onto the drop zone, adjust the settings if you want, confirm t
 film, then click **Start analysis**.
 
 Drag several files to analyze them one after another as a batch, with the same
-settings: confirm each film, then click **Start batch**. The page lists the films,
-each queued, under way, done or failed, above the progress of the one under way; a
-film that fails doesn't stop the others. Once the batch is done, each film opens from
-the list.
+settings: confirm each film, then click **Start batch**. The batch's page lists the
+films, each queued, under way, done or failed, above the progress of the one under
+way; a film that fails doesn't stop the others. Each film done opens from the list,
+also while the batch runs on; **Back to the batch** returns to it. Once the batch has
+ended, its page also offers:
+
+- **Download all results**: each film's results as JSON or CSV, in one zip.
+- **Continue the batch**: analyze, with the batch's settings, the films it didn't get
+  to (it was cancelled, or the app closed) and those that failed. The batch keeps
+  each film's file until its run has it, so nothing needs uploading again.
+- **Resume pending cues**: identify the cues a provider left pending, in each run.
+
+**Recent runs** opens a batch's page again with its **Open** button.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -81,7 +90,9 @@ the list.
 Long films take a while: every cue has to be looked up individually, and the music
 services answer one request at a time. Reloading the page doesn't stop an analysis,
 a batch or a resume: the page shows it again where it is, and it can still be
-cancelled. Closing the app stops it.
+cancelled; so does **Reconnect** after the connection broke. Closing the app stops
+it: a batch can be continued, and a single analysis is listed as interrupted under
+**Recent runs**, to delete.
 
 ### Results
 
@@ -91,7 +102,8 @@ it. Hovering a cue shows a preview of that moment in the video.
 When the analysis is done, a **Download results** button appears — choose JSON or CSV
 (a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
 listed under **Recent runs** and can be downloaded again at any time. A batch is listed
-as one entry: click it to show its films, each with its run, or why it has none.
+as one entry: click it to show its films, each with its run, or why it has none, or
+open its page.
 
 ### Metadata enrichment
 
@@ -177,11 +189,14 @@ uv run --extra app soundtrackid analyze path/to/video.mp4
 
 Several videos, or a folder of them, are analyzed one after another as a batch,
 each a run in the batch's folder. A film that fails doesn't stop the others; the
-command then ends with exit code 1, once all are done:
+command then ends with exit code 1, once all are done. `continue` analyzes, with
+the batch's settings, the films it didn't get to (e.g. after Ctrl+C) and those
+that failed, from where their files are; the app's batches too:
 
 ```bash
 uv run --extra app soundtrackid analyze film1.mp4 film2.mkv
 uv run --extra app soundtrackid analyze path/to/films
+uv run --extra app soundtrackid continue "output/cache/batch_2026-11-11_11-00-00"
 ```
 
 ```
@@ -211,11 +226,12 @@ uv run --extra app soundtrackid analyze path/to/films
 ```
 
 When a provider leaves cues pending (a rate limit, unreachable, or a failed answer),
-continue the run later; it identifies only the cues still pending. Wrong API keys
-stop the run instead, or the batch, with a message:
+continue the run later, or each run of a batch; it identifies only the cues still
+pending. Wrong API keys stop the run instead, or the batch, with a message:
 
 ```bash
 uv run --extra app soundtrackid resume "output/cache/My Film_2026-11-11_10-15-00"
+uv run --extra app soundtrackid resume "output/cache/batch_2026-11-11_11-00-00"
 ```
 
 ACRCloud and AudD read their keys from the environment or the `.env.dev` file
@@ -239,8 +255,9 @@ output/cache/
     segments/
       seg_004.wav       # audio of a cue left pending, for Resume
   batch_2026-11-11_11-00-00/
-    batch.json          # the batch's films, each queued, analyzing, done (with its
-                        # run), failed (with why) or cancelled
+    batch.json          # the batch's settings and films, each queued, analyzing,
+                        # done (with its run), failed (with why) or cancelled
+    queue/03/Film C.mp4 # an uploaded film not done yet, until its run has it
     Film A_2026-11-11_11-00-01/   # each film's run, as a single one's
     Film B_2026-11-11_11-42-17/
 ```
@@ -267,8 +284,8 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── server.py               Starts the web server
 │   ├── web/                    The web server (FastAPI) and the page it serves
 │   │   ├── app.py              The app: startup, the page, the routes below
-│   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume
-│   │   ├── history.py          Saved runs: list, delete, results and edits, video, exports
+│   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume; a batch's start, continue, resume
+│   │   ├── history.py          Saved runs and batches: list, delete, results and edits, video, exports
 │   │   ├── keys.py             The API keys entered in the app
 │   │   ├── jobs.py             Analyses under way as jobs: progress, also after a reload, cancel
 │   │   ├── data.py             The server's data folder: runs, saved keys, staged uploads, log
@@ -277,7 +294,7 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   │       ├── app.css         Its styles
 │   │       └── js/             Its scripts, one per part of the page, run in the order
 │   │                           index.html lists them (state.js first, main.js last)
-│   ├── cli.py                  Command line (`soundtrackid`): analyze a video, resume a run
+│   ├── cli.py                  Command line (`soundtrackid`): analyze, continue a batch, resume
 │   ├── paths.py                Where the app's files are, from source or installed
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
 │   ├── analysis.py             The analysis the app and the CLI share, of a film or a batch, and resume
