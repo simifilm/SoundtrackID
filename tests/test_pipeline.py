@@ -40,6 +40,7 @@ from tests.fakes import (
     ThrottledClient,
     fake_components,
 )
+from tests.jobs import job_events
 
 
 class TitleByStartClient:
@@ -422,7 +423,8 @@ def test_progress_events_carry_their_data_as_fields():
 
 
 def _analyze(tmp_path, monkeypatch, video=b"video", **form):
-    """POST /analyze for film.mp4 with the fake components; returns the SSE events."""
+    """POST /analyze for film.mp4 with the fake components; returns the events
+    of its job."""
     from fastapi.testclient import TestClient
 
     from soundtrackid.web import analyze, data
@@ -438,7 +440,7 @@ def _analyze(tmp_path, monkeypatch, video=b"video", **form):
         "/analyze",
         data={"staging_id": staged["staging_id"], "film": '{"title": "F"}', **form},
     )
-    return [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
+    return job_events(client, r)
 
 
 def test_analyze_saves_its_settings_with_the_results(tmp_path, monkeypatch):
@@ -537,7 +539,7 @@ def test_rerun_is_a_new_run_and_keeps_the_earlier_one(tmp_path, monkeypatch):
 
     r = client.post("/rerun/film_2026-11-10_15-23-01", data={"hop": 10})
 
-    events = [json.loads(e.removeprefix("data: ")) for e in r.text.split("\n\n") if e]
+    events = job_events(client, r)
     assert events[-1]["results"]["video_name"] == "film_2026-11-10_15-40-00"
     first = tmp_path / "cache" / "film_2026-11-10_15-23-01"
     second = tmp_path / "cache" / "film_2026-11-10_15-40-00"

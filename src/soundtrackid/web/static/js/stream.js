@@ -1,5 +1,6 @@
-// Reading a run's progress events. The server streams them (SSE) as the answer
-// to a POST, which EventSource can't send, so the answer's body is read here.
+// Reading a job's progress events, which the server streams (SSE) from the
+// job's start: GET /jobs/{id}/events. Read here rather than with EventSource,
+// which reconnects by itself and would get every event again.
 
 // Call onEvent with each event of `response`, in order; an event onEvent can't
 // handle goes to onEventError(err, text), and the reading goes on. Resolves

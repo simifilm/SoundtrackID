@@ -1,6 +1,6 @@
 // Running an analysis: its steps, its progress events, a stall, cancelling.
 
-let currentRunId      = null;    // POST /cancel/{currentRunId} cancels the run
+let currentJobId      = null;    // POST /jobs/{currentJobId}/cancel cancels the run
 let streaming         = false;   // until done, error or cancelled ends the run
 let identFarthestEnd  = 0;       // farthest processed window end (identification frontier)
 let identReaped       = 0;       // identification windows processed so far
@@ -43,6 +43,38 @@ function selectedProviders() {
 
 // rerunVideo: name of a run whose stored video is analyzed again (no upload).
 function startAnalysis(stagingId, film, rerunVideo = null) {
+  showProgress();
+
+  const formData = new FormData();
+  if (!rerunVideo) {
+    formData.append('staging_id', stagingId);
+    formData.append('film', JSON.stringify(film || {}));
+  }
+  formData.append('api', selectedProviders().join(','));
+  formData.append('threshold', document.getElementById('opt-threshold').value / 100);
+  // The bridge gap is chosen in hops; the backend takes seconds.
+  formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
+  formData.append('hop', document.getElementById('opt-hop').value);
+  formData.append('max_segment', document.getElementById('opt-chunk').value);
+
+  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
+  fetch(url, { method: 'POST', body: formData })
+    .then(async res => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Refused before the run started (e.g. an expired staged upload).
+        finishRun();
+        errorArea.textContent = 'ERROR: ' + (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`);
+        errorArea.style.display = 'block';
+        return;
+      }
+      followAnalysis(body.job_id);
+    })
+    .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
+}
+
+// The progress view, empty, in place of the rest of the page.
+function showProgress() {
   resetWaveform();
   setupVideo(null, null);
   identFarthestEnd = 0; identReaped = 0; identTotal = 0;
@@ -69,7 +101,7 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
     if (detail) detail.textContent = '';
   });
 
-  currentRunId = null;
+  currentJobId = null;
   cancelBtn.disabled = false;
   cancelBtn.textContent = 'Cancel analysis';
   cancelBtn.style.display = 'block';
@@ -78,59 +110,40 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
   dropZone.style.display = 'none';
   progressView.style.display = 'block';
   resultsView.style.display  = 'none';
+}
 
-  const formData = new FormData();
-  if (!rerunVideo) {
-    formData.append('staging_id', stagingId);
-    formData.append('film', JSON.stringify(film || {}));
+// Show the progress of the analysis job `jobId`, from its start, also of one
+// already under way (the page reloaded), until it ends.
+async function followAnalysis(jobId) {
+  currentJobId = jobId;
+  streaming = true;
+  try {
+    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}/events`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await readEvents(res, handleEvent, (err, text) => {
+      // A bug handling one event: keep reading the stream, but show it
+      // (also after "done", which hides the progress view).
+      console.error('Could not handle server event', text, err);
+      errorArea.textContent = 'Could not display an update from the server: ' + err.message;
+      errorArea.style.display = 'block';
+      progressView.style.display = 'block';
+    });
+    // Stream ended. If no terminal event (done/error/cancelled) ended the
+    // run, the server dropped the connection mid-analysis.
+    if (streaming) {
+      finishRun();
+      errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
+      errorArea.style.display = 'block';
+    }
+  } catch (err) {
+    // Abrupt drop mid-stream (server killed, network offline). Surface it
+    // instead of hanging.
+    if (streaming) {
+      finishRun();
+      errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
+      errorArea.style.display = 'block';
+    }
   }
-  formData.append('api', selectedProviders().join(','));
-  formData.append('threshold', document.getElementById('opt-threshold').value / 100);
-  // The bridge gap is chosen in hops; the backend takes seconds.
-  formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
-  formData.append('hop', document.getElementById('opt-hop').value);
-  formData.append('max_segment', document.getElementById('opt-chunk').value);
-
-  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
-  fetch(url, { method: 'POST', body: formData })
-    .then(async res => {
-      if (!res.ok) {
-        // Refused before the run started (e.g. an expired staged upload): the
-        // body is a JSON error, not an event stream.
-        const { detail } = await res.json().catch(() => ({}));
-        finishRun();
-        errorArea.textContent = 'ERROR: ' + (typeof detail === 'string' ? detail : `HTTP ${res.status}`);
-        errorArea.style.display = 'block';
-        return;
-      }
-      streaming = true;
-      try {
-        await readEvents(res, handleEvent, (err, text) => {
-          // A bug handling one event: keep reading the stream, but show it
-          // (also after "done", which hides the progress view).
-          console.error('Could not handle server event', text, err);
-          errorArea.textContent = 'Could not display an update from the server: ' + err.message;
-          errorArea.style.display = 'block';
-          progressView.style.display = 'block';
-        });
-        // Stream ended. If no terminal event (done/error/cancelled) ended the
-        // run, the server dropped the connection mid-analysis.
-        if (streaming) {
-          finishRun();
-          errorArea.textContent = 'The server closed the connection before finishing. It may have crashed. Please try again.';
-          errorArea.style.display = 'block';
-        }
-      } catch (err) {
-        // Abrupt drop mid-stream (server killed, network offline). Surface it
-        // instead of hanging.
-        if (streaming) {
-          finishRun();
-          errorArea.textContent = 'Lost connection to the server during analysis (' + err.message + '). Please try again.';
-          errorArea.style.display = 'block';
-        }
-      }
-    })
-    .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
 }
 
 const STALL_WARN_MS = 12000;   // no SSE event for this long during a run → warn
@@ -162,7 +175,7 @@ function checkStall() {
 
 function finishRun() {
   cancelBtn.style.display = 'none';
-  currentRunId = null;
+  currentJobId = null;
   streaming = false;
   clearStall();
 }
@@ -176,11 +189,6 @@ function handleEvent(ev) {
     stallNotice.style.display = 'none';
     classFill.classList.remove('waiting');
     identFill.classList.remove('waiting');
-  }
-
-  if (step === 'run_id') {
-    currentRunId = ev.run_id;
-    return;
   }
 
   if (step === 'cancelled') {
@@ -281,8 +289,8 @@ function handleEvent(ev) {
 }
 
 cancelBtn.addEventListener('click', async () => {
-  if (!currentRunId) return;
+  if (!currentJobId) return;
   cancelBtn.disabled = true;
   cancelBtn.textContent = 'Cancelling…';
-  try { await fetch('/cancel/' + currentRunId, { method: 'POST' }); } catch (_) {}
+  try { await fetch(`/jobs/${encodeURIComponent(currentJobId)}/cancel`, { method: 'POST' }); } catch (_) {}
 });

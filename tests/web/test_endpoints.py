@@ -1,9 +1,8 @@
-"""Tests for the smaller endpoints: page, film lookup, staging, playback, cancel,
+"""Tests for the smaller endpoints: page, film lookup, staging, playback,
 history."""
 
 import json
 import os
-import threading
 import time
 
 import pytest
@@ -11,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from soundtrackid.metadata import film as film_module
 from soundtrackid.metadata.film import FilmInfo
-from soundtrackid.web import analyze, stream
+from soundtrackid.web import analyze
 from soundtrackid.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -206,19 +205,6 @@ def test_filmstrip_is_served_as_jpeg(run_dir):
 @pytest.mark.parametrize("what", ["video", "filmstrip"])
 def test_missing_video_or_filmstrip_is_404(run_dir, what):
     assert client.get(f"/output/myrun/{what}").status_code == 404
-
-
-# ── Cancel ─────────────────────────────────────────────────────────────────
-
-
-def test_cancel_stops_only_a_known_run(monkeypatch):
-    event = threading.Event()
-    monkeypatch.setattr(stream, "_cancel_events", {"run1": event})
-
-    assert client.post("/cancel/other").status_code == 404
-    assert not event.is_set()
-    assert client.post("/cancel/run1").json() == {"status": "cancelled"}
-    assert event.is_set()
 
 
 # ── History ────────────────────────────────────────────────────────────────

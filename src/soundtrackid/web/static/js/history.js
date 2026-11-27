@@ -26,30 +26,34 @@ async function loadHistory() {
         // The run on screen is gone: back to the start page.
         if (item.video_name === currentVideoName) showStartPage(); else loadHistory();
       });
-      div.addEventListener('click', async () => {
-        const res = await fetch('/results/' + encodeURIComponent(item.video_name));
-        if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return; }
-        const results = await res.json();
-        const timeline = await loadTimeline(item.video_name);
-        dropZone.style.display = 'none';
-        panel.open = false;
-        progressView.style.display = 'none';
-        resultsView.style.display = 'block';
-        const wf = timeline.waveform;
-        if (wf) {
-          progBars.style.display = 'none';
-          showWaveform(wf.samples, wf.duration);
-          showCuesOnWaveform(results.cues || []);
-        } else {
-          waveformContainer.style.display = 'none';   // not the previous run's
-        }
-        showResults(results);
-        renderClasses(timeline.classification_windows);
-      });
+      div.addEventListener('click', () => openRun(item.video_name));
       list.appendChild(div);
     });
     panel.style.display = 'block';
   } catch (_) { panel.style.display = 'none'; }
+}
+
+// Show a saved run: its results, waveform and classes. Returns whether it opened.
+async function openRun(videoName) {
+  const res = await fetch('/results/' + encodeURIComponent(videoName));
+  if (!res.ok) { alert(`Could not open this run (HTTP ${res.status})`); return false; }
+  const results = await res.json();
+  const timeline = await loadTimeline(videoName);
+  dropZone.style.display = 'none';
+  document.getElementById('history-panel').open = false;
+  progressView.style.display = 'none';
+  resultsView.style.display = 'block';
+  const wf = timeline.waveform;
+  if (wf) {
+    progBars.style.display = 'none';
+    showWaveform(wf.samples, wf.duration);
+    showCuesOnWaveform(results.cues || []);
+  } else {
+    waveformContainer.style.display = 'none';   // not the previous run's
+  }
+  showResults(results);
+  renderClasses(timeline.classification_windows);
+  return true;
 }
 
 document.getElementById('delete-all-runs').addEventListener('click', async () => {

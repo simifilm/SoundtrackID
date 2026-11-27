@@ -1,6 +1,8 @@
 """Starting a run from the page: stage the film and confirm what it is
 (/identify, /film/search, /film/lookup), analyze it (/analyze), analyze a run's
-film again (/rerun) or identify the cues a provider left pending (/resume)."""
+film again (/rerun) or identify the cues a provider left pending (/resume).
+The last three each start a job (web/jobs.py) and return its ID, whose progress
+the page follows."""
 
 import json
 import logging
@@ -10,10 +12,8 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import AsyncGenerator
 
 from fastapi import APIRouter, Body, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
 
 from soundtrackid import analysis
 from soundtrackid.defaults import (
@@ -23,8 +23,7 @@ from soundtrackid.defaults import (
     MAX_SEGMENT_S,
     MUSIC_THRESHOLD,
 )
-from soundtrackid.web import data
-from soundtrackid.web.stream import event_stream, sse
+from soundtrackid.web import data, jobs
 
 log = logging.getLogger(__name__)
 
@@ -178,8 +177,8 @@ async def analyze(
     bridge_gap: float = Form(BRIDGE_GAP_S),
     hop: float = Form(CLASSIFICATION_HOP_S),
     max_segment: float = Form(MAX_SEGMENT_S),  # 0: each whole
-) -> StreamingResponse:
-    """Analyze a staged upload and stream SSE progress events.
+) -> dict:
+    """Analyze a staged upload, as a job.
 
     `staging_id` references a file staged by /identify; `film` carries the
     user-confirmed metadata.
@@ -206,17 +205,14 @@ async def analyze(
         except (ValueError, TypeError):
             film_override = None
 
-    return event_stream(
-        _run_pipeline_sse(
-            video,
-            run_id=str(uuid.uuid4()),
-            threshold=threshold,
-            bridge_gap=bridge_gap,
-            hop=hop,
-            max_segment_duration=max_segment or None,
-            api=api,
-            film_override=film_override,
-        )
+    return _start_analysis(
+        video,
+        threshold=threshold,
+        bridge_gap=bridge_gap,
+        hop=hop,
+        max_segment_duration=max_segment or None,
+        api=api,
+        film_override=film_override,
     )
 
 
@@ -228,8 +224,9 @@ async def rerun(
     bridge_gap: float = Form(BRIDGE_GAP_S),
     hop: float = Form(CLASSIFICATION_HOP_S),
     max_segment: float = Form(MAX_SEGMENT_S),  # 0: each whole
-) -> StreamingResponse:
-    """Analyze a run's stored source video again with new settings, as a new run.
+) -> dict:
+    """Analyze a run's stored source video again with new settings, as a new run
+    and a job.
 
     Keeps the run's film metadata, so the video needn't be uploaded again.
     """
@@ -248,31 +245,27 @@ async def rerun(
     except OSError:
         shutil.copy2(source, video)
 
-    return event_stream(
-        _run_pipeline_sse(
-            video,
-            run_id=str(uuid.uuid4()),
-            threshold=threshold,
-            bridge_gap=bridge_gap,
-            hop=hop,
-            max_segment_duration=max_segment or None,
-            api=api,
-            film_override=results.get("film"),
-        )
+    return _start_analysis(
+        video,
+        threshold=threshold,
+        bridge_gap=bridge_gap,
+        hop=hop,
+        max_segment_duration=max_segment or None,
+        api=api,
+        film_override=results.get("film"),
     )
 
 
-async def _run_pipeline_sse(
+def _start_analysis(
     video: Path,
-    run_id: str,
     threshold: float,
     bridge_gap: float,
     hop: float,
     max_segment_duration: float | None,
     api: str,
     film_override: dict | None,
-) -> AsyncGenerator[str, None]:
-    """Analyze `video` and stream the progress as SSE events.
+) -> dict:
+    """Analyze `video` as a job; returns {"job_id": its ID}.
 
     `video`, named like the film's file, lies in a temporary folder of its own,
     removed when the run ends; the run keeps the video in its run folder.
@@ -301,8 +294,7 @@ async def _run_pipeline_sse(
         finally:
             shutil.rmtree(video.parent, ignore_errors=True)
 
-    async for event in sse(work, run_id):
-        yield event
+    return {"job_id": jobs.start("analysis", work).id}
 
 
 # ── Resume detection after a rate limit ───────────────────────────────────────
@@ -311,18 +303,19 @@ async def _run_pipeline_sse(
 @router.post("/resume/{video_name}")
 async def resume_run(
     video_name: str, payload: dict = Body(default_factory=dict)
-) -> StreamingResponse:
+) -> dict:
     """Re-run identification on the still-unidentified cues of a rate-limited run,
-    reading their saved segment WAVs. Fills gaps without re-analyzing the video."""
+    reading their saved segment WAVs, as a job. Fills gaps without re-analyzing
+    the video."""
     run = data.find_run(video_name)
     if not run.exists():
         raise HTTPException(status_code=404, detail="Run not found")
     api = (payload or {}).get("api") or None  # None: the run's own providers
-    return event_stream(
-        sse(
-            lambda on_progress, cancel: analysis.resume(
-                run.path, api, on_progress=on_progress, cancel=cancel
-            ),
-            str(uuid.uuid4()),
-        )
+    job = jobs.start(
+        "resume",
+        lambda on_progress, cancel: analysis.resume(
+            run.path, api, on_progress=on_progress, cancel=cancel
+        ),
+        video_name=run.name,
     )
+    return {"job_id": job.id}

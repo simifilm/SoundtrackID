@@ -73,7 +73,9 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 | Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 
 Long films take a while: every cue has to be looked up individually, and the music
-services answer one request at a time.
+services answer one request at a time. Reloading the page doesn't stop an analysis
+or a resume: the page shows it again where it is, and it can still be cancelled.
+Closing the app stops it.
 
 ### Results
 
@@ -245,7 +247,7 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume
 │   │   ├── history.py          Saved runs: list, delete, results and edits, video, exports
 │   │   ├── keys.py             The API keys entered in the app
-│   │   ├── stream.py           A run's progress as server-sent events, and cancelling it
+│   │   ├── jobs.py             Analyses under way as jobs: progress, also after a reload, cancel
 │   │   ├── data.py             The server's data folder: runs, saved keys, staged uploads, log
 │   │   └── static/             The web UI
 │   │       ├── index.html      The page's markup

@@ -270,9 +270,10 @@ imdbapi.dev) and returns `{film: {...}}`; `502` on an unexpected failure.
 
 ### Composer progress
 
-The composer lookup has no endpoint of its own. `/analyze` and `/resume` stream
-it as `{"step": "enriching", "detail": "<done>/<total>"}` events, counting
-unique tracks (a piece that recurs in the film is looked up once).
+The composer lookup has no endpoint of its own. The jobs `/analyze` and
+`/resume` start stream it (`GET /jobs/{id}/events`) as
+`{"step": "enriching", "detail": "<done>/<total>"}` events, counting unique
+tracks (a piece that recurs in the film is looked up once).
 
 ---
 

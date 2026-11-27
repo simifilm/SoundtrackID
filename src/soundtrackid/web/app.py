@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from soundtrackid import paths
 from soundtrackid.envfiles import load_env_files
-from soundtrackid.web import analyze, data, history, keys, stream
+from soundtrackid.web import analyze, data, history, jobs, keys
 
 
 @asynccontextmanager
@@ -41,7 +41,7 @@ app = FastAPI(title="SoundtrackID", lifespan=lifespan)
 app.mount(
     "/static", _RevalidatedStaticFiles(directory=str(paths.STATIC_DIR)), name="static"
 )
-for module in (keys, analyze, stream, history):
+for module in (keys, analyze, jobs, history):
     app.include_router(module.router)
 
 

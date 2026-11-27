@@ -25,6 +25,7 @@ from soundtrackid.results import (
     upgrade_results,
 )
 from soundtrackid.web.app import app
+from tests.jobs import job_events
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app)
@@ -577,10 +578,9 @@ def test_resume_with_nothing_pending_changes_nothing(runs_dir):
     }
     (run / "results.json").write_text(json.dumps(results))
 
-    r = client.post("/resume/r", json={})
+    events = job_events(client, client.post("/resume/r", json={}))
 
-    assert r.status_code == 200
-    assert '"step": "done"' in r.text
+    assert events[-1]["step"] == "done"
     assert json.loads((run / "results.json").read_text()) == results
 
 
@@ -631,9 +631,8 @@ def _resume(runs_dir, monkeypatch, detect, cues, enrich=None, asked=None, **resu
         wavfile.write(run / cue["audio_file"], 1000, np.zeros(1000, dtype=np.int16))
     (run / "results.json").write_text(json.dumps({**results, "cues": cues}))
 
-    r = client.post("/resume/r", json={})
+    job_events(client, client.post("/resume/r", json={}))
 
-    assert r.status_code == 200
     return json.loads((run / "results.json").read_text())
 
 
@@ -723,7 +722,7 @@ def test_resume_gives_up_on_a_cue_whose_audio_is_gone(runs_dir, monkeypatch):
     results = {"version": RESULTS_VERSION, "cues": [cue]}
     (run / "results.json").write_text(json.dumps(results))
 
-    client.post("/resume/r", json={})
+    job_events(client, client.post("/resume/r", json={}))
 
     [saved] = json.loads((run / "results.json").read_text())["cues"]
     assert (saved["pending"], saved["audio_file"]) == (False, None)

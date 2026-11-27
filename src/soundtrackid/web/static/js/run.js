@@ -83,48 +83,60 @@ function resumeDetection() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api: providers.join(',') || 'acrcloud' }),
   }).then(async res => {
+    const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      // E.g. the run was deleted: a JSON error, not an event stream.
-      const { detail } = await res.json().catch(() => ({}));
-      text.textContent = 'Resume failed: ' + (typeof detail === 'string' ? detail : `HTTP ${res.status}`);
+      // E.g. the run was deleted.
+      text.textContent = 'Resume failed: ' + (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`);
       btn.disabled = false;
       setResumeRunning(false);
       return;
     }
-    let finished = false;
-    const onEvent = ev => {
-      if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
-      else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
-      else if (ev.step === 'done') {
-        finished = true;
-        setResumeRunning(false);
-        showResults(ev.results);   // re-renders + refreshes the banner
-      } else if (ev.step === 'error') {
-        finished = true;
-        text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
-        btn.disabled = false;
-        setResumeRunning(false);
-      }
-    };
-    try {
-      await readEvents(res, onEvent, (err, part) => {
-        console.error('Could not handle server event', part, err);
-        text.textContent = 'Could not display an update from the server: ' + err.message;
-      });
-      // Ended without "done"/"error": the server dropped the connection.
-      if (!finished) {
-        text.textContent = 'Resume failed: the server closed the connection before finishing.';
-        btn.disabled = false;
-        setResumeRunning(false);
-      }
-    } catch (err) {
-      text.textContent = 'Resume connection lost: ' + err.message;
-      btn.disabled = false;
-      setResumeRunning(false);
-    }
+    followResume(body.job_id);
   }).catch(err => { text.textContent = 'Resume failed: ' + err.message; btn.disabled = false; setResumeRunning(false); });
 }
 document.getElementById('resume-btn').addEventListener('click', resumeDetection);
+
+// Show the progress of the shown run's resume job `jobId` in its banner, from
+// its start, also of one already under way (the page reloaded), until it ends.
+async function followResume(jobId) {
+  const btn = document.getElementById('resume-btn');
+  const text = document.getElementById('ratelimit-text');
+  btn.disabled = true;
+  setResumeRunning(true);
+  let finished = false;
+  const onEvent = ev => {
+    if (ev.step === 'resuming') text.textContent = `Resuming identification... ${ev.detail}`;
+    else if (ev.step === 'enriching') text.textContent = `Identifying composers... ${ev.detail}`;
+    else if (ev.step === 'done') {
+      finished = true;
+      setResumeRunning(false);
+      showResults(ev.results);   // re-renders + refreshes the banner
+    } else if (ev.step === 'error') {
+      finished = true;
+      text.textContent = 'Resume failed: ' + (ev.detail || 'unknown error');
+      btn.disabled = false;
+      setResumeRunning(false);
+    }
+  };
+  try {
+    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}/events`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await readEvents(res, onEvent, (err, part) => {
+      console.error('Could not handle server event', part, err);
+      text.textContent = 'Could not display an update from the server: ' + err.message;
+    });
+    // Ended without "done"/"error": the server dropped the connection.
+    if (!finished) {
+      text.textContent = 'Resume failed: the server closed the connection before finishing.';
+      btn.disabled = false;
+      setResumeRunning(false);
+    }
+  } catch (err) {
+    text.textContent = 'Resume connection lost: ' + err.message;
+    btn.disabled = false;
+    setResumeRunning(false);
+  }
+}
 
 function updateAnachronismToolbar(cues) {
   const toolbar = document.getElementById('results-toolbar');

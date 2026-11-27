@@ -380,6 +380,45 @@ def test_cancel_stops_the_analysis_and_keeps_nothing(page, fakes, video, runs):
     assert list(runs.iterdir()) == []
 
 
+def test_a_reloaded_page_shows_the_analysis_under_way(page, fakes, video, runs):
+    """Where it is, instead of the recent runs, and on to its results."""
+    make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")
+    fakes.classifying.clear()  # the analysis waits after its first window
+    page.goto("/")
+    upload(page, video)
+    page.locator("#fc-start").click()
+    classifying = page.locator('.step[data-step="classifying"]')
+    expect(classifying).to_have_class(re.compile("active"))
+
+    page.reload()
+
+    expect(classifying).to_have_class(re.compile("active"))
+    expect(page.locator('.step[data-step="loading"]')).to_have_class(re.compile("done"))
+    expect(page.locator("#drop-zone")).to_be_hidden()
+    expect(page.locator("#history-panel")).to_be_hidden()
+    fakes.classifying.set()
+    expect(page.locator("#results-view")).to_be_visible(timeout=20_000)
+
+
+def test_an_analysis_can_be_cancelled_after_a_reload(page, fakes, video, runs):
+    fakes.classifying.clear()  # the analysis waits after its first window
+    page.goto("/")
+    upload(page, video)
+    page.locator("#fc-start").click()
+    classifying = page.locator('.step[data-step="classifying"]')
+    expect(classifying).to_have_class(re.compile("active"))
+    page.reload()
+    expect(classifying).to_have_class(re.compile("active"))
+
+    page.locator("#cancel-btn").click()
+    expect(page.locator("#cancel-btn")).to_have_text("Cancelling…")
+    fakes.classifying.set()
+
+    expect(page.locator("#drop-zone")).to_be_visible()
+    expect(page.locator("#progress-view")).to_be_hidden()
+    assert list(runs.iterdir()) == []
+
+
 def test_a_refused_analysis_shows_why(page, fakes, video):
     page.goto("/")
     upload(page, video)
