@@ -11,16 +11,18 @@ from fastapi.staticfiles import StaticFiles
 
 from soundtrackid import paths
 from soundtrackid.envfiles import load_env_files
-from soundtrackid.web import analyze, data, history, keys, stream
+from soundtrackid.web import analyze, data, history, jobs, keys
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Move what an earlier Windows build kept under the macOS path, read the
-    # environment files and apply the saved API keys over them, then pre-warm
-    # the classifier so the first request doesn't block.
+    # Move what an earlier Windows build kept under the macOS path, remove the
+    # uploads and films a server before left, read the environment files and
+    # apply the saved API keys over them, then pre-warm the classifier so the
+    # first request doesn't block.
     if paths.FROZEN and sys.platform == "win32":
         paths.move_misplaced_windows_data(data.root)
+    analyze.clear_staging()
     load_env_files()  # .env.dev, then .env
     keys.load_saved_keys()
     await asyncio.to_thread(analyze.get_classifier)
@@ -41,7 +43,7 @@ app = FastAPI(title="SoundtrackID", lifespan=lifespan)
 app.mount(
     "/static", _RevalidatedStaticFiles(directory=str(paths.STATIC_DIR)), name="static"
 )
-for module in (keys, analyze, stream, history):
+for module in (keys, analyze, jobs, history):
     app.include_router(module.router)
 
 

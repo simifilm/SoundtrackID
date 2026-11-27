@@ -105,32 +105,51 @@
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
     </svg>
-    <p class="drop-label">Drop a video or audio file here</p>
-    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi, .mp3, .wav accepted</p>
-    <input type="file" id="file-input" accept="video/*,audio/*">
+    <p class="drop-label">Drop video or audio files here</p>
+    <p class="drop-hint">or click to browse &middot; .mp4, .mov, .avi, .mp3, .wav accepted &middot; several are analyzed one after another as a batch</p>
+    <input type="file" id="file-input" accept="video/*,audio/*" multiple>
   </div>
 
-  <!-- Film confirmation (shown after a file is picked, before analysis) -->
+  <!-- Film confirmation (shown after the files are picked, before analysis) -->
   <div id="film-confirm" style="display:none">
     <div class="fc-card">
-      <h3>Confirm film or series</h3>
+      <h3>Confirm the films or series</h3>
       <p class="fc-hint">Before analysis: review or complete the details. The <strong>release year</strong>
         is used to flag temporally implausible music matches (e.g. later songs that sample it).</p>
-      <div class="fc-grid">
-        <label>Title <input type="text" id="fc-title" placeholder="Title"></label>
-        <label>Year <input type="text" id="fc-year" inputmode="numeric" placeholder="YYYY"></label>
-        <label>Director <input type="text" id="fc-director" placeholder="Director"></label>
-        <label>IMDb ID <span class="fc-id"><input type="text" id="fc-imdb" placeholder="tt…"><a id="fc-imdb-link" class="fc-id-link" target="_blank" rel="noopener noreferrer" title="Open on IMDb" aria-label="Open on IMDb">↗</a></span></label>
-        <label>TMDb ID <span class="fc-id"><input type="text" id="fc-tmdb" placeholder="Number"><a id="fc-tmdb-link" class="fc-id-link" target="_blank" rel="noopener noreferrer" title="Open on TMDb" aria-label="Open on TMDb">↗</a></span></label>
+      <div class="fc-table-wrap">
+        <table id="fc-films">
+          <thead>
+            <tr><th>File</th><th>Title</th><th>Year</th><th>Director</th><th>IMDb ID</th><th>TMDb ID</th><th></th></tr>
+          </thead>
+          <!-- A tbody per film (fc-film-template) -->
+        </table>
       </div>
       <small id="fc-status"></small>
       <div class="fc-actions">
         <button type="button" id="fc-cancel" class="reset-btn">Cancel</button>
-        <button type="button" id="fc-lookup" class="enrich-btn">Look up online</button>
         <button type="button" id="fc-start" class="download-btn">Start analysis</button>
       </div>
     </div>
   </div>
+
+  <!-- A film of the confirmation's table: its details, and what became of them -->
+  <template id="fc-film-template">
+    <tbody class="fc-film">
+      <tr>
+        <td class="fc-file"></td>
+        <td><input type="text" data-field="title" placeholder="Title" aria-label="Title"></td>
+        <td><input type="text" data-field="year" inputmode="numeric" placeholder="YYYY" aria-label="Year"></td>
+        <td><input type="text" data-field="director" placeholder="Director" aria-label="Director"></td>
+        <td><span class="fc-id"><input type="text" data-field="imdb_id" placeholder="tt…" aria-label="IMDb ID"><a class="fc-id-link" data-link="imdb_id" target="_blank" rel="noopener noreferrer" title="Open on IMDb" aria-label="Open on IMDb">↗</a></span></td>
+        <td><span class="fc-id"><input type="text" data-field="tmdb_id" placeholder="Number" aria-label="TMDb ID"><a class="fc-id-link" data-link="tmdb_id" target="_blank" rel="noopener noreferrer" title="Open on TMDb" aria-label="Open on TMDb">↗</a></span></td>
+        <td class="fc-row-actions">
+          <button type="button" class="enrich-btn fc-lookup">Look up online</button>
+          <button type="button" class="fc-remove" title="Remove this film" aria-label="Remove this film">×</button>
+        </td>
+      </tr>
+      <tr class="fc-status-row"><td colspan="7"><small class="fc-row-status"></small></td></tr>
+    </tbody>
+  </template>
 
   <!-- Choosing among the films "Look up online" found -->
   <dialog id="film-choose" aria-labelledby="fc-choose-title">
@@ -143,6 +162,11 @@
 
   <!-- Progress View -->
   <div id="progress-view">
+    <!-- A batch's page: what became of each film, the one under way's steps below -->
+    <div id="batch-queue" hidden>
+      <h3 id="batch-heading"></h3>
+      <ol id="batch-films"></ol>
+    </div>
     <div class="steps" id="steps-list">
       <div class="step" data-step="loading">
         <div class="step-icon">1</div><span>Loading audio</span>
@@ -166,6 +190,22 @@
     </div>
     <div id="error-area"></div>
     <button class="cancel-btn" id="cancel-btn">Cancel analysis</button>
+    <!-- Once it ended without results to show, or a batch ended: the way on -->
+    <div class="fc-actions" id="progress-end" hidden>
+      <button type="button" id="reconnect-btn" class="reset-btn" hidden>Reconnect</button>
+      <button type="button" id="batch-resume" class="reset-btn" hidden title="Identify the cues a provider left pending in each of the batch's runs">Resume pending cues</button>
+      <button type="button" id="batch-continue" class="reset-btn" hidden title="Analyze the films the batch didn't get to, and those that failed">Continue the batch</button>
+      <div class="download-menu" id="batch-download" hidden>
+        <button type="button" class="download-btn" id="batch-download-btn" aria-haspopup="menu" aria-expanded="false">Download all results ▾</button>
+        <div class="download-options" id="batch-download-options" role="menu" hidden>
+          <button type="button" role="menuitem" data-format="json">JSON (zip)</button>
+          <button type="button" role="menuitem" data-format="csv">CSV (zip)</button>
+          <button type="button" role="menuitem" data-format="vian" title="Each run's VIAN project, for VIAN's Import project (with its video); runs without their video are left out">VIAN projects (zip)</button>
+          <button type="button" role="menuitem" data-format="mediapkg" title="Each run's .mediapkg, MAVA's exchange format">MAVA .mediapkg (zip)</button>
+        </div>
+      </div>
+      <button type="button" id="progress-back" class="reset-btn">Analyze another file</button>
+    </div>
   </div>
 
   <!-- Video preview (dedicated container, collapsible) -->
@@ -277,6 +317,7 @@
     </div>
 
     <div class="results-actions">
+      <button class="reset-btn" id="batch-back" hidden>Back to the batch</button>
       <button class="reset-btn" id="reset-btn">Analyze another file</button>
       <button class="reset-btn" id="rerun-btn" title="Analyze this video again with the current settings, without uploading it again">Re-run with current settings</button>
       <div class="download-menu">
@@ -322,6 +363,7 @@
     <summary>Recent runs</summary>
     <div id="history-list"></div>
     <div class="history-footer">
+      <span id="history-size" class="history-size"></span>
       <button type="button" id="delete-all-runs" class="history-delete-all">Delete all runs</button>
     </div>
   </details>
@@ -348,6 +390,7 @@
 <script src="/static/js/run.js"></script>
 <script src="/static/js/exports.js"></script>
 <script src="/static/js/history.js"></script>
+<script src="/static/js/batch.js"></script>
 <script src="/static/js/video.js"></script>
 <script src="/static/js/main.js"></script>
 </body>

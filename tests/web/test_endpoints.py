@@ -1,17 +1,17 @@
-"""Tests for the smaller endpoints: page, film lookup, staging, playback, cancel,
+"""Tests for the smaller endpoints: page, film lookup, staging, playback,
 history."""
 
 import json
 import os
-import threading
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from soundtrackid.locks import FolderLock
 from soundtrackid.metadata import film as film_module
 from soundtrackid.metadata.film import FilmInfo
-from soundtrackid.web import analyze, stream
+from soundtrackid.web import analyze
 from soundtrackid.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -162,6 +162,31 @@ def test_identify_removes_stale_staged_uploads(data_dir, monkeypatch):
     assert set(analyze._staging) == {"recent", new_id}
 
 
+def test_identify_leaves_the_film_an_analysis_took(data_dir, monkeypatch):
+    """However long ago it was staged: the analysis removes it as it ends."""
+    taken = data_dir / "staging" / "taken"
+    taken.mkdir(parents=True)
+    (taken / "film.mp4").write_bytes(b"video")
+    seven_hours_ago = time.time() - 7 * 3600
+    os.utime(taken, (seven_hours_ago, seven_hours_ago))
+    monkeypatch.setattr(analyze, "_staging", {})
+
+    client.post("/identify", files={"file": ("new.mp4", b"video")})
+
+    assert (taken / "film.mp4").exists()
+
+
+def test_the_server_starts_with_no_staged_uploads(data_dir, monkeypatch):
+    """Nor films of analyses it left: the app closed during them."""
+    staging = data_dir / "staging"
+    (staging / "left").mkdir(parents=True)
+    (staging / "left" / "film.mp4").write_bytes(b"video")
+
+    analyze.clear_staging()
+
+    assert not staging.exists()
+
+
 @pytest.mark.parametrize("staging_id", ["unknown", "pruned"])
 def test_analyze_needs_a_staged_upload(tmp_path, monkeypatch, staging_id):
     # "pruned" is still registered, but its file is gone
@@ -208,40 +233,73 @@ def test_missing_video_or_filmstrip_is_404(run_dir, what):
     assert client.get(f"/output/myrun/{what}").status_code == 404
 
 
-# ── Cancel ─────────────────────────────────────────────────────────────────
-
-
-def test_cancel_stops_only_a_known_run(monkeypatch):
-    event = threading.Event()
-    monkeypatch.setattr(stream, "_cancel_events", {"run1": event})
-
-    assert client.post("/cancel/other").status_code == 404
-    assert not event.is_set()
-    assert client.post("/cancel/run1").json() == {"status": "cancelled"}
-    assert event.is_set()
-
-
 # ── History ────────────────────────────────────────────────────────────────
 
 
 def test_history_lists_only_runs_with_readable_results(runs_dir):
-    (runs_dir / "running").mkdir()  # no results.json yet
+    """And those interrupted before they were saved, only to delete."""
+    (runs_dir / "interrupted").mkdir()  # no results.json
     (runs_dir / "broken").mkdir()
     (runs_dir / "broken" / "results.json").write_text("{not json")
     (runs_dir / "done").mkdir()
     cues = [{"title": "A"}, {"title": None}]
     (runs_dir / "done" / "results.json").write_text(json.dumps({"cues": cues}))
     (runs_dir / "notes.txt").write_text("not a run")
+    os.utime(runs_dir / "interrupted", (1000, 1000))
 
-    items = client.get("/history").json()
+    done, interrupted = client.get("/history").json()
 
-    assert [(i["video_name"], i["total"], i["identified"]) for i in items] == [
-        ("done", 2, 1)
-    ]
+    assert (done["kind"], done["video_name"], done["total"], done["identified"]) == (
+        "run",
+        "done",
+        2,
+        1,
+    )
+    assert interrupted == {
+        "kind": "interrupted",
+        "video_name": "interrupted",
+        "timestamp": 1000,
+    }
+    assert client.delete("/history/interrupted").status_code == 200
+    assert not (runs_dir / "interrupted").exists()
+
+
+def test_a_run_not_saved_yet_is_being_analyzed_while_locked(runs_dir):
+    """By a process holding its lock, maybe the command line; until then it
+    can't be deleted."""
+    run = runs_dir / "film_2026-11-11_10-00-00"
+    run.mkdir()
+    with FolderLock(run):
+        [entry] = client.get("/history").json()
+        r = client.delete("/history/film_2026-11-11_10-00-00")
+        client.delete("/history")
+
+        assert entry["kind"] == "analyzing"
+        assert r.status_code == 409
+        assert run.is_dir()
+
+    assert client.get("/history").json()[0]["kind"] == "interrupted"
 
 
 def test_history_is_empty_without_a_cache_folder(data_dir):
     assert client.get("/history").json() == []
+    assert client.get("/history/size").json()["bytes"] == 0
+
+
+def test_history_size_is_what_the_runs_take_on_disk(runs_dir):
+    """Batches' too; a film hard-linked into two runs, as a re-run's, counts
+    once."""
+    (runs_dir / "a").mkdir()
+    (runs_dir / "a" / "results.json").write_bytes(b"x" * 100)
+    (runs_dir / "a" / "source.mp4").write_bytes(b"v" * 1000)
+    (runs_dir / "batch" / "b").mkdir(parents=True)
+    (runs_dir / "batch" / "batch.json").write_bytes(b"x" * 10)
+    os.link(runs_dir / "a" / "source.mp4", runs_dir / "batch" / "b" / "source.mp4")
+
+    assert client.get("/history/size").json() == {
+        "bytes": 1110,
+        "folder": str(runs_dir),
+    }
 
 
 def test_deleting_the_history_removes_every_run(data_dir, runs_dir):

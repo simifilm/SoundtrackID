@@ -7,6 +7,7 @@ knows how it is laid out.
         source.<ext>            the film, for the app's preview and a re-run
         filmstrip.jpg           thumbnails of the film
         segments/seg_NNN.wav    the audio of a cue still pending, for a resume
+        .lock                   held while the run is analyzed (locks.py)
 """
 
 import json
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from soundtrackid.derived import refresh
+from soundtrackid.locks import FolderLock, is_locked
 from soundtrackid.models import MusicSegment
 from soundtrackid.results import TIMELINE_KEYS, load_results, save_json
 
@@ -51,6 +53,14 @@ class Run:
 
     def remove(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
+
+    def lock(self) -> FolderLock:
+        """Hold the run's lock, as its analysis does until it is saved."""
+        return FolderLock(self.path).acquire()
+
+    def under_way(self) -> bool:
+        """Whether a process, this one too, is analyzing the run."""
+        return is_locked(self.path)
 
     # ── Results and timeline ──────────────────────────────────────────────
 

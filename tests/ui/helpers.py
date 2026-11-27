@@ -6,7 +6,9 @@ import json
 import numpy as np
 from scipy.io import wavfile
 
+from soundtrackid.batches import Batch
 from soundtrackid.results import RESULTS_VERSION
+from tests.fakes import BATCH_SETTINGS
 
 # 30 s of music, as the fake classifier hears it in FakeLoader's audio: windows
 # of 10 s every 5 s.
@@ -66,6 +68,34 @@ def make_run(runs, cues, name="film_2026-11-11_10-00-00", **results):
     (run / "results.json").write_text(json.dumps(data))
     (run / "timeline.json").write_text(json.dumps(TIMELINE))
     return run
+
+
+def make_batch(runs, films):
+    """A batch on disk as an analysis saves it. `films` are (source, status,
+    cues): a done film gets a run with its cues, named after its source; a
+    failed one "Could not read the audio" as why. The batch took the films
+    over: those not done wait in its queue."""
+    files = [runs / source for source, _, _ in films]
+    for file in files:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b"video")
+    batch = Batch.create(
+        runs, [(file, None) for file in files], BATCH_SETTINGS, take_files=True
+    )
+    record = batch.load()
+    for number, (entry, (source, status, cues)) in enumerate(
+        zip(record["films"], films), 1
+    ):
+        entry["status"] = status
+        if status == "done":
+            name = source.rsplit(".", 1)[0] + "_2026-11-11_12-00-00"
+            make_run(batch.path, cues, name=name, source=source)
+            batch.dequeue(number)
+            entry["run"] = name
+        elif status == "failed":
+            entry["error"] = "Could not read the audio"
+    batch.save(record)
+    return batch
 
 
 def saved(run):

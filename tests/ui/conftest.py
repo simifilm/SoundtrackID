@@ -22,7 +22,7 @@ from mutagen.mp4 import MP4
 
 from soundtrackid.detection import RateLimitError
 from soundtrackid.models import DetectionResult
-from soundtrackid.web import analyze, data
+from soundtrackid.web import analyze, data, jobs
 from soundtrackid.web.app import app
 from tests.fakes import FakeClassifier, FakeLoader
 from tests.media import write_video
@@ -158,9 +158,10 @@ class Fakes:
 @pytest.fixture
 def fakes(data_dir, monkeypatch):
     """The app with its runs, staging and settings in a temporary data folder,
-    the API keys unset, and the fakes in place of the model, providers and
-    lookups."""
+    no other test's jobs, the API keys unset, and the fakes in place of the
+    model, providers and lookups."""
     monkeypatch.setattr(analyze, "_staging", {})
+    monkeypatch.setattr(jobs, "_jobs", {})
     for var in KEY_VARS:
         monkeypatch.delenv(var, raising=False)
     fakes = Fakes()

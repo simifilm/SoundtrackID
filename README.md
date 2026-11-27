@@ -61,8 +61,25 @@ Download the latest release, then follow the installer.
 
 ### Analyze a video
 
-Drag a video file onto the drop zone, adjust the settings if you want, then click
-**Analyze**.
+Drag a video file onto the drop zone, adjust the settings if you want, confirm the
+film, then click **Start analysis**.
+
+Drag several files to analyze them one after another as a batch, with the same
+settings: confirm each film, then click **Start batch**. The batch's page lists the
+films, each queued, under way, done or failed, above the progress of the one under
+way; a film that fails doesn't stop the others. Each film done opens from the list,
+also while the batch runs on; **Back to the batch** returns to it. Once the batch has
+ended, its page also offers:
+
+- **Download all results**: each film's results as JSON or CSV, or its VIAN project or
+  MAVA .mediapkg (see Export), in one zip. VIAN's leaves out the films whose video
+  wasn't kept, as VIAN counts in the video's frames.
+- **Continue the batch**: analyze, with the batch's settings, the films it didn't get
+  to (it was cancelled, or the app closed) and those that failed. The batch keeps
+  each film's file until its run has it, so nothing needs uploading again.
+- **Resume pending cues**: identify the cues a provider left pending, in each run.
+
+**Recent runs** opens a batch's page again with its **Open** button.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -73,7 +90,12 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 | Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 
 Long films take a while: every cue has to be looked up individually, and the music
-services answer one request at a time.
+services answer one request at a time. Reloading the page doesn't stop an analysis,
+a batch or a resume: the page shows it again where it is, and it can still be
+cancelled; so does **Reconnect** after the connection broke. Closing the app stops
+it: a batch can be continued, and a single analysis is listed as interrupted under
+**Recent runs**, to delete. A run or batch the command line is analyzing at the same
+time shows as under way, and can't be continued or deleted until it ends.
 
 ### Results
 
@@ -82,14 +104,17 @@ it. Hovering a cue shows a preview of that moment in the video.
 
 When the analysis is done, a **Download results** button appears — choose JSON or CSV
 (a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
-listed under **Recent runs** and can be downloaded again at any time.
+listed under **Recent runs** and can be downloaded again at any time. A batch is listed
+as one entry: click it to show its films, each with its run, or why it has none, or
+open its page. Next to **Delete all runs**, Recent runs shows how much space the runs
+take on disk, their videos above all.
 
 ### Metadata enrichment
 
-Before the analysis starts, a **Confirm film or series** panel shows the details read from the video
-file's own tags. Correct or complete them, or click **Look up online** and choose the film
-or series from the ones found, which then replaces the details. The year matters: it is used to flag
-music that was released after the film.
+Before the analysis starts, a **Confirm the films or series** table shows, for each film, the
+details read from its file's own tags. Correct or complete them, or click a film's **Look up
+online** and choose the film or series from the ones found, which then replaces its details. The
+year matters: it is used to flag music that was released after the film.
 The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.
@@ -166,6 +191,18 @@ identification, the date re-ranking and the composer lookup, saved as one run.
 uv run --extra app soundtrackid analyze path/to/video.mp4
 ```
 
+Several videos, or a folder of them, are analyzed one after another as a batch,
+each a run in the batch's folder. A film that fails doesn't stop the others; the
+command then ends with exit code 1, once all are done. `continue` analyzes, with
+the batch's settings, the films it didn't get to (e.g. after Ctrl+C) and those
+that failed, from where their files are; the app's batches too:
+
+```bash
+uv run --extra app soundtrackid analyze film1.mp4 film2.mkv
+uv run --extra app soundtrackid analyze path/to/films
+uv run --extra app soundtrackid continue "output/cache/batch_2026-11-11_11-00-00"
+```
+
 ```
 --output-dir DIR      Folder of the runs (default: output/cache in the project
                       folder, the app's, so its history lists them)
@@ -185,18 +222,20 @@ uv run --extra app soundtrackid analyze path/to/video.mp4
                       music (default: 0)
 --title, --year, --imdb-id
                       The film, where its file's tags lack it or are wrong; the
-                      year flags music released after the film
---lookup-film         Fill in what is missing about the film online (TMDb,
+                      year flags music released after the film (one film only)
+--lookup-film         Fill in what is missing about each film online (TMDb,
                       Wikidata)
---csv                 Also write results.csv: the same results as a spreadsheet
+--csv                 Also write each run's results.csv: the same results as a
+                      spreadsheet
 ```
 
 When a provider leaves cues pending (a rate limit, unreachable, or a failed answer),
-continue the run later; it identifies only the cues still pending. Wrong API keys
-stop the run instead, with a message:
+continue the run later, or each run of a batch; it identifies only the cues still
+pending. Wrong API keys stop the run instead, or the batch, with a message:
 
 ```bash
 uv run --extra app soundtrackid resume "output/cache/My Film_2026-11-11_10-15-00"
+uv run --extra app soundtrackid resume "output/cache/batch_2026-11-11_11-00-00"
 ```
 
 ACRCloud and AudD read their keys from the environment or the `.env.dev` file
@@ -208,7 +247,8 @@ reads `FIWI_TMDB_API_TOKEN` or `FIWI_TMDB_KEY`.
 
 Each analysis is a run of its own, in `output/cache/<video_name>_<date>_<time>/`
 in the project folder from source, whether the app or the CLI made it and wherever
-it was started (the installed app keeps its runs in its data folder):
+it was started (the installed app keeps its runs in its data folder). A batch's
+runs are in the batch's folder there:
 
 ```
 output/cache/
@@ -218,6 +258,12 @@ output/cache/
     results.csv         # with --csv: the same results as a spreadsheet
     segments/
       seg_004.wav       # audio of a cue left pending, for Resume
+  batch_2026-11-11_11-00-00/
+    batch.json          # the batch's settings and films, each queued, analyzing,
+                        # done (with its run), failed (with why) or cancelled
+    queue/03/Film C.mp4 # an uploaded film not done yet, until its run has it
+    Film A_2026-11-11_11-00-01/   # each film's run, as a single one's
+    Film B_2026-11-11_11-42-17/
 ```
 
 ## Tests
@@ -242,25 +288,26 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── server.py               Starts the web server
 │   ├── web/                    The web server (FastAPI) and the page it serves
 │   │   ├── app.py              The app: startup, the page, the routes below
-│   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume
-│   │   ├── history.py          Saved runs: list, delete, results and edits, video, exports
+│   │   ├── analyze.py          Upload, film lookup, analyze, re-run, resume; a batch's start, continue, resume
+│   │   ├── history.py          Saved runs and batches: list, delete, results and edits, video, exports
 │   │   ├── keys.py             The API keys entered in the app
-│   │   ├── stream.py           A run's progress as server-sent events, and cancelling it
+│   │   ├── jobs.py             Analyses under way as jobs: progress, also after a reload, cancel
 │   │   ├── data.py             The server's data folder: runs, saved keys, staged uploads, log
 │   │   └── static/             The web UI
 │   │       ├── index.html      The page's markup
 │   │       ├── app.css         Its styles
 │   │       └── js/             Its scripts, one per part of the page, run in the order
 │   │                           index.html lists them (state.js first, main.js last)
-│   ├── cli.py                  Command line (`soundtrackid`): analyze a video, resume a run
+│   ├── cli.py                  Command line (`soundtrackid`): analyze, continue a batch, resume
 │   ├── paths.py                Where the app's files are, from source or installed
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
-│   ├── analysis.py             The analysis the app and the CLI share, and resume
+│   ├── analysis.py             The analysis the app and the CLI share, of a film or a batch, and resume
 │   ├── defaults.py             What an analysis uses unless told otherwise
 │   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models of the pipeline: audio chunks, clips, matches
 │   ├── results.py              The results.json format: cue fields, upgrades, load and save, edits
 │   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues
+│   ├── batches.py              A batch's folder: its films, each with its status, and their runs
 │   ├── derived.py              What follows from the results: rights verdict, anachronisms
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks

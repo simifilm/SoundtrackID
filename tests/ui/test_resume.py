@@ -54,6 +54,24 @@ def test_resume_identifies_the_pending_cues(page, fakes, run):
     ]
 
 
+def test_a_reloaded_page_shows_the_resume_under_way(page, fakes, run):
+    """Its run, where the resume is, and on to its results."""
+    fakes.tracks = {0.0: ("Found", "Artist", {})}  # every saved clip starts at 0
+    fakes.identifying.clear()  # the provider doesn't answer yet
+    open_run(page)
+    page.locator("#resume-btn").click()
+    text = page.locator("#ratelimit-text")
+    expect(text).to_have_text("Resuming identification... 0/2")
+
+    page.reload()
+
+    expect(text).to_have_text("Resuming identification... 0/2")
+    expect(page.locator("#resume-btn")).to_be_disabled()
+    fakes.identifying.set()
+    expect(page.locator("#ratelimit-banner")).to_be_hidden()
+    expect(page.locator("#tracks-body")).to_contain_text("Found")
+
+
 def test_no_other_run_opens_while_resuming(page, fakes, run, runs):
     """The resumed run would come back over it when the resume finishes."""
     make_run(runs, [cue(1)], name="other_2026-11-11_11-00-00")

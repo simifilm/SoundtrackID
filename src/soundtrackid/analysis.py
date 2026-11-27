@@ -1,16 +1,19 @@
 """The analysis of a video, the same for the web app and the CLI.
 
 analyze: the pipeline, then the date re-ranking and the composer lookup, then the
-run's results.json, saved once the run is complete. resume: identify the cues a
-provider left pending, from their saved audio.
+run's results.json, saved once the run is complete. analyze_batch: several
+videos, one after another, as a batch. resume: identify the cues a provider left
+pending, from their saved audio; resume_batch: those of each run of a batch.
 """
 
+import copy
 import logging
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from soundtrackid.batches import Batch
 from soundtrackid.defaults import DEFAULT_API
 from soundtrackid.results import MATCH_KEYS, alternatives, match_fields
 from soundtrackid.runs import Run
@@ -42,11 +45,13 @@ def analyze(
     names the provider(s) the pipeline identifies with; `film` is what is known
     about the film, by default the file's MP4 tags. `keep_video` moves the video
     into the run folder, with a filmstrip, for the app's video preview. A
-    cancelled or failed run leaves no folder behind.
+    cancelled or failed run leaves no folder behind. Until the run is saved, it
+    holds its lock (Run.lock), so others see it under way.
     """
     # The same file started within the same second would get this run's folder,
     # and Run.create refuses it.
     run = Run.create(runs_dir / f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}")
+    lock = run.lock()
     progress = _checked(on_progress, cancel)
     try:
         if not film:
@@ -79,8 +84,113 @@ def analyze(
         run.save(results)
         return results
     except BaseException:
+        lock.release()  # first: Windows removes no file held open
         run.remove()
         raise
+    finally:
+        lock.release()
+
+
+def pipeline_for(classifier, settings: dict[str, Any]):
+    """The pipeline that analyzes with `settings`, as a batch saves them
+    (Batch.create)."""
+    from soundtrackid.pipeline import build_pipeline
+
+    return build_pipeline(
+        classifier,
+        settings["api"],
+        threshold=settings["threshold"],
+        hop=settings["hop"],
+        window=settings["window"],
+        bridge_gap=settings["bridge_gap"],
+        isolation=settings["isolation"],
+    )
+
+
+def analyze_batch(
+    pipeline,
+    batch: Batch,
+    on_progress: ProgressCb | None = None,
+    cancel: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Analyze the films of `batch` that have no run, one after another, each
+    as analyze() does, into the batch's folder, with the batch's settings
+    (`pipeline` built from them: pipeline_for); return the batch's record: its
+    name, and its films (batches). Those of a new batch are all to analyze;
+    one continued analyzes those it didn't get to, and those that failed.
+
+    A film that fails is recorded as failed, with why, and the batch goes on.
+    Wrong API keys stop it, as they would fail every film after, and so does a
+    cancel: they are raised, and the runs done stay. A film whose file the
+    batch took over keeps it in its run, as analyze's keep_video does, and in
+    the batch's queue until then, also if it fails, to be tried again.
+
+    Reports the record ("batch") as the batch starts and as each film starts
+    and ends, and each film's progress in between, as analyze() does. Holds
+    the batch's lock meanwhile (Batch.lock): locks.Busy when another holds it.
+    """
+    with batch.lock():
+        return _analyze_batch(pipeline, batch, on_progress, cancel)
+
+
+def _analyze_batch(pipeline, batch, on_progress, cancel) -> dict[str, Any]:
+    from soundtrackid.detection import ProviderAuthError
+
+    record = batch.load()
+    settings = record["settings"]
+    films = record["films"]
+
+    def report() -> None:
+        if on_progress:
+            # A copy: the record changes as the batch goes on.
+            on_progress("batch", name=batch.name, **copy.deepcopy(record))
+
+    def update(entry: dict[str, Any], **fields: Any) -> None:
+        entry.update(fields)
+        batch.save(record)
+        report()
+
+    todo = [(n, entry) for n, entry in enumerate(films, 1) if entry["status"] != "done"]
+    batch.remove_unfinished_runs()
+    for _, entry in todo:
+        entry.update(status="queued", error=None)
+    batch.save(record)
+    report()  # all to do queued
+    for number, entry in todo:
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        log.info("Film %d of %d: %s", number, len(films), entry["source"])
+        video = batch.film_file(number, entry)
+        if not video.is_file():
+            update(entry, status="failed", error=f"Its file is gone: {video}")
+            continue
+        update(entry, status="analyzing")
+        try:
+            results = analyze(
+                pipeline,
+                video,
+                settings["api"],
+                batch.path,
+                film=entry["film"],
+                max_segment_duration=settings["max_segment_duration"],
+                keep_video=batch.took_over(entry),
+                on_progress=on_progress,
+                cancel=cancel,
+            )
+        except Cancelled:
+            update(entry, status="cancelled")
+            raise
+        except ProviderAuthError as exc:
+            update(entry, status="failed", error=str(exc))
+            raise
+        except Exception as exc:
+            log.exception("Analyzing %s failed", entry["source"])
+            update(entry, status="failed", error=str(exc))
+            continue
+        if batch.took_over(entry):
+            batch.dequeue(number)
+        update(entry, status="done", run=results["video_name"])
+    return {"name": batch.name, **record}
 
 
 def resume(
@@ -108,8 +218,7 @@ def resume(
     progress = _checked(on_progress, cancel)
     run = Run(run_dir)
     results = run.load()
-    cues = results.get("cues") or []
-    todo = [c for c in cues if c.get("pending") and c.get("audio_file")]
+    todo = _pending(results)
     total = len(todo)
     if total == 0:
         return results
@@ -163,6 +272,49 @@ def resume(
     for audio_file in answered_audio:
         run.remove_audio(audio_file)
     return results
+
+
+def resume_batch(
+    batch: Batch,
+    api: str | None = None,
+    on_progress: ProgressCb | None = None,
+    cancel: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Resume each of the batch's runs with pending cues, one after another,
+    as resume() does; return the batch's record, as analyze_batch does.
+
+    Reports each run as its resume starts ("batch_resume": the run, its number
+    and how many), then its progress as resume() does. Wrong API keys stop it,
+    and so does a cancel: the runs resumed before keep what they found. Holds
+    the batch's lock meanwhile, as analyze_batch does.
+    """
+    with batch.lock():
+        record = batch.load()
+        runs = [
+            run
+            for film in record["films"]
+            if film["status"] == "done"
+            and (run := batch.run(film["run"])) is not None
+            and run.exists()
+            and _pending(run.load())
+        ]
+        for number, run in enumerate(runs, 1):
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            log.info("Run %d of %d: %s", number, len(runs), run.name)
+            if on_progress:
+                on_progress(
+                    "batch_resume", run=run.name, number=number, total=len(runs)
+                )
+            resume(run.path, api, on_progress=on_progress, cancel=cancel)
+        return {"name": batch.name, **record}
+
+
+def _pending(results: dict[str, Any]) -> list[dict[str, Any]]:
+    """The cues a resume identifies: pending, with their audio."""
+    return [
+        c for c in results.get("cues") or [] if c.get("pending") and c.get("audio_file")
+    ]
 
 
 def _checked(

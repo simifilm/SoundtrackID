@@ -3,11 +3,29 @@ providers, which the pipeline, analysis, CLI and app tests share."""
 
 import numpy as np
 
+from soundtrackid.defaults import (
+    BRIDGE_GAP_S,
+    CLASSIFICATION_HOP_S,
+    DEFAULT_API,
+    MUSIC_THRESHOLD,
+)
 from soundtrackid.detection import ProviderAuthError, RateLimitError
 from soundtrackid.models import DetectionResult
 
 SR = 1000
 LABELS = ["Speech", "Music", "Applause", "Piano"]
+
+# What a batch analyzes with (Batch.create): the app's defaults.
+BATCH_SETTINGS = {
+    "classifier": "onnx",
+    "api": DEFAULT_API,
+    "threshold": MUSIC_THRESHOLD,
+    "hop": CLASSIFICATION_HOP_S,
+    "window": None,
+    "bridge_gap": BRIDGE_GAP_S,
+    "isolation": False,
+    "max_segment_duration": None,
+}
 
 
 class FakeLoader:

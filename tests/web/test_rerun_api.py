@@ -26,12 +26,12 @@ def test_rerun_uses_stored_video_film_and_new_settings(runs_dir, monkeypatch):
     )
     calls = []
 
-    async def fake_pipeline_sse(video, **kwargs):
+    def fake_start_analysis(video, **kwargs):
         calls.append((video.read_bytes(), video.name, kwargs))
         shutil.rmtree(video.parent)  # its temporary folder, as the real run does
-        yield "data: {}\n\n"
+        return {"job_id": "job"}
 
-    monkeypatch.setattr(analyze, "_run_pipeline_sse", fake_pipeline_sse)
+    monkeypatch.setattr(analyze, "_start_analysis", fake_start_analysis)
 
     r = client.post(
         "/rerun/myrun",
@@ -44,7 +44,7 @@ def test_rerun_uses_stored_video_film_and_new_settings(runs_dir, monkeypatch):
         },
     )
 
-    assert r.status_code == 200
+    assert r.json() == {"job_id": "job"}
     [(video_bytes, original_name, kwargs)] = calls
     assert (video_bytes, original_name) == (b"video-bytes", "myrun.mp4")
     assert kwargs["film_override"] == {"title": "Test", "year": 1950}
