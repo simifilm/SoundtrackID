@@ -257,12 +257,13 @@ or all others: `pytest -m browser`, `pytest -m "not browser"`.
 │   ├── cli.py                  Command line (`soundtrackid`): analyze a video, resume a run
 │   ├── paths.py                Where the app's files are, from source or installed
 │   ├── envfiles.py             Reads .env.dev (your own keys) and .env (what the app ships)
-│   ├── analysis.py             The analysis the app and the CLI share, and resume
+│   ├── analysis.py             The analysis the app and the CLI share, of a film or a batch, and resume
 │   ├── defaults.py             What an analysis uses unless told otherwise
 │   ├── pipeline.py             Finds the music in a video and identifies it
 │   ├── models.py               Data models of the pipeline: audio chunks, clips, matches
 │   ├── results.py              The results.json format: cue fields, upgrades, load and save, edits
 │   ├── runs.py                 A run's folder: results, timeline, video, audio of pending cues
+│   ├── batches.py              A batch's folder: its films, each with its status, and their runs
 │   ├── derived.py              What follows from the results: rights verdict, anachronisms
 │   ├── loaders.py              Decodes the video and extracts its audio track
 │   ├── chunker.py              Slices the audio into overlapping chunks

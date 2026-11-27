@@ -1,16 +1,19 @@
 """The analysis of a video, the same for the web app and the CLI.
 
 analyze: the pipeline, then the date re-ranking and the composer lookup, then the
-run's results.json, saved once the run is complete. resume: identify the cues a
-provider left pending, from their saved audio.
+run's results.json, saved once the run is complete. analyze_batch: several
+videos, one after another, as a batch. resume: identify the cues a provider left
+pending, from their saved audio.
 """
 
+import copy
 import logging
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from soundtrackid.batches import Batch
 from soundtrackid.defaults import DEFAULT_API
 from soundtrackid.results import MATCH_KEYS, alternatives, match_fields
 from soundtrackid.runs import Run
@@ -81,6 +84,85 @@ def analyze(
     except BaseException:
         run.remove()
         raise
+
+
+def analyze_batch(
+    pipeline,
+    films: list[tuple[Path, dict[str, Any] | None]],
+    api: str,
+    runs_dir: Path,
+    max_segment_duration: float | None = None,
+    keep_videos: bool = False,
+    on_progress: ProgressCb | None = None,
+    cancel: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Analyze several videos as a batch, one after another, each as analyze()
+    does, and return the batch's record: its name, and its films (batches).
+
+    The batch gets a folder of its own in `runs_dir`, which holds each film's
+    run. `films` are each a video and what is known about the film (None: its
+    tags). A film that fails is recorded as failed, with why, and the batch
+    goes on. Wrong API keys stop it, as they would fail every film after, and
+    so does a cancel: they are raised, and the runs done stay. `keep_videos`
+    moves the videos into the batch, each kept in its run as analyze's
+    keep_video does; those of films not done are removed when the batch ends.
+
+    Reports the record ("batch") as the batch starts and as each film starts
+    and ends, and each film's progress in between, as analyze() does.
+    """
+    from soundtrackid.detection import ProviderAuthError
+
+    batch = Batch.create(runs_dir, [(video.name, film) for video, film in films])
+    record = batch.load()
+
+    def report() -> None:
+        if on_progress:
+            # A copy: the record changes as the batch goes on.
+            on_progress("batch", name=batch.name, **copy.deepcopy(record))
+
+    def update(entry: dict[str, Any], **fields: Any) -> None:
+        entry.update(fields)
+        batch.save(record)
+        report()
+
+    try:
+        videos = [
+            batch.queue(number, video) if keep_videos else video
+            for number, (video, _) in enumerate(films, start=1)
+        ]
+        report()  # all queued
+        for number, (video, entry) in enumerate(zip(videos, record["films"]), 1):
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            log.info("Film %d of %d: %s", number, len(videos), video.name)
+            update(entry, status="analyzing")
+            try:
+                results = analyze(
+                    pipeline,
+                    video,
+                    api,
+                    batch.path,
+                    film=entry["film"],
+                    max_segment_duration=max_segment_duration,
+                    keep_video=keep_videos,
+                    on_progress=on_progress,
+                    cancel=cancel,
+                )
+            except Cancelled:
+                update(entry, status="cancelled")
+                raise
+            except ProviderAuthError as exc:
+                update(entry, status="failed", error=str(exc))
+                raise
+            except Exception as exc:
+                log.exception("Analyzing %s failed", video.name)
+                update(entry, status="failed", error=str(exc))
+                continue
+            update(entry, status="done", run=results["video_name"])
+        return {"name": batch.name, **record}
+    finally:
+        if keep_videos:
+            batch.clear_queue()
 
 
 def resume(
