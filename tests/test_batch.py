@@ -11,7 +11,9 @@ import pytest
 from soundtrackid import analysis
 from soundtrackid.batches import Batch
 from soundtrackid.detection import ProviderAuthError
+from soundtrackid.locks import LOCK_FILE, Busy
 from soundtrackid.models import DetectionResult
+from soundtrackid.runs import Run
 from tests.fakes import (
     BATCH_SETTINGS,
     FakeClassifier,
@@ -249,6 +251,30 @@ def test_continuing_analyzes_a_film_left_unfinished_again(tmp_path, monkeypatch)
 
     assert _statuses(record) == ["done"]
     assert not unfinished.exists()
+
+
+def test_a_batch_and_its_film_are_locked_while_analyzed(tmp_path, monkeypatch):
+    """So another process sees them under way, and can't analyze the batch
+    too; their locks go with the batch's end."""
+    batch = _create(tmp_path, ["a.mp4"])
+    pipeline = _pipeline(monkeypatch)
+    seen = []
+
+    def on_progress(step, **fields):
+        if step == "loading" and not seen:
+            [run] = [p for p in batch.path.iterdir() if p.is_dir()]
+            seen.extend([batch.under_way(), Run(run).under_way()])
+            with pytest.raises(Busy):
+                analysis.analyze_batch(pipeline, batch)
+
+    record = analysis.analyze_batch(pipeline, batch, on_progress=on_progress)
+
+    assert seen == [True, True]
+    assert not batch.under_way()
+    assert sorted(p.name for p in batch.path.iterdir()) == sorted(
+        ["batch.json", record["films"][0]["run"]]
+    )
+    assert not (batch.path / record["films"][0]["run"] / LOCK_FILE).exists()
 
 
 def test_a_film_whose_file_is_gone_fails(tmp_path, monkeypatch):

@@ -45,11 +45,13 @@ def analyze(
     names the provider(s) the pipeline identifies with; `film` is what is known
     about the film, by default the file's MP4 tags. `keep_video` moves the video
     into the run folder, with a filmstrip, for the app's video preview. A
-    cancelled or failed run leaves no folder behind.
+    cancelled or failed run leaves no folder behind. Until the run is saved, it
+    holds its lock (Run.lock), so others see it under way.
     """
     # The same file started within the same second would get this run's folder,
     # and Run.create refuses it.
     run = Run.create(runs_dir / f"{video.stem}_{datetime.now():%Y-%m-%d_%H-%M-%S}")
+    lock = run.lock()
     progress = _checked(on_progress, cancel)
     try:
         if not film:
@@ -82,8 +84,11 @@ def analyze(
         run.save(results)
         return results
     except BaseException:
+        lock.release()  # first: Windows removes no file held open
         run.remove()
         raise
+    finally:
+        lock.release()
 
 
 def pipeline_for(classifier, settings: dict[str, Any]):
@@ -121,8 +126,14 @@ def analyze_batch(
     the batch's queue until then, also if it fails, to be tried again.
 
     Reports the record ("batch") as the batch starts and as each film starts
-    and ends, and each film's progress in between, as analyze() does.
+    and ends, and each film's progress in between, as analyze() does. Holds
+    the batch's lock meanwhile (Batch.lock): locks.Busy when another holds it.
     """
+    with batch.lock():
+        return _analyze_batch(pipeline, batch, on_progress, cancel)
+
+
+def _analyze_batch(pipeline, batch, on_progress, cancel) -> dict[str, Any]:
     from soundtrackid.detection import ProviderAuthError
 
     record = batch.load()
@@ -274,25 +285,29 @@ def resume_batch(
 
     Reports each run as its resume starts ("batch_resume": the run, its number
     and how many), then its progress as resume() does. Wrong API keys stop it,
-    and so does a cancel: the runs resumed before keep what they found.
+    and so does a cancel: the runs resumed before keep what they found. Holds
+    the batch's lock meanwhile, as analyze_batch does.
     """
-    record = batch.load()
-    runs = [
-        run
-        for film in record["films"]
-        if film["status"] == "done"
-        and (run := batch.run(film["run"])) is not None
-        and run.exists()
-        and _pending(run.load())
-    ]
-    for number, run in enumerate(runs, 1):
-        if cancel is not None and cancel.is_set():
-            raise Cancelled()
-        log.info("Run %d of %d: %s", number, len(runs), run.name)
-        if on_progress:
-            on_progress("batch_resume", run=run.name, number=number, total=len(runs))
-        resume(run.path, api, on_progress=on_progress, cancel=cancel)
-    return {"name": batch.name, **record}
+    with batch.lock():
+        record = batch.load()
+        runs = [
+            run
+            for film in record["films"]
+            if film["status"] == "done"
+            and (run := batch.run(film["run"])) is not None
+            and run.exists()
+            and _pending(run.load())
+        ]
+        for number, run in enumerate(runs, 1):
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            log.info("Run %d of %d: %s", number, len(runs), run.name)
+            if on_progress:
+                on_progress(
+                    "batch_resume", run=run.name, number=number, total=len(runs)
+                )
+            resume(run.path, api, on_progress=on_progress, cancel=cancel)
+        return {"name": batch.name, **record}
 
 
 def _pending(results: dict[str, Any]) -> list[dict[str, Any]]:

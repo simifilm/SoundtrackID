@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
+from soundtrackid.locks import FolderLock
 from soundtrackid.web import jobs
 from tests.ui.helpers import cue, make_batch
 
@@ -147,6 +148,9 @@ def test_all_the_batchs_results_download_in_a_zip(page, runs):
     expect(menu).to_be_hidden()
 
     page.locator("#batch-download-btn").click()
+    expect(menu.get_by_role("menuitem")).to_have_text(
+        ["JSON (zip)", "CSV (zip)", "VIAN projects (zip)", "MAVA .mediapkg (zip)"]
+    )
     with page.expect_download() as info:
         menu.get_by_role("menuitem", name="CSV (zip)").click()
 
@@ -191,6 +195,29 @@ def test_a_lost_connection_can_be_followed_again(page, fakes, video, runs):
 
     expect(page.locator("#results-view")).to_be_visible(timeout=20_000)
     expect(page.locator("#error-area")).to_be_hidden()
+
+
+def test_what_another_process_analyzes_shows_as_under_way(page, runs):
+    """E.g. the command line: a batch, and a run not saved yet, each holding
+    its lock. Nothing to continue or delete meanwhile."""
+    batch = make_batch(
+        runs, [("a.mp4", "done", [cue(1, "Song")]), ("b.mp4", "analyzing", None)]
+    )
+    run = runs / "film_2026-11-11_10-00-00"
+    run.mkdir()
+    with FolderLock(batch.path), FolderLock(run):
+        open_batch(page)
+
+        expect(page.locator("#batch-heading")).to_contain_text(
+            "under way in another process"
+        )
+        expect(page.locator(".batch-film").last).to_contain_text("Analyzing")
+        expect(page.locator("#batch-continue")).to_be_hidden()
+        page.locator("#progress-back").click()  # Recent runs still open
+        row = page.locator(".history-item", has_text="film_2026-11-11_10-00-00")
+        expect(row).to_contain_text("Being analyzed")
+        row.hover()
+        expect(row.locator(".history-delete-btn")).to_have_count(0)
 
 
 def test_a_run_the_app_closed_on_is_listed_to_delete(page, runs):

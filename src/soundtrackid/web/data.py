@@ -13,7 +13,9 @@ from fastapi import HTTPException
 
 from soundtrackid import paths
 from soundtrackid.batches import Batch
+from soundtrackid.locks import is_locked
 from soundtrackid.runs import Run
+from soundtrackid.web import jobs
 
 root = paths.app_data_dir() if paths.FROZEN else paths.SOURCE_RUNS_DIR.parent
 
@@ -54,6 +56,15 @@ def find_batch(name: str) -> Batch:
     if not batch.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
     return batch
+
+
+def under_way(folder: Path) -> bool:
+    """Whether a run or batch of the cache is analyzed or resumed now: by a job
+    of this server, or by another process (the command line, the app opened
+    twice), which holds its lock (locks.py)."""
+    return folder.name in jobs.under_way("batch", "batch_resume", "resume") or (
+        is_locked(folder)
+    )
 
 
 def _in_cache(name: str) -> Path:

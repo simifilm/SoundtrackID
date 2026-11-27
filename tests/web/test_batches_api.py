@@ -13,10 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from soundtrackid.batches import Batch
+from soundtrackid.locks import FolderLock
 from soundtrackid.web import analyze, jobs
 from soundtrackid.web.app import app
 from tests.fakes import BATCH_SETTINGS, FakeClassifier, FakeLoader, fake_components
 from tests.jobs import job_events
+from tests.media import write_video
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
 client = TestClient(app)
@@ -241,6 +243,30 @@ def test_a_batch_is_continued_with_its_settings(data_dir, monkeypatch):
     assert json.loads((run / "results.json").read_text())["settings"]["hop"] == 2.5
 
 
+def test_a_batch_another_process_analyzes_is_under_way(runs_dir):
+    """E.g. the command line, which holds its lock: not to continue, resume
+    or delete meanwhile."""
+    batch = _batch(runs_dir, ("a.mp4", "analyzing", None), ("b.mp4", "queued", None))
+    (runs_dir / "b.mp4").write_bytes(b"video")
+    with FolderLock(batch.path):
+        entry = client.get(f"/batches/{batch.name}").json()
+        actions = [
+            client.post(f"/batches/{batch.name}/continue"),
+            client.post(f"/batches/{batch.name}/resume"),
+            client.delete(f"/batches/{batch.name}"),
+        ]
+        client.delete("/history")
+
+        assert entry["under_way"] is True
+        assert [f["status"] for f in entry["films"]] == ["analyzing", "queued"]
+        assert entry["to_continue"] == 0
+        assert [r.status_code for r in actions] == [409, 409, 409]
+        assert batch.exists()
+
+    entry = client.get(f"/batches/{batch.name}").json()
+    assert (entry["under_way"], entry["to_continue"]) == (False, 1)
+
+
 def test_a_batch_under_way_is_not_continued_or_resumed(runs_dir):
     batch = _batch(runs_dir, ("a.mp4", "analyzing", None))
     for kind in ("batch", "batch_resume"):
@@ -298,15 +324,56 @@ def test_a_batch_says_what_its_films_need(runs_dir):
     assert client.get("/batches/nope").status_code == 404
 
 
-@pytest.mark.parametrize("fmt", ["json", "csv"])
-def test_a_batchs_results_download_together(runs_dir, fmt):
-    """Each run's as Download results has it, in a zip."""
+# Each format: a run's own download or export of it, and its file's name.
+SINGLE = {
+    "json": ("/results/{}", "{}_results.json"),
+    "csv": ("/output/{}/csv", "{}_results.csv"),
+    "vian": ("/output/{}/vian", "{}_vian_project.zip"),
+    "mediapkg": ("/output/{}/mediapkg", "{}.mediapkg"),
+}
+
+
+def _exported_batch(runs_dir):
+    """A batch of two runs with a cue each, and one failed film; only the
+    first run kept its video."""
     batch = _batch(
         runs_dir,
         ("a.mp4", "done", "a_2026-11-11_10-00-00"),
         ("b.mp4", "failed", None),
         ("c.mp4", "done", "c_2026-11-11_10-10-00"),
     )
+    cue = {"segment_id": "seg_001", "start": 0.5, "duration": 1.0, "title": "Song"}
+    for run in ("a_2026-11-11_10-00-00", "c_2026-11-11_10-10-00"):
+        results = {"source": run[0] + ".mp4", "cues": [cue]}
+        (batch.path / run / "results.json").write_text(json.dumps(results))
+    write_video(batch.path / "a_2026-11-11_10-00-00" / "source.mp4", seconds=2)
+    return batch
+
+
+def _members(content):
+    """A zip's files, by name."""
+    archive = zipfile.ZipFile(io.BytesIO(content))
+    return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _said(fmt, export):
+    """What a VIAN or MAVA export says, without when it was made or the IDs
+    made up for it."""
+    files = _members(export)
+    if fmt == "mediapkg":
+        manifest = json.loads(files.pop("manifest.json"))
+        del manifest["created"]
+        return manifest, files
+    [timeline] = json.loads(files["undoable.json"])["timelines"]
+    segments = [(s["start"], s["end"], s["annotation"]) for s in timeline["data"]]
+    return files["main.json"], segments
+
+
+@pytest.mark.parametrize("fmt", SINGLE)
+def test_a_batchs_results_download_together(runs_dir, fmt):
+    """Each run's as its own download or export has it, in a zip; VIAN's only
+    of the runs that kept their video, which its frames are counted in."""
+    batch = _exported_batch(runs_dir)
 
     r = client.get(f"/batches/{batch.name}/results/{fmt}")
 
@@ -315,14 +382,29 @@ def test_a_batchs_results_download_together(runs_dir, fmt):
     assert (
         f'filename="{batch.name}_results_{fmt}.zip"' in r.headers["content-disposition"]
     )
-    archive = zipfile.ZipFile(io.BytesIO(r.content))
-    names = ["a_2026-11-11_10-00-00", "c_2026-11-11_10-10-00"]
-    assert archive.namelist() == [f"{name}_results.{fmt}" for name in names]
-    for name in names:
-        single = (
-            client.get(f"/output/{name}/csv").text
-            if fmt == "csv"
-            else json.dumps(client.get(f"/results/{name}").json(), indent=2)
-        )
-        assert archive.read(f"{name}_results.{fmt}").decode() == single
+    files = _members(r.content)
+    runs = ["a_2026-11-11_10-00-00"]
+    if fmt != "vian":
+        runs.append("c_2026-11-11_10-10-00")
+    url, file_name = SINGLE[fmt]
+    assert list(files) == [file_name.format(run) for run in runs]
+    for run in runs:
+        single = client.get(url.format(run))
+        content = files[file_name.format(run)]
+        if fmt == "json":
+            assert json.loads(content) == single.json()
+        elif fmt == "csv":
+            assert content == single.content
+        else:
+            assert _said(fmt, content) == _said(fmt, single.content)
+
+
+def test_a_batchs_downloads_need_something_to_hold(runs_dir):
+    batch = _exported_batch(runs_dir)
+    (batch.path / "a_2026-11-11_10-00-00" / "source.mp4").unlink()
+
+    r = client.get(f"/batches/{batch.name}/results/vian")
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "No stored video for the batch's runs"
     assert client.get(f"/batches/{batch.name}/results/xml").status_code == 404

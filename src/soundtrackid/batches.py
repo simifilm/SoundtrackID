@@ -11,6 +11,8 @@
         queue/NN/<file>     a film the batch took over (an upload to the app),
                             until its run has it
         <run>/              each film's run (runs.Run), as a single run's
+        .lock               held while the batch is analyzed or resumed
+                            (locks.py)
 """
 
 import json
@@ -19,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from soundtrackid.locks import FolderLock, is_locked
 from soundtrackid.results import save_json
 from soundtrackid.runs import Run
 
@@ -90,6 +93,15 @@ class Batch:
 
     def save(self, record: dict[str, Any]) -> None:
         save_json(self.record_path, record)
+
+    def lock(self) -> FolderLock:
+        """Hold the batch's lock, as its analysis or resume does until it
+        ends; locks.Busy when another holds it."""
+        return FolderLock(self.path).acquire()
+
+    def under_way(self) -> bool:
+        """Whether a process, this one too, is analyzing or resuming the batch."""
+        return is_locked(self.path)
 
     def run(self, name: str) -> Run | None:
         """The batch's run of this name, if it has one."""

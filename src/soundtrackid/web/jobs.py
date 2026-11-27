@@ -38,6 +38,12 @@ _LAST_STEPS = ("done", "cancelled", "error")
 # events right after, maybe only once it ended.
 _ENDED_KEPT_S = 300
 
+# The steps whose event shows all a page needs of the events before it, which
+# are dropped then: a batch's record as a film starts or ends, a batch resume's
+# next run. So a batch job keeps the progress of its film under way, not of all
+# the films before (a film's can be ~1 MB).
+_FRESH_STEPS = ("batch", "batch_resume")
+
 
 class Job:
     def __init__(self, kind: str, name: str | None = None) -> None:
@@ -76,9 +82,9 @@ class Job:
             )
 
     def follow(self) -> tuple[list[dict], asyncio.Queue]:
-        """The job's events so far, and a queue in the running event loop that
-        the events to come arrive in, none twice or missed; unfollow() once
-        done."""
+        """The job's events so far (from its latest of _FRESH_STEPS), and a
+        queue in the running event loop that the events to come arrive in, none
+        twice or missed; unfollow() once done."""
         queue: asyncio.Queue[dict] = asyncio.Queue()
         with self._lock:
             if not self.ended:
@@ -91,6 +97,8 @@ class Job:
 
     def _publish(self, event: dict) -> None:
         with self._lock:
+            if event["step"] in _FRESH_STEPS:
+                self._events.clear()
             self._events.append(event)
             for loop, queue in self._followers:
                 try:

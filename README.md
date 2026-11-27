@@ -71,7 +71,9 @@ way; a film that fails doesn't stop the others. Each film done opens from the li
 also while the batch runs on; **Back to the batch** returns to it. Once the batch has
 ended, its page also offers:
 
-- **Download all results**: each film's results as JSON or CSV, in one zip.
+- **Download all results**: each film's results as JSON or CSV, or its VIAN project or
+  MAVA .mediapkg (see Export), in one zip. VIAN's leaves out the films whose video
+  wasn't kept, as VIAN counts in the video's frames.
 - **Continue the batch**: analyze, with the batch's settings, the films it didn't get
   to (it was cancelled, or the app closed) and those that failed. The batch keeps
   each film's file until its run has it, so nothing needs uploading again.
@@ -92,7 +94,8 @@ services answer one request at a time. Reloading the page doesn't stop an analys
 a batch or a resume: the page shows it again where it is, and it can still be
 cancelled; so does **Reconnect** after the connection broke. Closing the app stops
 it: a batch can be continued, and a single analysis is listed as interrupted under
-**Recent runs**, to delete.
+**Recent runs**, to delete. A run or batch the command line is analyzing at the same
+time shows as under way, and can't be continued or deleted until it ends.
 
 ### Results
 
@@ -103,7 +106,8 @@ When the analysis is done, a **Download results** button appears — choose JSON
 (a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
 listed under **Recent runs** and can be downloaded again at any time. A batch is listed
 as one entry: click it to show its films, each with its run, or why it has none, or
-open its page.
+open its page. Next to **Delete all runs**, Recent runs shows how much space the runs
+take on disk, their videos above all.
 
 ### Metadata enrichment
 

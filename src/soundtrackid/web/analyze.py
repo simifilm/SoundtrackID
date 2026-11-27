@@ -387,8 +387,8 @@ async def resume_batch(name: str) -> dict:
 
 
 def _check_idle(batch: Batch) -> None:
-    """A 409 while the batch is analyzed or resumed."""
-    if batch.name in jobs.under_way("batch", "batch_resume"):
+    """A 409 while the batch is analyzed or resumed, also by another process."""
+    if data.under_way(batch.path):
         raise HTTPException(status_code=409, detail="The batch is under way")
 
 

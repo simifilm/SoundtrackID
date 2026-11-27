@@ -200,6 +200,8 @@
         <div class="download-options" id="batch-download-options" role="menu" hidden>
           <button type="button" role="menuitem" data-format="json">JSON (zip)</button>
           <button type="button" role="menuitem" data-format="csv">CSV (zip)</button>
+          <button type="button" role="menuitem" data-format="vian" title="Each run's VIAN project, for VIAN's Import project (with its video); runs without their video are left out">VIAN projects (zip)</button>
+          <button type="button" role="menuitem" data-format="mediapkg" title="Each run's .mediapkg, MAVA's exchange format">MAVA .mediapkg (zip)</button>
         </div>
       </div>
       <button type="button" id="progress-back" class="reset-btn">Analyze another file</button>
@@ -361,6 +363,7 @@
     <summary>Recent runs</summary>
     <div id="history-list"></div>
     <div class="history-footer">
+      <span id="history-size" class="history-size"></span>
       <button type="button" id="delete-all-runs" class="history-delete-all">Delete all runs</button>
     </div>
   </details>

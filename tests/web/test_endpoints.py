@@ -3,15 +3,15 @@ history."""
 
 import json
 import os
-import threading
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from soundtrackid.locks import FolderLock
 from soundtrackid.metadata import film as film_module
 from soundtrackid.metadata.film import FilmInfo
-from soundtrackid.web import analyze, jobs
+from soundtrackid.web import analyze
 from soundtrackid.web.app import app
 
 # Plain TestClient (no `with`) so the lifespan model-load never runs.
@@ -264,21 +264,42 @@ def test_history_lists_only_runs_with_readable_results(runs_dir):
     assert not (runs_dir / "interrupted").exists()
 
 
-def test_no_run_is_interrupted_while_one_is_analyzed(runs_dir, monkeypatch):
-    """The one under way isn't saved yet either."""
-    monkeypatch.setattr(jobs, "_jobs", {})
-    (runs_dir / "film_2026-11-11_10-00-00").mkdir()
-    gate = threading.Event()
-    job = jobs.start("analysis", lambda on_progress, cancel: gate.wait(10))
-    try:
-        assert client.get("/history").json() == []
-    finally:
-        gate.set()
-        client.get(f"/jobs/{job.id}/events")  # once it ended
+def test_a_run_not_saved_yet_is_being_analyzed_while_locked(runs_dir):
+    """By a process holding its lock, maybe the command line; until then it
+    can't be deleted."""
+    run = runs_dir / "film_2026-11-11_10-00-00"
+    run.mkdir()
+    with FolderLock(run):
+        [entry] = client.get("/history").json()
+        r = client.delete("/history/film_2026-11-11_10-00-00")
+        client.delete("/history")
+
+        assert entry["kind"] == "analyzing"
+        assert r.status_code == 409
+        assert run.is_dir()
+
+    assert client.get("/history").json()[0]["kind"] == "interrupted"
 
 
 def test_history_is_empty_without_a_cache_folder(data_dir):
     assert client.get("/history").json() == []
+    assert client.get("/history/size").json()["bytes"] == 0
+
+
+def test_history_size_is_what_the_runs_take_on_disk(runs_dir):
+    """Batches' too; a film hard-linked into two runs, as a re-run's, counts
+    once."""
+    (runs_dir / "a").mkdir()
+    (runs_dir / "a" / "results.json").write_bytes(b"x" * 100)
+    (runs_dir / "a" / "source.mp4").write_bytes(b"v" * 1000)
+    (runs_dir / "batch" / "b").mkdir(parents=True)
+    (runs_dir / "batch" / "batch.json").write_bytes(b"x" * 10)
+    os.link(runs_dir / "a" / "source.mp4", runs_dir / "batch" / "b" / "source.mp4")
+
+    assert client.get("/history/size").json() == {
+        "bytes": 1110,
+        "folder": str(runs_dir),
+    }
 
 
 def test_deleting_the_history_removes_every_run(data_dir, runs_dir):

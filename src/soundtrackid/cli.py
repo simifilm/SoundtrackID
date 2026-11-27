@@ -194,6 +194,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "resume":
         batch = Batch(args.run_dir)
         if batch.exists():
+            if batch.under_way():
+                r.error(f"{batch.path} is under way in another process")
             _finish_batch(batch, resume_batch(batch, args.api), args.csv)
             return
         results = resume(args.run_dir, args.api)
@@ -205,6 +207,8 @@ def main(argv: list[str] | None = None) -> None:
         batch = Batch(args.batch_dir)
         if not batch.exists():
             c.error(f"no batch in {args.batch_dir}")
+        if batch.under_way():
+            c.error(f"{batch.path} is under way in another process")
         _analyze_batch(batch, args.csv)
         return
 

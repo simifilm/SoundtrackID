@@ -18,10 +18,37 @@ async function loadHistory() {
   try {
     const entries = await fetch('/history').then(r => r.json());
     if (!entries.length) { panel.style.display = 'none'; return; }
-    list.replaceChildren(...entries.flatMap(e =>
-      e.kind === 'batch' ? batchRows(e) : [e.kind === 'interrupted' ? interruptedRow(e) : runRow(e)]));
+    list.replaceChildren(...entries.flatMap(historyRows));
     panel.style.display = 'block';
+    showHistorySize();
   } catch (_) { panel.style.display = 'none'; }
+}
+
+// How much the runs take on disk, next to "Delete all runs".
+async function showHistorySize() {
+  const label = document.getElementById('history-size');
+  try {
+    const size = await fetch('/history/size').then(r => r.ok ? r.json() : Promise.reject());
+    label.textContent = `${formatSize(size.bytes)} on disk`;
+    label.title = `In ${size.folder}`;
+  } catch (_) { label.textContent = ''; }
+}
+
+// "12.3 GB", counted in 1024s, as Windows Explorer does.
+function formatSize(bytes) {
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  if (bytes < 1024) return `${bytes} bytes`;
+  let i = -1;
+  do { bytes /= 1024; i++; } while (bytes >= 1024 && i < units.length - 1);
+  return `${bytes.toFixed(1)} ${units[i]}`;
+}
+
+// The rows of an entry of GET /history.
+function historyRows(entry) {
+  if (entry.kind === 'batch') return batchRows(entry);
+  if (entry.kind === 'interrupted') return [interruptedRow(entry)];
+  if (entry.kind === 'analyzing') return [analyzingRow(entry)];
+  return [runRow(entry)];
 }
 
 // A row of the list. With `onDelete`, it is one to click, and deletes with
@@ -64,6 +91,14 @@ function interruptedRow(run) {
   const row = historyRow(run.video_name, `${historyTime(run.timestamp)} · Interrupted`, 'Delete run', () => deleteRun(run.video_name));
   row.classList.add('history-run', 'history-interrupted');
   row.querySelector('.history-chevron').remove();
+  return row;
+}
+
+// A run not saved yet, being analyzed (maybe by the command line): nothing to
+// do with it yet.
+function analyzingRow(run) {
+  const row = historyRow(run.video_name, `${historyTime(run.timestamp)} · Being analyzed`);
+  row.classList.add('history-analyzing');
   return row;
 }
 

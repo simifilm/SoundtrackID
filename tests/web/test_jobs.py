@@ -98,6 +98,28 @@ def test_cancel_stops_a_job_under_way():
     assert client.post(f"/jobs/{job.id}/cancel").status_code == 404  # ended
 
 
+@pytest.mark.parametrize("fresh", ["batch", "batch_resume"])
+def test_a_batch_job_keeps_only_the_progress_of_its_film_under_way(fresh):
+    """A page coming to it gets the batch as of then, and that film's progress:
+    the films before ended."""
+
+    def work(on_progress, cancel):
+        on_progress(fresh, film=1)
+        on_progress("loading", detail="the first film")
+        on_progress(fresh, film=2)
+        on_progress("loading", detail="the second film")
+        return {}
+
+    job = jobs.start(fresh, work, "batch_2026-11-11_10-00-00")
+
+    events = _events(job.id)
+    assert [(e["step"], e.get("film") or e.get("detail")) for e in events] == [
+        (fresh, 2),
+        ("loading", "the second film"),
+        ("done", None),
+    ]
+
+
 def test_a_failed_job_ends_with_why():
     def work(on_progress, cancel):
         raise ValueError("Could not read the audio")

@@ -26,6 +26,19 @@ def test_recent_runs_list_every_run(page, runs):
     )
 
 
+def test_recent_runs_say_how_much_they_take_on_disk(page, runs):
+    """Next to "Delete all runs"; the folder they are in on hover."""
+    run = make_run(runs, [cue(1, "Song")])
+    (run / "source.mp4").write_bytes(b"v" * 3 * 1024 * 1024)
+
+    page.goto("/")
+    page.locator("#history-panel > summary").click()
+
+    size = page.locator("#history-size")
+    expect(size).to_have_text(re.compile(r"^3\.0 MB on disk$"))
+    expect(size).to_have_attribute("title", f"In {runs}")
+
+
 def test_a_batch_shows_its_films_under_it(page, runs):
     """Each with its run, or what became of it."""
     make_run(runs, [cue(1)], name="single_2026-11-11_10-00-00")

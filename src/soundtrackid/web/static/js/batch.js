@@ -131,9 +131,11 @@ async function loadBatch(ended) {
   const films = batch.films.map(f => ({ ...f, run: f.run && f.run.video_name, counts: f.run }));
   renderBatch(films);
   if (!ended) return;
+  // No job of this page's server: another process has it.
+  if (batch.under_way) batchHeading.textContent += ' · under way in another process, e.g. the command line';
   const pending = films.reduce((n, f) => n + (f.counts ? f.counts.pending : 0), 0);
   batchResume.textContent = `Resume pending cues (${pending})`;
-  batchResume.hidden = !pending;
+  batchResume.hidden = !pending || batch.under_way;
   const n = batch.to_continue;
   batchContinue.textContent = `Continue the batch (${n} film${n === 1 ? '' : 's'})`;
   batchContinue.hidden = !n;
@@ -232,14 +234,19 @@ async function startBatchJob(action, kind) {
 batchContinue.addEventListener('click', () => startBatchJob('continue', 'batch'));
 batchResume.addEventListener('click', () => startBatchJob('resume', 'batch_resume'));
 
-// Download all results: each run's, as JSON or CSV, in a zip.
+// Download all results: each run's, as JSON, CSV, a VIAN project or a MAVA
+// .mediapkg, in a zip.
 const batchDownloadOptions = document.getElementById('batch-download-options');
 dropdownMenu(document.getElementById('batch-download-btn'), batchDownloadOptions);
 batchDownloadOptions.addEventListener('click', async e => {
   const format = e.target.closest('[data-format]')?.dataset.format;
   if (!format || !shownBatch) return;
   const res = await fetch(`/batches/${encodeURIComponent(shownBatch)}/results/${format}`);
-  if (!res.ok) { alert(`Download failed (HTTP ${res.status})`); return; }
+  if (!res.ok) {
+    const { detail } = await res.json().catch(() => ({}));
+    alert(`Download failed: ${typeof detail === 'string' ? detail : `HTTP ${res.status}`}`);
+    return;
+  }
   // Same name the server sends in Content-Disposition.
   await triggerDownload(await res.blob(), `${shownBatch}_results_${format}.zip`);
 });

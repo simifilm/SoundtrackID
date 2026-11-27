@@ -809,8 +809,8 @@ input.cell-edit {
 .history-batch .history-chevron { transition: color 0.15s, transform 0.15s; }
 .history-batch.open .history-chevron { transform: rotate(90deg); }
 .history-batch-films .history-item { padding-left: 2rem; }
-.history-film, .history-interrupted { cursor: default; }
-.history-film:hover, .history-interrupted:hover { background: none; box-shadow: none; }
+.history-film, .history-interrupted, .history-analyzing { cursor: default; }
+.history-film:hover, .history-interrupted:hover, .history-analyzing:hover { background: none; box-shadow: none; }
 .history-film .history-meta { overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 /* A batch's row opens its page (batch.js). */
 .history-open-btn {
@@ -838,8 +838,11 @@ input.cell-edit {
 .history-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.4rem 0.75rem;
 }
+.history-size { font-size: 0.75rem; color: #a09cb8; }
 
 .history-delete-all {
   background: none;

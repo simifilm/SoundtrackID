@@ -20,7 +20,7 @@ from soundtrackid.exports import build_mediapkg, build_vian_project, results_to_
 from soundtrackid.results import SONG_KEYS, apply_edits, chosen_song, take_song
 from soundtrackid.runs import Run
 from soundtrackid.thumbnails import video_info
-from soundtrackid.web import data, jobs
+from soundtrackid.web import data
 
 log = logging.getLogger(__name__)
 
@@ -33,18 +33,19 @@ async def delete_history_item(video_name: str) -> dict:
     run = data.find_run(video_name)
     if not run.path.is_dir():
         raise HTTPException(status_code=404, detail="Run not found")
+    if data.under_way(run.path):
+        raise HTTPException(status_code=409, detail="The run is under way")
     shutil.rmtree(run.path)
     return {"status": "deleted"}
 
 
 @router.delete("/history")
 async def delete_history() -> dict:
-    """Delete every run directory from the cache, but a batch's under way."""
+    """Delete every run directory from the cache, but those under way."""
     runs_dir = data.runs_dir()
-    under_way = _batches_under_way()
     if runs_dir.exists():
         for run_dir in runs_dir.iterdir():
-            if run_dir.is_dir() and run_dir.name not in under_way:
+            if run_dir.is_dir() and not data.under_way(run_dir):
                 shutil.rmtree(run_dir)
     return {"status": "deleted"}
 
@@ -53,17 +54,12 @@ async def delete_history() -> dict:
 async def delete_batch(name: str) -> dict:
     """Delete a batch's folder: its films' runs, and what else it holds."""
     batch = data.find_batch(name)
-    if batch.name in _batches_under_way():
+    if data.under_way(batch.path):
         raise HTTPException(
             status_code=409, detail="The batch is under way: cancel it first"
         )
     shutil.rmtree(batch.path)
     return {"status": "deleted"}
-
-
-def _batches_under_way() -> set[str]:
-    """The batches analyzed or resumed now."""
-    return jobs.under_way("batch", "batch_resume")
 
 
 @router.get("/history")
@@ -72,21 +68,19 @@ async def history() -> list[dict]:
     returns a run's results.
 
     A run: {"kind": "run", video_name, timestamp, total, identified, pending},
-    its cues counted. One stopped before it was saved (e.g. the app closed):
-    {"kind": "interrupted", video_name, timestamp}, only to delete. A batch:
-    as GET /batches/{name} has it. The latest is the one whose folder, or a
-    run's of a batch, changed last.
+    its cues counted. One not saved yet: {"kind": "analyzing", video_name,
+    timestamp} while it is analyzed (maybe by the command line), else
+    {"kind": "interrupted", …}: it stopped (e.g. the app closed), only to
+    delete. A batch: as GET /batches/{name} has it. The latest is the one
+    whose folder, or a run's of a batch, changed last.
     """
     entries = []  # (when it changed last, entry)
     runs_dir = data.runs_dir()
-    batches_under_way = _batches_under_way()
-    # An analysis under way has a run not saved yet too: none is interrupted.
-    analyzing = bool(jobs.under_way("analysis"))
     for folder in runs_dir.iterdir() if runs_dir.exists() else ():
         try:
             batch = Batch(folder)
             if batch.exists():
-                entry = _batch_entry(batch, batch.name in batches_under_way)
+                entry = _batch_entry(batch)
                 runs = [
                     batch.path / f["run"]["video_name"]
                     for f in entry["films"]
@@ -97,10 +91,10 @@ async def history() -> list[dict]:
             elif Run(folder).exists():
                 entry = {"kind": "run", **_run_entry(Run(folder))}
                 entries.append((folder.stat().st_mtime, entry))
-            elif folder.is_dir() and not analyzing:
+            elif folder.is_dir():
                 changed = folder.stat().st_mtime
                 entry = {
-                    "kind": "interrupted",
+                    "kind": "analyzing" if data.under_way(folder) else "interrupted",
                     "video_name": folder.name,
                     "timestamp": changed,
                 }
@@ -111,17 +105,36 @@ async def history() -> list[dict]:
     return [entry for _, entry in entries]
 
 
+@router.get("/history/size")
+def history_size() -> dict:
+    """How much the runs and batches take on disk, their films above all:
+    {"bytes": …, "folder": the cache's}. A file hard-linked into two runs (a
+    re-run's film) counts once, as it takes its space once."""
+    runs_dir = data.runs_dir()
+    seen = set()
+    size = 0
+    for path in runs_dir.rglob("*") if runs_dir.exists() else ():
+        try:
+            stat = path.stat()
+        except OSError:
+            continue  # removed meanwhile
+        if path.is_file() and (stat.st_dev, stat.st_ino) not in seen:
+            seen.add((stat.st_dev, stat.st_ino))
+            size += stat.st_size
+    return {"bytes": size, "folder": str(runs_dir)}
+
+
 @router.get("/batches/{name}")
 async def get_batch(name: str) -> dict:
     """A batch and its films, each with what became of it.
 
     {"kind": "batch", name, timestamp (its start), providers, films,
-    to_continue}: each film with its source, status, error and run, as GET
-    /history has a run when it is done; to_continue, how many films
-    /batches/…/continue would analyze.
+    under_way, to_continue}: each film with its source, status, error and run,
+    as GET /history has a run when it is done; under_way, whether it is
+    analyzed or resumed now, maybe by the command line; to_continue, how many
+    films /batches/…/continue would analyze.
     """
-    batch = data.find_batch(name)
-    return _batch_entry(batch, batch.name in _batches_under_way())
+    return _batch_entry(data.find_batch(name))
 
 
 def _run_entry(run: Run) -> dict:
@@ -135,11 +148,12 @@ def _run_entry(run: Run) -> dict:
     }
 
 
-def _batch_entry(batch: Batch, under_way: bool) -> dict:
+def _batch_entry(batch: Batch) -> dict:
     """A batch for the history, its films' status as of now: also "deleted",
     a film done whose run is gone, and "not_analyzed", one queued or being
     analyzed when the batch stopped (a cancel, wrong API keys, the app closed).
     """
+    under_way = data.under_way(batch.path)
     record = batch.load()
     films = []
     to_continue = 0
@@ -170,31 +184,34 @@ def _batch_entry(batch: Batch, under_way: bool) -> dict:
         "timestamp": datetime.fromisoformat(record["started"]).timestamp(),
         "providers": [p.strip() for p in api.split(",") if p.strip()],
         "films": films,
+        "under_way": under_way,
         "to_continue": 0 if under_way else to_continue,
     }
 
 
 @router.get("/batches/{name}/results/{fmt}")
-async def download_batch_results(name: str, fmt: str) -> Response:
-    """The results of each of the batch's runs, as Download results has a
-    run's (GET /results/…, /output/…/csv), together in a zip: fmt is "json"
-    or "csv"."""
-    if fmt not in ("json", "csv"):
+def download_batch_results(name: str, fmt: str) -> Response:
+    """The results of each of the batch's runs, as a run's own download or
+    export has them, together in a zip: fmt is "json", "csv", "vian" or
+    "mediapkg" (_run_file). VIAN's leaves out the runs without their video;
+    a 404 when none has one."""
+    if fmt not in _FORMATS:
         raise HTTPException(status_code=404, detail="No such format")
     batch = data.find_batch(name)
     buffer = io.BytesIO()
+    files = 0
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for film in batch.load()["films"]:
             run = batch.run(film["run"]) if film["run"] else None
             if run is None or not run.exists():
                 continue
-            results = data.read_results(run)
-            content = (
-                results_to_csv(results)
-                if fmt == "csv"
-                else json.dumps(results, indent=2, ensure_ascii=False)
-            )
-            archive.writestr(f"{run.name}_results.{fmt}", content)
+            file = _run_file(run, data.read_results(run), fmt)
+            if file is not None:
+                archive.writestr(*file)
+                files += 1
+    if not files:
+        detail = "No stored video for the batch's runs" if fmt == "vian" else "No runs"
+        raise HTTPException(status_code=404, detail=detail)
     filename = f"{batch.name}_results_{fmt}.zip"
     return Response(
         content=buffer.getvalue(),
@@ -316,13 +333,12 @@ async def export_vian(video_name: str) -> Response:
     """This run's cues as a VIAN project zip. VIAN counts in frames, so this
     needs the run's video for its frame rate."""
     run = data.find_run(video_name)
-    results = data.read_results(run)
-    video = video_info(run.video) if run.video else None
-    if video is None:
+    file = _run_file(run, data.read_results(run), "vian")
+    if file is None:
         raise HTTPException(status_code=404, detail="No stored video for this run")
-    filename = f"{video_name}_vian_project.zip"
+    filename, content = file
     return Response(
-        content=build_vian_project(results.get("cues", []), video),
+        content=content,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -332,15 +348,37 @@ async def export_vian(video_name: str) -> Response:
 async def export_mediapkg(video_name: str) -> Response:
     """This run's cues as a .mediapkg, MAVA's exchange format."""
     run = data.find_run(video_name)
-    results = data.read_results(run)
-    video = video_info(run.video) if run.video else None
-    src = results.get("source") or video_name
-    filename = f"{video_name}.mediapkg"
+    filename, content = _run_file(run, data.read_results(run), "mediapkg")
     return Response(
-        content=build_mediapkg(results.get("cues", []), video_name, src, video),
+        content=content,
         media_type="application/vnd.mava.mediapkg+zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# What a run's results download and export as.
+_FORMATS = ("json", "csv", "vian", "mediapkg")
+
+
+def _run_file(run: Run, results: dict, fmt: str) -> tuple[str, str | bytes] | None:
+    """The run's results as `fmt` (_FORMATS): the file's name and content, as
+    its own download (JSON, CSV) or export (VIAN, MAVA) has them. None for
+    VIAN without the run's video: VIAN counts in frames, of the video's rate."""
+    if fmt == "json":
+        # As the page saves GET /results/….
+        return f"{run.name}_results.json", json.dumps(
+            results, indent=2, ensure_ascii=False
+        )
+    if fmt == "csv":
+        return f"{run.name}_results.csv", results_to_csv(results)
+    video = video_info(run.video) if run.video else None
+    cues = results.get("cues", [])
+    if fmt == "vian":
+        if video is None:
+            return None
+        return f"{run.name}_vian_project.zip", build_vian_project(cues, video)
+    src = results.get("source") or run.name
+    return f"{run.name}.mediapkg", build_mediapkg(cues, run.name, src, video)
 
 
 @router.get("/output/{video_name}/filmstrip")

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from soundtrackid import cli, paths
+from soundtrackid.batches import Batch
 from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
@@ -15,8 +16,15 @@ from soundtrackid.defaults import (
     MUSIC_THRESHOLD,
 )
 from soundtrackid.isolators import BaseMusicIsolator
+from soundtrackid.locks import FolderLock
 from soundtrackid.models import DetectionResult
-from tests.fakes import FakeClassifier, FakeLoader, ThrottledClient, fake_components
+from tests.fakes import (
+    BATCH_SETTINGS,
+    FakeClassifier,
+    FakeLoader,
+    ThrottledClient,
+    fake_components,
+)
 
 
 def _analyze(tmp_path, monkeypatch, *options, client=None):
@@ -291,6 +299,18 @@ def test_a_batch_is_continued_where_it_stopped(tmp_path, monkeypatch, capsys):
     record = json.loads((batch_dir / "batch.json").read_text())
     assert [f["status"] for f in record["films"]] == ["done", "done"]
     assert "2 of 2 films analyzed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["continue", "resume"])
+def test_a_batch_under_way_elsewhere_is_left_to_it(tmp_path, monkeypatch, command):
+    """E.g. the app analyzing it: neither continued nor resumed meanwhile."""
+    batch = Batch.create(tmp_path, [(tmp_path / "a.mp4", None)], BATCH_SETTINGS)
+
+    with FolderLock(batch.path), pytest.raises(SystemExit) as exc:
+        cli.main([command, str(batch.path)])
+
+    assert exc.value.code == 2
+    assert json.loads(batch.record_path.read_text())["films"][0]["status"] == "queued"
 
 
 def test_continue_needs_a_batch(tmp_path, capsys):
