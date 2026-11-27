@@ -84,7 +84,8 @@ it. Hovering a cue shows a preview of that moment in the video.
 
 When the analysis is done, a **Download results** button appears — choose JSON or CSV
 (a spreadsheet). Both hold the same results, including your edits. Earlier analyses stay
-listed under **Recent runs** and can be downloaded again at any time.
+listed under **Recent runs** and can be downloaded again at any time. A batch is listed
+as one entry: click it to show its films, each with its run, or why it has none.
 
 ### Metadata enrichment
 

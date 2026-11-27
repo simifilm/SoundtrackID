@@ -1,8 +1,8 @@
 """Starting a run from the page: stage the film and confirm what it is
-(/identify, /film/search, /film/lookup), analyze it (/analyze), analyze a run's
-film again (/rerun) or identify the cues a provider left pending (/resume).
-The last three each start a job (web/jobs.py) and return its ID, whose progress
-the page follows."""
+(/identify, /film/search, /film/lookup), analyze it (/analyze), or several as a
+batch (/batches), analyze a run's film again (/rerun) or identify the cues a
+provider left pending (/resume). The last four each start a job (web/jobs.py)
+and return its ID, whose progress the page follows."""
 
 import json
 import logging
@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, Form, HTTPException, UploadFile
 
 from soundtrackid import analysis
+from soundtrackid.batches import Batch
 from soundtrackid.defaults import (
     BRIDGE_GAP_S,
     CLASSIFICATION_HOP_S,
@@ -183,27 +184,16 @@ async def analyze(
     `staging_id` references a file staged by /identify; `film` carries the
     user-confirmed metadata.
     """
-    with _staging_lock:
-        staged_path = _staging.pop(staging_id, None)
-    if not staged_path or not staged_path.exists():
-        raise HTTPException(
-            status_code=400, detail="Staged upload not found or expired"
-        )
+    [staged_path] = _take_staged([staging_id])
     # The run takes the staged file over, moved rather than read.
     video = Path(tempfile.mkdtemp()) / staged_path.name
     shutil.move(staged_path, video)
     shutil.rmtree(staged_path.parent, ignore_errors=True)
 
-    film_override = None
-    if film:
-        try:
-            parsed = json.loads(film)
-            if isinstance(parsed, dict) and any(
-                v not in (None, "") for v in parsed.values()
-            ):
-                film_override = {k: v for k, v in parsed.items() if v not in (None, "")}
-        except (ValueError, TypeError):
-            film_override = None
+    try:
+        film_override = _confirmed_film(json.loads(film)) if film else None
+    except ValueError:
+        film_override = None
 
     return _start_analysis(
         video,
@@ -297,6 +287,86 @@ def _start_analysis(
     return {"job_id": jobs.start("analysis", work).id}
 
 
+@router.post("/batches")
+async def start_batch(
+    films: str = Form(...),
+    api: str = Form(DEFAULT_API),
+    threshold: float = Form(MUSIC_THRESHOLD),
+    bridge_gap: float = Form(BRIDGE_GAP_S),
+    hop: float = Form(CLASSIFICATION_HOP_S),
+    max_segment: float = Form(MAX_SEGMENT_S),  # 0: each whole
+) -> dict:
+    """Analyze several staged uploads one after another as a batch, as a job.
+
+    `films` lists them in order, as JSON: each {"staging_id": …, "film": {…}},
+    a file staged by /identify and the user-confirmed metadata. The batch's
+    folder is there once this returns, holding the films until their turn.
+    """
+    try:
+        items = json.loads(films)
+        staging_ids = [item["staging_id"] for item in items]
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=422,
+            detail='films must be [{"staging_id": …, "film": {…}}, …]',
+        )
+    if not staging_ids:
+        raise HTTPException(status_code=422, detail="No films")
+    staged = _take_staged(staging_ids)
+    batch = Batch.create(
+        data.runs_dir(),
+        [
+            (path.name, _confirmed_film(item.get("film")))
+            for path, item in zip(staged, items)
+        ],
+    )
+
+    def work(on_progress, cancel):
+        try:
+            pipeline = _build_pipeline(
+                threshold=threshold, api=api, bridge_gap=bridge_gap, hop=hop
+            )
+            return analysis.analyze_batch(
+                pipeline,
+                batch,
+                staged,
+                api,
+                max_segment_duration=max_segment or None,
+                keep_videos=True,
+                on_progress=on_progress,
+                cancel=cancel,
+            )
+        finally:
+            for path in staged:
+                shutil.rmtree(path.parent, ignore_errors=True)
+
+    return {"job_id": jobs.start("batch", work, name=batch.name).id}
+
+
+def _take_staged(staging_ids: list[str]) -> list[Path]:
+    """The files staged by /identify under these IDs, staged no more; a 400,
+    taking none, when one isn't (any more)."""
+    with _staging_lock:
+        paths = [_staging.get(staging_id) for staging_id in staging_ids]
+        if len(set(staging_ids)) < len(staging_ids) or not all(
+            path is not None and path.exists() for path in paths
+        ):
+            raise HTTPException(
+                status_code=400, detail="Staged upload not found or expired"
+            )
+        for staging_id in staging_ids:
+            del _staging[staging_id]
+    return paths
+
+
+def _confirmed_film(film: object) -> dict | None:
+    """The film's details the user confirmed, without those left empty; None
+    when there are none."""
+    if not isinstance(film, dict):
+        return None
+    return {k: v for k, v in film.items() if v not in (None, "")} or None
+
+
 # ── Resume detection after a rate limit ───────────────────────────────────────
 
 
@@ -316,6 +386,6 @@ async def resume_run(
         lambda on_progress, cancel: analysis.resume(
             run.path, api, on_progress=on_progress, cancel=cancel
         ),
-        video_name=run.name,
+        name=run.name,
     )
     return {"job_id": job.id}

@@ -36,23 +36,35 @@ def log_path() -> Path:
 
 def find_run(video_name: str) -> Run:
     """A run by its name: in the cache, or in the folder of a batch there; 404
-    when there is none.
-
-    Guards against path traversal via video_name: it must be a folder's name,
-    so anything else (the cache itself via ".", a sibling such as "../cache2")
-    is rejected. A batch's folder or its queue is no run.
-    """
-    cache = runs_dir().resolve()
-    path = (cache / video_name).resolve()
-    if path.parent != cache:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    when there is none. A batch's folder or its queue is no run."""
+    path = _in_cache(video_name)
     if path.is_dir() and not Batch(path).exists():
         return Run(path)
+    cache = path.parent
     for folder in cache.iterdir() if cache.is_dir() else ():
         batch = Batch(folder)
         if batch.exists() and (run := batch.run(path.name)) is not None:
             return run
     raise HTTPException(status_code=404, detail="Run not found")
+
+
+def find_batch(name: str) -> Batch:
+    """A batch by its name; 404 when there is none."""
+    batch = Batch(_in_cache(name))
+    if not batch.exists():
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return batch
+
+
+def _in_cache(name: str) -> Path:
+    """The cache's folder of this name, guarding against path traversal: it must
+    be a folder's name, so anything else (the cache itself via ".", a sibling
+    such as "../cache2") is rejected."""
+    cache = runs_dir().resolve()
+    path = (cache / name).resolve()
+    if path.parent != cache:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return path
 
 
 def read_results(run: Run) -> dict:

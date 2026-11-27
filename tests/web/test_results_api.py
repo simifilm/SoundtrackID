@@ -555,6 +555,7 @@ def test_history_lists_every_run_newest_first(runs_dir):
         f"run{i:02d}" for i in reversed(range(12))
     ]
     assert {k: v for k, v in items[0].items() if k != "timestamp"} == {
+        "kind": "run",
         "video_name": "run11",
         "total": 1,
         "identified": 1,

@@ -1,19 +1,22 @@
-"""The saved runs: listing and deleting them (/history), their results and the
-edits made to them (/results), a cue's song chosen by hand among others
-(/results/…/song), and their timeline, video, filmstrip and exports (/output)."""
+"""The saved runs and batches: listing and deleting them (/history, /batches),
+their results and the edits made to them (/results), a cue's song chosen by
+hand among others (/results/…/song), and their timeline, video, filmstrip and
+exports (/output)."""
 
 import logging
 import mimetypes
 import shutil
+from datetime import datetime
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
+from soundtrackid.batches import Batch
 from soundtrackid.exports import build_mediapkg, build_vian_project, results_to_csv
 from soundtrackid.results import SONG_KEYS, apply_edits, chosen_song, take_song
 from soundtrackid.runs import Run
 from soundtrackid.thumbnails import video_info
-from soundtrackid.web import data
+from soundtrackid.web import data, jobs
 
 log = logging.getLogger(__name__)
 
@@ -41,34 +44,94 @@ async def delete_history() -> dict:
     return {"status": "deleted"}
 
 
+@router.delete("/batches/{name}")
+async def delete_batch(name: str) -> dict:
+    """Delete a batch's folder: its films' runs, and what else it holds."""
+    batch = data.find_batch(name)
+    if batch.name in jobs.under_way("batch"):
+        raise HTTPException(
+            status_code=409, detail="The batch is under way: cancel it first"
+        )
+    shutil.rmtree(batch.path)
+    return {"status": "deleted"}
+
+
 @router.get("/history")
 async def history() -> list[dict]:
-    """Summarize every completed run, newest first; GET /results/{video_name}
-    returns a run's results."""
-    items = []
+    """Every completed run and every batch, the latest first; GET
+    /results/{video_name} returns a run's results.
+
+    A run: {"kind": "run", video_name, timestamp, total, identified}, its cues
+    counted. A batch: {"kind": "batch", name, timestamp (its start), films},
+    each film with its source, status, error and run, as a run's above when
+    it is done. The latest is the one whose folder, or a run's of a batch,
+    changed last.
+    """
+    entries = []  # (when it changed last, entry)
     runs_dir = data.runs_dir()
-    if runs_dir.exists():
-        dirs = sorted(
-            (p for p in runs_dir.iterdir() if p.is_dir()),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+    batches_under_way = jobs.under_way("batch")
+    for folder in runs_dir.iterdir() if runs_dir.exists() else ():
+        try:
+            batch = Batch(folder)
+            if batch.exists():
+                entry = _batch_entry(batch, batch.name in batches_under_way)
+                runs = [
+                    batch.path / f["run"]["video_name"]
+                    for f in entry["films"]
+                    if f["run"]
+                ]
+                changed = max(p.stat().st_mtime for p in (folder, *runs))
+                entries.append((changed, entry))
+            elif Run(folder).exists():
+                entry = {"kind": "run", **_run_entry(Run(folder))}
+                entries.append((folder.stat().st_mtime, entry))
+        except Exception:
+            log.warning("Could not list %s", folder, exc_info=True)
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return [entry for _, entry in entries]
+
+
+def _run_entry(run: Run) -> dict:
+    cues = run.load().get("cues", [])
+    return {
+        "video_name": run.name,
+        "timestamp": run.results_path.stat().st_mtime,
+        "total": len(cues),
+        "identified": sum(1 for c in cues if c.get("title")),
+    }
+
+
+def _batch_entry(batch: Batch, under_way: bool) -> dict:
+    """A batch for the history, its films' status as of now: also "deleted",
+    a film done whose run is gone, and "not_analyzed", one queued or being
+    analyzed when the batch stopped (a cancel, wrong API keys, the app closed).
+    """
+    record = batch.load()
+    films = []
+    for film in record["films"]:
+        status, run = film["status"], None
+        if status == "done":
+            found = batch.run(film["run"])
+            if found is not None and found.exists():
+                run = _run_entry(found)
+            else:
+                status = "deleted"
+        elif status in ("queued", "analyzing") and not under_way:
+            status = "not_analyzed"
+        films.append(
+            {
+                "source": film["source"],
+                "status": status,
+                "error": film["error"],
+                "run": run,
+            }
         )
-        for run in map(Run, dirs):
-            if not run.exists():
-                continue
-            try:
-                cues = run.load().get("cues", [])
-                items.append(
-                    {
-                        "video_name": run.name,
-                        "timestamp": run.results_path.stat().st_mtime,
-                        "total": len(cues),
-                        "identified": sum(1 for c in cues if c.get("title")),
-                    }
-                )
-            except Exception:
-                log.warning("Could not list %s", run.path, exc_info=True)
-    return items
+    return {
+        "kind": "batch",
+        "name": batch.name,
+        "timestamp": datetime.fromisoformat(record["started"]).timestamp(),
+        "films": films,
+    }
 
 
 @router.get("/results/{video_name}")

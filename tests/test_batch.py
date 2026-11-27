@@ -7,6 +7,7 @@ import threading
 import pytest
 
 from soundtrackid import analysis
+from soundtrackid.batches import Batch
 from soundtrackid.detection import ProviderAuthError
 from soundtrackid.models import DetectionResult
 from soundtrackid.pipeline import build_pipeline
@@ -27,17 +28,18 @@ def _batch(tmp_path, monkeypatch, names, client=None, broken=(), **options):
             return super().load(path)
 
     monkeypatch.setattr("soundtrackid.pipeline.VideoLoader", Loader)
-    films = []
-    for name in names:
-        video = tmp_path / name
-        video.write_bytes(name.encode())
-        films.append((video, {"title": video.stem}))
+    videos = [tmp_path / name for name in names]
+    for video in videos:
+        video.write_bytes(video.name.encode())
+    batch = Batch.create(
+        tmp_path / "runs", [(video.name, {"title": video.stem}) for video in videos]
+    )
     events = []
     record = analysis.analyze_batch(
         build_pipeline(get_classifier(), "acrcloud"),
-        films,
+        batch,
+        videos,
         "acrcloud",
-        tmp_path / "runs",
         on_progress=lambda step, **fields: events.append((step, fields)),
         **options,
     )

@@ -6,6 +6,7 @@ import json
 import numpy as np
 from scipy.io import wavfile
 
+from soundtrackid.batches import Batch
 from soundtrackid.results import RESULTS_VERSION
 
 # 30 s of music, as the fake classifier hears it in FakeLoader's audio: windows
@@ -66,6 +67,24 @@ def make_run(runs, cues, name="film_2026-11-11_10-00-00", **results):
     (run / "results.json").write_text(json.dumps(data))
     (run / "timeline.json").write_text(json.dumps(TIMELINE))
     return run
+
+
+def make_batch(runs, films):
+    """A batch on disk as an analysis saves it. `films` are (source, status,
+    cues): a done film gets a run with its cues, named after its source; a
+    failed one "Could not read the audio" as why."""
+    batch = Batch.create(runs, [(source, None) for source, _, _ in films])
+    record = batch.load()
+    for entry, (source, status, cues) in zip(record["films"], films):
+        entry["status"] = status
+        if status == "done":
+            name = source.rsplit(".", 1)[0] + "_2026-11-11_12-00-00"
+            make_run(batch.path, cues, name=name, source=source)
+            entry["run"] = name
+        elif status == "failed":
+            entry["error"] = "Could not read the audio"
+    batch.save(record)
+    return batch
 
 
 def saved(run):

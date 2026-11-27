@@ -88,31 +88,29 @@ def analyze(
 
 def analyze_batch(
     pipeline,
-    films: list[tuple[Path, dict[str, Any] | None]],
+    batch: Batch,
+    videos: list[Path],
     api: str,
-    runs_dir: Path,
     max_segment_duration: float | None = None,
     keep_videos: bool = False,
     on_progress: ProgressCb | None = None,
     cancel: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Analyze several videos as a batch, one after another, each as analyze()
-    does, and return the batch's record: its name, and its films (batches).
+    """Analyze the films of a new `batch` (Batch.create), one after another,
+    each as analyze() does, into the batch's folder; return the batch's record:
+    its name, and its films (batches). `videos` are the films', in order.
 
-    The batch gets a folder of its own in `runs_dir`, which holds each film's
-    run. `films` are each a video and what is known about the film (None: its
-    tags). A film that fails is recorded as failed, with why, and the batch
-    goes on. Wrong API keys stop it, as they would fail every film after, and
-    so does a cancel: they are raised, and the runs done stay. `keep_videos`
-    moves the videos into the batch, each kept in its run as analyze's
-    keep_video does; those of films not done are removed when the batch ends.
+    A film that fails is recorded as failed, with why, and the batch goes on.
+    Wrong API keys stop it, as they would fail every film after, and so does a
+    cancel: they are raised, and the runs done stay. `keep_videos` moves the
+    videos into the batch, each kept in its run as analyze's keep_video does;
+    those of films not done are removed when the batch ends.
 
     Reports the record ("batch") as the batch starts and as each film starts
     and ends, and each film's progress in between, as analyze() does.
     """
     from soundtrackid.detection import ProviderAuthError
 
-    batch = Batch.create(runs_dir, [(video.name, film) for video, film in films])
     record = batch.load()
 
     def report() -> None:
@@ -128,7 +126,7 @@ def analyze_batch(
     try:
         videos = [
             batch.queue(number, video) if keep_videos else video
-            for number, (video, _) in enumerate(films, start=1)
+            for number, video in enumerate(videos, start=1)
         ]
         report()  # all queued
         for number, (video, entry) in enumerate(zip(videos, record["films"]), 1):

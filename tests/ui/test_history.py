@@ -7,7 +7,7 @@ import shutil
 import pytest
 from playwright.sync_api import expect
 
-from tests.ui.helpers import TIMELINE, cue, make_run, open_run
+from tests.ui.helpers import TIMELINE, cue, make_batch, make_run, open_run
 
 pytestmark = pytest.mark.browser
 
@@ -24,6 +24,74 @@ def test_recent_runs_list_every_run(page, runs):
     expect(items.filter(has_text="film_2026-11-11_10-00-00")).to_contain_text(
         "2 segs · 1 identified"
     )
+
+
+def test_a_batch_shows_its_films_under_it(page, runs):
+    """Each with its run, or what became of it."""
+    make_run(runs, [cue(1)], name="single_2026-11-11_10-00-00")
+    make_batch(
+        runs,
+        [
+            ("a.mp4", "done", [cue(1, "Song"), cue(2)]),
+            ("b.mp4", "failed", None),
+            ("c.mp4", "queued", None),  # the batch stopped before it
+        ],
+    )
+    page.goto("/")
+    page.locator("#history-panel > summary").click()
+    batch = page.locator(".history-batch")
+    expect(batch).to_contain_text("Batch: a.mp4, b.mp4, c.mp4")
+    expect(batch).to_contain_text("1 of 3 films · 1 identified")
+    films = page.locator(".history-batch-films .history-item")
+    expect(films.first).to_be_hidden()
+
+    batch.click()
+
+    expect(films).to_have_text(
+        [
+            re.compile(r"a\.mp4.*2 segs · 1 identified"),
+            re.compile(r"b\.mp4.*Failed: Could not read the audio"),
+            re.compile(r"c\.mp4.*Not analyzed"),
+        ]
+    )
+    films.filter(has_text="a.mp4").click()
+    expect(page.locator("#tracks-body tr")).to_have_text([re.compile("Song")])
+
+
+def test_deleting_a_films_run_keeps_its_batch_open(page, runs):
+    batch = make_batch(runs, [("a.mp4", "done", [cue(1)]), ("b.mp4", "done", [cue(1)])])
+    page.goto("/")
+    page.locator("#history-panel > summary").click()
+    page.locator(".history-batch").click()
+    film = page.locator(".history-batch-films .history-item", has_text="a.mp4")
+
+    film.hover()
+    film.locator(".history-delete-btn").click()
+
+    expect(film).to_contain_text("Run deleted")
+    assert not (batch.path / "a_2026-11-11_12-00-00").exists()
+    expect(page.locator(".history-batch")).to_contain_text("1 of 2 films")
+
+
+def test_deleting_a_batch_asks_first(page, runs):
+    make_run(runs, [cue(1)], name="single_2026-11-11_10-00-00")
+    make_batch(runs, [("a.mp4", "done", [cue(1)]), ("b.mp4", "failed", None)])
+    page.goto("/")
+    page.locator("#history-panel > summary").click()
+    batch = page.locator(".history-batch")
+    asked = []
+
+    page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    batch.hover()
+    batch.locator(".history-delete-btn").click()
+    expect(batch).to_have_count(1)
+
+    page.once("dialog", lambda d: (asked.append(d.message), d.accept()))
+    batch.locator(".history-delete-btn").click()
+
+    expect(batch).to_have_count(0)
+    assert asked == ["Delete this batch and its run? This can't be undone."] * 2
+    assert [p.name for p in runs.iterdir()] == ["single_2026-11-11_10-00-00"]
 
 
 def test_opening_a_run_shows_its_results_waveform_and_classes(page, runs):

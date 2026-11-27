@@ -753,6 +753,14 @@ input.cell-edit {
 }
 .history-item:hover .history-chevron { color: #7c3aed; }
 
+/* A batch's films, under its row; the chevron turns while they show. */
+.history-batch .history-chevron { transition: color 0.15s, transform 0.15s; }
+.history-batch.open .history-chevron { transform: rotate(90deg); }
+.history-batch-films .history-item { padding-left: 2rem; }
+.history-film { cursor: default; }
+.history-film:hover { background: none; box-shadow: none; }
+.history-film .history-meta { overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+
 .history-delete-btn {
   background: none;
   border: none;

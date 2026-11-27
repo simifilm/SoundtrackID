@@ -13,7 +13,7 @@ async function followJobUnderWay() {
   const job = jobs[jobs.length - 1];   // the latest
   if (!job) return;
   if (job.kind === 'resume') {
-    if (await openRun(job.video_name)) followResume(job.id);
+    if (await openRun(job.name)) followResume(job.id);
   } else {
     showProgress();
     followAnalysis(job.id);

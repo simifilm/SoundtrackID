@@ -1,8 +1,8 @@
-"""The analyses and resumes under way, each a job: a request starts it, and it
-runs in a thread of its own until it ends, whether a page follows it or not.
-A page follows a job's progress as server-sent events from the job's start, so
-a page loaded anew (e.g. reloaded) shows a job under way where it is, and can
-still cancel it.
+"""The analyses, batches and resumes under way, each a job: a request starts it,
+and it runs in a thread of its own until it ends, whether a page follows it or
+not. A page follows a job's progress as server-sent events from the job's
+start, so a page loaded anew (e.g. reloaded) shows a job under way where it is,
+and can still cancel it.
 
     GET  /jobs                 the jobs under way
     GET  /jobs/{id}/events     a job's progress, from its start to its end
@@ -40,10 +40,10 @@ _ENDED_KEPT_S = 300
 
 
 class Job:
-    def __init__(self, kind: str, video_name: str | None = None) -> None:
+    def __init__(self, kind: str, name: str | None = None) -> None:
         self.id = str(uuid.uuid4())
-        self.kind = kind  # "analysis" or "resume"
-        self.video_name = video_name  # a resume's run
+        self.kind = kind  # "analysis", "batch" or "resume"
+        self.name = name  # what it is of: a batch's folder, a resume's run
         self.cancel = threading.Event()
         self.ended_at: float | None = None  # time.monotonic()
         self._events: list[dict] = []
@@ -106,9 +106,9 @@ _jobs: dict[str, Job] = {}
 _jobs_lock = threading.Lock()
 
 
-def start(kind: str, work: Work, video_name: str | None = None) -> Job:
+def start(kind: str, work: Work, name: str | None = None) -> Job:
     """Do `work` as a new job, in a thread of its own, and return the job."""
-    job = Job(kind, video_name)
+    job = Job(kind, name)
     with _jobs_lock:
         now = time.monotonic()
         for old in list(_jobs.values()):
@@ -120,13 +120,22 @@ def start(kind: str, work: Work, video_name: str | None = None) -> Job:
     return job
 
 
+def under_way(kind: str) -> set[str]:
+    """What the jobs of this kind under way are of, e.g. the batches."""
+    return {job["name"] for job in _under_way() if job["kind"] == kind}
+
+
 @router.get("/jobs")
 async def jobs_under_way() -> list[dict]:
     """The jobs under way, the oldest first."""
+    return _under_way()
+
+
+def _under_way() -> list[dict]:
     with _jobs_lock:
         jobs = list(_jobs.values())
     return [
-        {"id": job.id, "kind": job.kind, "video_name": job.video_name}
+        {"id": job.id, "kind": job.kind, "name": job.name}
         for job in jobs
         if not job.ended
     ]

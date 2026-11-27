@@ -21,7 +21,7 @@ def no_other_jobs(monkeypatch):
     monkeypatch.setattr(jobs, "_jobs", {})
 
 
-def _waiting_job(kind="analysis", video_name=None):
+def _waiting_job(kind="analysis", name=None):
     """A job under way: it reports "loading", then waits for the returned gate
     before it reports "classifying" and ends with its results."""
     gate = threading.Event()
@@ -36,7 +36,7 @@ def _waiting_job(kind="analysis", video_name=None):
         on_progress("classifying", detail="Classifying")
         return {"video_name": "film"}
 
-    job = jobs.start(kind, work, video_name)
+    job = jobs.start(kind, work, name)
     loading.wait(timeout=10)
     return job, gate
 
@@ -79,7 +79,7 @@ def test_a_job_runs_to_its_end_with_no_page_following_it():
     """And a page that comes only then gets all of it."""
     job, gate = _waiting_job("resume", "film_2026-11-11_10-00-00")
     assert client.get("/jobs").json() == [
-        {"id": job.id, "kind": "resume", "video_name": "film_2026-11-11_10-00-00"}
+        {"id": job.id, "kind": "resume", "name": "film_2026-11-11_10-00-00"}
     ]
 
     gate.set()

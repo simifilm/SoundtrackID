@@ -17,6 +17,7 @@ from typing import Any
 
 from soundtrackid import paths
 from soundtrackid.analysis import analyze, analyze_batch, resume
+from soundtrackid.batches import Batch
 from soundtrackid.classifiers import OnnxClassifier, load_classifier
 from soundtrackid.defaults import (
     BRIDGE_GAP_S,
@@ -205,14 +206,17 @@ def main(argv: list[str] | None = None) -> None:
         _finish(results, args.output_dir / results["video_name"], args.csv)
         return
 
+    batch = Batch.create(
+        args.output_dir, [(video.name, _film(video, args)) for video in videos]
+    )
     record = analyze_batch(
         pipeline,
-        [(video, _film(video, args)) for video in videos],
+        batch,
+        videos,
         args.api,
-        args.output_dir,
         max_segment_duration=args.max_segment or None,
     )
-    batch_dir = args.output_dir / record["name"]
+    batch_dir = batch.path
     print()
     for film in record["films"]:
         if film["status"] == "done":
