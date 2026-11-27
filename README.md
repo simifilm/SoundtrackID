@@ -61,8 +61,14 @@ Download the latest release, then follow the installer.
 
 ### Analyze a video
 
-Drag a video file onto the drop zone, adjust the settings if you want, then click
-**Analyze**.
+Drag a video file onto the drop zone, adjust the settings if you want, confirm the
+film, then click **Start analysis**.
+
+Drag several files to analyze them one after another as a batch, with the same
+settings: confirm each film, then click **Start batch**. The page lists the films,
+each queued, under way, done or failed, above the progress of the one under way; a
+film that fails doesn't stop the others. Once the batch is done, each film opens from
+the list.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -73,9 +79,9 @@ Drag a video file onto the drop zone, adjust the settings if you want, then clic
 | Bridge Gaps | 0 hops | Joins clips of the same track across up to this many non-music hops |
 
 Long films take a while: every cue has to be looked up individually, and the music
-services answer one request at a time. Reloading the page doesn't stop an analysis
-or a resume: the page shows it again where it is, and it can still be cancelled.
-Closing the app stops it.
+services answer one request at a time. Reloading the page doesn't stop an analysis,
+a batch or a resume: the page shows it again where it is, and it can still be
+cancelled. Closing the app stops it.
 
 ### Results
 
@@ -89,10 +95,10 @@ as one entry: click it to show its films, each with its run, or why it has none.
 
 ### Metadata enrichment
 
-Before the analysis starts, a **Confirm film or series** panel shows the details read from the video
-file's own tags. Correct or complete them, or click **Look up online** and choose the film
-or series from the ones found, which then replaces the details. The year matters: it is used to flag
-music that was released after the film.
+Before the analysis starts, a **Confirm the films or series** table shows, for each film, the
+details read from its file's own tags. Correct or complete them, or click a film's **Look up
+online** and choose the film or series from the ones found, which then replaces its details. The
+year matters: it is used to flag music that was released after the film.
 The composers are then looked up automatically during the analysis:
 
 - **Film** — title, year, director, and the director's year of death.

@@ -8,6 +8,16 @@ let identTotal        = 0;       // total identification windows (known once cla
 let lastEventAt       = 0;       // timestamp of the last SSE event (stall detection)
 let stallTimer        = null;
 
+// A batch: its films above the progress of the one under way.
+const batchQueue   = document.getElementById('batch-queue');
+const batchHeading = document.getElementById('batch-heading');
+const batchFilms   = document.getElementById('batch-films');
+const batchDone    = document.getElementById('batch-done');
+const stepsList    = document.getElementById('steps-list');
+let batchRecord    = null;       // the batch as last reported: its films
+let batchFilmShown = -1;         // the film whose progress shows, by its place
+const runCounts    = new Map();  // a done film's run → its counts, once read
+
 // Steps helper
 const STEP_ORDER = ['loading', 'classifying', 'detecting', 'writing', 'enriching'];
 let currentStep = null;
@@ -44,20 +54,38 @@ function selectedProviders() {
 // rerunVideo: name of a run whose stored video is analyzed again (no upload).
 function startAnalysis(stagingId, film, rerunVideo = null) {
   showProgress();
-
-  const formData = new FormData();
+  const formData = analysisSettings();
   if (!rerunVideo) {
     formData.append('staging_id', stagingId);
     formData.append('film', JSON.stringify(film || {}));
   }
+  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
+  startJob(url, formData, handleEvent);
+}
+
+// Analyze several staged films one after another as a batch: `films` are
+// each {stagingId, film}.
+function startBatch(films) {
+  showProgress(true);
+  const formData = analysisSettings();
+  formData.append('films', JSON.stringify(films.map(f => ({ staging_id: f.stagingId, film: f.film }))));
+  startJob('/batches', formData, handleBatchEvent);
+}
+
+// The settings in the Settings panel, as the server takes them.
+function analysisSettings() {
+  const formData = new FormData();
   formData.append('api', selectedProviders().join(','));
   formData.append('threshold', document.getElementById('opt-threshold').value / 100);
   // The bridge gap is chosen in hops; the backend takes seconds.
   formData.append('bridge_gap', document.getElementById('opt-bridge').value * document.getElementById('opt-hop').value);
   formData.append('hop', document.getElementById('opt-hop').value);
   formData.append('max_segment', document.getElementById('opt-chunk').value);
+  return formData;
+}
 
-  const url = rerunVideo ? `/rerun/${encodeURIComponent(rerunVideo)}` : '/analyze';
+// Start the job, and show its progress with `onEvent`.
+function startJob(url, formData, onEvent) {
   fetch(url, { method: 'POST', body: formData })
     .then(async res => {
       const body = await res.json().catch(() => ({}));
@@ -66,15 +94,40 @@ function startAnalysis(stagingId, film, rerunVideo = null) {
         finishRun();
         errorArea.textContent = 'ERROR: ' + (typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`);
         errorArea.style.display = 'block';
+        if (onEvent === handleBatchEvent) batchDone.hidden = false;
         return;
       }
-      followAnalysis(body.job_id);
+      followAnalysis(body.job_id, onEvent);
     })
     .catch(err => { finishRun(); errorArea.textContent = 'Connection error: ' + err.message; errorArea.style.display = 'block'; });
 }
 
-// The progress view, empty, in place of the rest of the page.
-function showProgress() {
+// The progress view, empty, in place of the rest of the page; with `batch`,
+// with the batch's films above.
+function showProgress(batch = false) {
+  resetProgress();
+  errorArea.style.display = 'none';
+  errorArea.textContent = '';
+  currentJobId = null;
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = batch ? 'Cancel batch' : 'Cancel analysis';
+  cancelBtn.style.display = 'block';
+  batchQueue.hidden = !batch;
+  batchDone.hidden = true;
+  batchFilms.replaceChildren();
+  batchHeading.textContent = '';
+  batchRecord = null;
+  batchFilmShown = -1;
+  stepsList.hidden = false;
+
+  document.getElementById('history-panel').style.display = 'none';
+  dropZone.style.display = 'none';
+  progressView.style.display = 'block';
+  resultsView.style.display  = 'none';
+}
+
+// The steps, the waveform and the bars, for a film's analysis to begin.
+function resetProgress() {
   resetWaveform();
   setupVideo(null, null);
   identFarthestEnd = 0; identReaped = 0; identTotal = 0;
@@ -84,8 +137,6 @@ function showProgress() {
   clearStall();
   startStallWatch();
   waveformContainer.style.display = 'none';
-  errorArea.style.display = 'none';
-  errorArea.textContent = '';
   resultsBody.innerHTML = '';
   currentStep = null;
   document.querySelectorAll('.step').forEach(el => {
@@ -100,27 +151,17 @@ function showProgress() {
     const detail = document.querySelector(`.step[data-step="${s}"] .step-detail`);
     if (detail) detail.textContent = '';
   });
-
-  currentJobId = null;
-  cancelBtn.disabled = false;
-  cancelBtn.textContent = 'Cancel analysis';
-  cancelBtn.style.display = 'block';
-
-  document.getElementById('history-panel').style.display = 'none';
-  dropZone.style.display = 'none';
-  progressView.style.display = 'block';
-  resultsView.style.display  = 'none';
 }
 
-// Show the progress of the analysis job `jobId`, from its start, also of one
-// already under way (the page reloaded), until it ends.
-async function followAnalysis(jobId) {
+// Show the progress of the analysis or batch job `jobId` with `onEvent`, from
+// its start, also of one already under way (the page reloaded), until it ends.
+async function followAnalysis(jobId, onEvent = handleEvent) {
   currentJobId = jobId;
   streaming = true;
   try {
     const res = await fetch(`/jobs/${encodeURIComponent(jobId)}/events`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    await readEvents(res, handleEvent, (err, text) => {
+    await readEvents(res, onEvent, (err, text) => {
       // A bug handling one event: keep reading the stream, but show it
       // (also after "done", which hides the progress view).
       console.error('Could not handle server event', text, err);
@@ -287,6 +328,86 @@ function handleEvent(ev) {
     if (wfDuration > 0) classFill.style.width = (ev.end / wfDuration * 100) + '%';
   }
 }
+
+// A batch job's events: the batch's record as it starts and as each film
+// starts and ends, each film's progress in between, and the batch's end.
+function handleBatchEvent(ev) {
+  if (ev.step === 'batch') {
+    lastEventAt = performance.now();
+    batchRecord = ev;
+    const analyzing = ev.films.findIndex(f => f.status === 'analyzing');
+    if (analyzing !== -1 && analyzing !== batchFilmShown) {
+      batchFilmShown = analyzing;
+      resetProgress();   // for the next film's
+    }
+    renderBatch(false);
+    return;
+  }
+  if (ev.step === 'done') {
+    finishRun();
+    batchRecord = ev.results;
+    endBatch();
+    return;
+  }
+  handleEvent(ev);   // a film's progress; "cancelled" and "error" end the batch
+  if (ev.step === 'error') endBatch();
+}
+
+// The batch's films as it ended, in place of the last one's progress: those
+// done to open.
+function endBatch() {
+  stepsList.hidden = true;
+  waveformContainer.style.display = 'none';
+  setupVideo(null, null);
+  batchDone.hidden = false;
+  renderBatch(true);
+}
+
+const BATCH_STATUS = { queued: 'Queued', analyzing: 'Analyzing…', cancelled: 'Cancelled' };
+
+function renderBatch(ended) {
+  const films = batchRecord ? batchRecord.films : [];
+  const done = films.filter(f => f.status === 'done').length;
+  batchHeading.textContent = `Batch: ${done} of ${films.length} films analyzed`;
+  batchFilms.replaceChildren(...films.map(film => {
+    const status = Object.assign(document.createElement('span'), { className: 'batch-film-status' });
+    if (film.status === 'done') {
+      status.textContent = 'Done';
+      countsOf(film.run).then(text => { status.textContent = text; });
+    } else if (film.status === 'failed') {
+      status.textContent = `Failed: ${film.error}`;
+    } else if (ended && film.status !== 'cancelled') {
+      status.textContent = 'Not analyzed';   // the batch stopped before it
+    } else {
+      status.textContent = BATCH_STATUS[film.status];
+    }
+    const item = document.createElement('li');
+    item.className = `batch-film ${film.status}`;
+    item.append(Object.assign(document.createElement('span'), { className: 'batch-film-name', textContent: film.source }), status);
+    if (ended && film.status === 'done') {
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'reset-btn', textContent: 'Open' });
+      open.addEventListener('click', () => openRun(film.run));
+      item.append(open);
+    }
+    return item;
+  }));
+}
+
+// "12 of 15 cues identified", of a done film's run, once its results are read.
+function countsOf(run) {
+  if (!runCounts.has(run)) {
+    runCounts.set(run, fetch('/results/' + encodeURIComponent(run))
+      .then(res => res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)))
+      .then(results => {
+        const cues = results.cues || [];
+        return `${cues.filter(c => c.title).length} of ${cues.length} cues identified`;
+      })
+      .catch(() => 'Done'));
+  }
+  return runCounts.get(run);
+}
+
+document.getElementById('batch-close').addEventListener('click', () => showStartPage());
 
 cancelBtn.addEventListener('click', async () => {
   if (!currentJobId) return;

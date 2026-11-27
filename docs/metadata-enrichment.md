@@ -7,12 +7,12 @@ domain 70 years after the **composer's** death.
 
 It runs in two places:
 
-- **Film** — before the analysis starts, in the **Confirm film or series**
-  panel. The fields are pre-filled from the video file's MP4 tags; **Look up
-  online** lists the films and series they may mean, and the one the user
-  chooses replaces the fields. The
-  confirmed film is passed to `/analyze`, so the film year is known while
-  matches are ranked.
+- **Film** — before the analysis starts, in the **Confirm the films or series**
+  table, a row per film. The fields are pre-filled from the video file's MP4
+  tags; **Look up online** lists the films and series they may mean, and the
+  one the user chooses replaces the row's fields. The confirmed film is passed
+  to `/analyze` (each film of a batch to `/batches`), so the film year is known
+  while matches are ranked.
 - **Composer** — automatically at the end of `/analyze` (and of `/resume`), for
   every identified cue that carries an ISRC.
 
@@ -119,7 +119,7 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
                    └───────────────────────────┬───────────────────────────┘
                                                ▼
                    ┌───────────────────────────────────────────────────────┐
-   Confirm film    │  Panel pre-filled from the tags; the user edits it    │
+   Confirm film    │  Row pre-filled from the tags; the user edits it      │
                    │  "Look up online" → POST /film/search → the user      │
                    │    chooses a film or series → POST /film/lookup by    │
                    │    its TMDb ID and media type (TMDb → Wikidata →      │
@@ -139,7 +139,8 @@ release year in grey) and the **Rights** column: *Public domain*, *Protected* or
 
 The CLI (`soundtrackid analyze`) runs the same analysis. Its
 `--title`, `--year` and `--imdb-id` options (for one film) and `--lookup-film`
-(for each film of a batch too) take the place of the Confirm film or series panel.
+(for each film of a batch too) take the place of the Confirm the films or series
+table.
 
 ---
 

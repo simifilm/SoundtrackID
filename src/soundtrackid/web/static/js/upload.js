@@ -1,40 +1,130 @@
-// Choosing a file and confirming the film before the analysis.
+// Choosing the files and confirming the films before the analysis: one, or
+// several as a batch, a row each in the confirmation's table.
 
-let pendingStagingId = null;   // staged upload awaiting confirmation → analysis
-let pendingFilm = {};          // full film metadata read/looked-up in the confirm step
+// The films to confirm, in order: each its file, its staged upload once there
+// (stagingId; failed when it couldn't be), what is known about it (film, the
+// full record read or looked up) and its row's elements.
+let pendingFilms = [];
+let choosingFor = null;   // the film whose choice among those found online is open
 
-// ── Pre-analysis film confirmation ────────────────────────────────────────────
 const filmConfirm = document.getElementById('film-confirm');
-const fcStatus     = document.getElementById('fc-status');
-const fcFields = {
-  title: document.getElementById('fc-title'),
-  year: document.getElementById('fc-year'),
-  director: document.getElementById('fc-director'),
-  imdb_id: document.getElementById('fc-imdb'),
-  tmdb_id: document.getElementById('fc-tmdb'),
-};
+const fcFilms     = document.getElementById('fc-films');
+const fcStatus    = document.getElementById('fc-status');
+const fcStart     = document.getElementById('fc-start');
+const FC_FIELDS = ['title', 'year', 'director', 'imdb_id', 'tmdb_id'];
 
-function fillFilmFields(film) {
+// Step 1: a row per file, each filled in once its upload is staged; they are
+// uploaded one after another. `skipped`: the files that are no film.
+async function beginIdentify(files, skipped = []) {
+  errorArea.style.display = 'none';
+  document.getElementById('history-panel').style.display = 'none';
+  dropZone.style.display = 'none';
+  progressView.style.display = 'none';
+  resultsView.style.display = 'none';
+  fcFilms.querySelectorAll('.fc-film').forEach(row => row.remove());
+  pendingFilms = files.map(addFilm);
+  fcStatus.textContent = skipped.length
+    ? `Not video or audio, left out: ${skipped.map(f => f.name).join(', ')}`
+    : '';
+  updateStart();
+  filmConfirm.style.display = 'block';
+  for (const entry of [...pendingFilms]) {
+    if (pendingFilms.includes(entry)) await stage(entry);   // not removed meanwhile
+  }
+}
+
+function addFilm(file) {
+  const tbody = document.getElementById('fc-film-template').content.firstElementChild.cloneNode(true);
+  const entry = {
+    file,
+    stagingId: null,
+    failed: false,
+    film: {},
+    tbody,
+    fields: Object.fromEntries(FC_FIELDS.map(k => [k, tbody.querySelector(`[data-field="${k}"]`)])),
+    imdbLink: tbody.querySelector('[data-link="imdb_id"]'),
+    tmdbLink: tbody.querySelector('[data-link="tmdb_id"]'),
+    status: tbody.querySelector('.fc-row-status'),
+  };
+  tbody.querySelector('.fc-file').textContent = file.name;
+  entry.fields.imdb_id.addEventListener('input', () => linkFilmIds(entry));
+  entry.fields.tmdb_id.addEventListener('input', () => {
+    // Typed, it may be another film's or series': whether it is a series is unknown.
+    entry.film.media_type = null;
+    linkFilmIds(entry);
+  });
+  entry.fields.year.addEventListener('input', () => markYear(entry));
+  tbody.querySelector('.fc-lookup').addEventListener('click', () => lookUp(entry));
+  tbody.querySelector('.fc-remove').addEventListener('click', () => removeFilm(entry));
+  setEnabled(entry, false);
+  entry.status.textContent = 'Waiting for the files before it…';
+  fcFilms.append(tbody);
+  return entry;
+}
+
+// Stage the film's file and prefill its row from the file's tags.
+async function stage(entry) {
+  entry.status.textContent = 'Uploading file and reading metadata…';
+  const fd = new FormData();
+  fd.append('file', entry.file);
+  try {
+    const res = await fetch('/identify', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    entry.stagingId = data.staging_id;
+    entry.film = data.film || {};
+    fillFilmFields(entry, entry.film);
+    setEnabled(entry, true);
+    entry.status.textContent = entry.film.year
+      ? 'Prefilled from file tags. Please review, especially the year.'
+      : 'No year found in the file tags. Please add it or look it up online.';
+  } catch (err) {
+    entry.failed = true;
+    entry.status.textContent = String(err).includes('404')
+      ? 'Server endpoint /identify is missing. Running an older server version? Please restart the server.'
+      : 'Could not prepare the file. Please remove it, or cancel and try again.';
+  }
+}
+
+function setEnabled(entry, on) {
+  for (const input of Object.values(entry.fields)) input.disabled = !on;
+  entry.tbody.querySelector('.fc-lookup').disabled = !on;
+}
+
+function removeFilm(entry) {
+  entry.tbody.remove();
+  pendingFilms = pendingFilms.filter(e => e !== entry);
+  if (!pendingFilms.length) { showStartPage(); return; }
+  updateStart();
+}
+
+// One film is analyzed on its own, several as a batch.
+function updateStart() {
+  fcStart.textContent = pendingFilms.length > 1
+    ? `Start batch (${pendingFilms.length} films)`
+    : 'Start analysis';
+}
+
+function fillFilmFields(entry, film) {
   film = film || {};
-  fcFields.title.value    = film.title ?? '';
-  fcFields.year.value     = film.year ?? '';
-  fcFields.director.value = film.director ?? '';
-  fcFields.imdb_id.value  = film.imdb_id ?? '';
-  fcFields.tmdb_id.value  = film.tmdb_id ?? '';
-  linkFilmIds();
+  for (const k of FC_FIELDS) entry.fields[k].value = film[k] ?? '';
+  linkFilmIds(entry);
+  markYear(entry);
+}
+
+// The year flags music that came out after the film: a row without one shows.
+function markYear(entry) {
+  entry.tbody.classList.toggle('no-year', !entry.fields.year.value.trim());
 }
 
 // The IMDb and TMDb ID fields link to the pages of the IDs filled in.
-const fcImdbLink = document.getElementById('fc-imdb-link');
-const fcTmdbLink = document.getElementById('fc-tmdb-link');
-
-function linkFilmIds() {
-  const imdb = encodeURIComponent(fcFields.imdb_id.value.trim());
-  const tmdb = encodeURIComponent(fcFields.tmdb_id.value.trim());
+function linkFilmIds(entry) {
+  const imdb = encodeURIComponent(entry.fields.imdb_id.value.trim());
+  const tmdb = encodeURIComponent(entry.fields.tmdb_id.value.trim());
   // A film and a series can have the same TMDb ID.
-  const tmdbPage = pendingFilm.media_type === 'tv' ? 'tv' : 'movie';
-  setHref(fcImdbLink, imdb && `https://www.imdb.com/title/${imdb}/`);
-  setHref(fcTmdbLink, tmdb && `https://www.themoviedb.org/${tmdbPage}/${tmdb}`);
+  const tmdbPage = entry.film.media_type === 'tv' ? 'tv' : 'movie';
+  setHref(entry.imdbLink, imdb && `https://www.imdb.com/title/${imdb}/`);
+  setHref(entry.tmdbLink, tmdb && `https://www.themoviedb.org/${tmdbPage}/${tmdb}`);
 }
 
 function setHref(link, url) {
@@ -42,63 +132,22 @@ function setHref(link, url) {
   else link.removeAttribute('href');
 }
 
-fcFields.imdb_id.addEventListener('input', linkFilmIds);
-fcFields.tmdb_id.addEventListener('input', () => {
-  // Typed, it may be another film's or series': whether it is a series is unknown.
-  pendingFilm.media_type = null;
-  linkFilmIds();
-});
-
-function collectFilmFields() {
-  const yearNum = parseInt(fcFields.year.value, 10);
+function collectFilmFields(entry) {
+  const f = entry.fields;
+  const yearNum = parseInt(f.year.value, 10);
   return {
-    title: fcFields.title.value.trim() || null,
+    title: f.title.value.trim() || null,
     year: Number.isFinite(yearNum) ? yearNum : null,
-    director: fcFields.director.value.trim() || null,
-    imdb_id: fcFields.imdb_id.value.trim() || null,
-    tmdb_id: fcFields.tmdb_id.value.trim() || null,
+    director: f.director.value.trim() || null,
+    imdb_id: f.imdb_id.value.trim() || null,
+    tmdb_id: f.tmdb_id.value.trim() || null,
   };
-}
-
-// Step 1: stage the file and prefill the film form for confirmation.
-function beginIdentify(file) {
-  errorArea.style.display = 'none';
-  document.getElementById('history-panel').style.display = 'none';
-  dropZone.style.display = 'none';
-  progressView.style.display = 'none';
-  resultsView.style.display = 'none';
-  pendingStagingId = null;
-  pendingFilm = {};
-  fillFilmFields(null);
-  fcStatus.textContent = 'Uploading file and reading metadata…';
-  filmConfirm.style.display = 'block';
-
-  const fd = new FormData();
-  fd.append('file', file);
-  fetch('/identify', { method: 'POST', body: fd })
-    .then(res => {
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      return res.json();
-    })
-    .then(data => {
-      pendingStagingId = data.staging_id;
-      pendingFilm = data.film || {};
-      fillFilmFields(pendingFilm);
-      fcStatus.textContent = pendingFilm.year
-        ? 'Prefilled from file tags. Please review, especially the year.'
-        : 'No year found in the file tags. Please add it or look it up online.';
-    })
-    .catch(err => {
-      const stale = String(err).includes('404');
-      fcStatus.textContent = stale
-        ? 'Server endpoint /identify is missing. Running an older server version? Please restart the server.'
-        : 'Could not prepare the file. Please try again.';
-    });
 }
 
 // Optional: find the film online (TMDb, else Wikidata) without re-uploading, and
 // let the user choose among the films found.
 const filmChoose   = document.getElementById('film-choose');
+const fcChooseTitle = document.getElementById('fc-choose-title');
 const fcCandidates = document.getElementById('fc-candidates');
 const FC_FIELD_NAMES = { title: 'Title', year: 'Year', director: 'Director', imdb_id: 'IMDb ID', tmdb_id: 'TMDb ID' };
 const FC_MATCHES = { tmdb_id: 'Matches the TMDb ID', imdb_id: 'Matches the IMDb ID' };
@@ -119,7 +168,28 @@ function fcElement(tag, className, text) {
   return node;
 }
 
-function showCandidates(candidates) {
+function lookUp(entry) {
+  entry.status.textContent = 'Looking up online…';
+  postFilm('/film/search', collectFilmFields(entry))
+    .then(data => {
+      const candidates = data.candidates || [];
+      if (!candidates.length) {
+        entry.status.textContent = 'Nothing found online. Please fill in manually.';
+        return;
+      }
+      entry.status.textContent = 'Choose the film or series.';
+      showCandidates(entry, candidates);
+    })
+    .catch(err => {
+      entry.status.textContent = String(err).includes('404')
+        ? 'Endpoint /film/search is missing. The server is running an older version; please restart.'
+        : 'Online lookup failed.';
+    });
+}
+
+function showCandidates(entry, candidates) {
+  choosingFor = entry;
+  fcChooseTitle.textContent = `Choose the film or series of ${entry.file.name}`;
   fcCandidates.replaceChildren(...candidates.map(c => {
     const poster = c.poster_url
       ? Object.assign(fcElement('img', 'fc-poster'), { src: c.poster_url, alt: '' })
@@ -135,7 +205,7 @@ function showCandidates(candidates) {
     const choice = fcElement('button', 'fc-candidate');
     choice.type = 'button';
     choice.append(poster, text);
-    choice.addEventListener('click', () => chooseFilm(c));
+    choice.addEventListener('click', () => chooseFilm(entry, c));
     const item = document.createElement('li');
     item.append(choice);
     return item;
@@ -143,55 +213,36 @@ function showCandidates(candidates) {
   filmChoose.showModal();
 }
 
-function chooseFilm(c) {
+function chooseFilm(entry, c) {
   filmChoose.close();
-  fcStatus.textContent = 'Looking up the details…';
+  entry.status.textContent = 'Looking up the details…';
   // By its TMDb ID alone, so nothing typed in the form mixes another film in,
   // and whether it is a film's or a series'; a film found without TMDb comes
   // already looked up.
   const film = c.film
     ? Promise.resolve(c.film)
     : postFilm('/film/lookup', { tmdb_id: c.tmdb_id, media_type: c.media_type }).then(data => data.film || {});
-  film.then(applyFilm).catch(() => { fcStatus.textContent = 'Online lookup failed.'; });
+  film.then(f => applyFilm(entry, f)).catch(() => { entry.status.textContent = 'Online lookup failed.'; });
 }
 
-// The chosen film replaces the form and the record, also where it has no value,
+// The chosen film replaces the row and the record, also where it has no value,
 // so nothing of another film stays; the status says what changed.
-function applyFilm(film) {
-  const before = collectFilmFields();
-  pendingFilm = film;
-  fillFilmFields(film);
-  const after = collectFilmFields();
+function applyFilm(entry, film) {
+  const before = collectFilmFields(entry);
+  entry.film = film;
+  fillFilmFields(entry, film);
+  const after = collectFilmFields(entry);
   const shown = v => v == null ? '(empty)' : `"${v}"`;
-  const changes = Object.keys(fcFields)
+  const changes = FC_FIELDS
     .filter(k => String(before[k] ?? '') !== String(after[k] ?? ''))
     .map(k => `${FC_FIELD_NAMES[k]} ${shown(before[k])} → ${shown(after[k])}`);
-  fcStatus.textContent = changes.length
+  entry.status.textContent = changes.length
     ? `Applied. Changed: ${changes.join('; ')}.`
     : 'Applied. Nothing changed.';
 }
 
-document.getElementById('fc-lookup').addEventListener('click', () => {
-  fcStatus.textContent = 'Looking up online…';
-  postFilm('/film/search', collectFilmFields())
-    .then(data => {
-      const candidates = data.candidates || [];
-      if (!candidates.length) {
-        fcStatus.textContent = 'Nothing found online. Please fill in manually.';
-        return;
-      }
-      fcStatus.textContent = 'Choose the film or series.';
-      showCandidates(candidates);
-    })
-    .catch(err => {
-      fcStatus.textContent = String(err).includes('404')
-        ? 'Endpoint /film/search is missing. The server is running an older version; please restart.'
-        : 'Online lookup failed.';
-    });
-});
-
 function cancelChoice() {
-  fcStatus.textContent = 'Nothing chosen; the form is unchanged.';
+  if (choosingFor) choosingFor.status.textContent = 'Nothing chosen; the form is unchanged.';
 }
 document.getElementById('fc-choose-cancel').addEventListener('click', () => {
   filmChoose.close();
@@ -200,14 +251,22 @@ document.getElementById('fc-choose-cancel').addEventListener('click', () => {
 filmChoose.addEventListener('cancel', cancelChoice);  // Escape
 
 document.getElementById('fc-cancel').addEventListener('click', () => {
-  pendingStagingId = null;
-  pendingFilm = {};
+  pendingFilms = [];
   showStartPage();   // with the recent runs, hidden while confirming
 });
 
-document.getElementById('fc-start').addEventListener('click', () => {
-  if (!pendingStagingId) { fcStatus.textContent = 'File not ready yet. Please wait a moment.'; return; }
-  // Check before closing the dialog, so the user can fix settings and retry.
+fcStart.addEventListener('click', () => {
+  if (pendingFilms.some(e => e.failed)) {
+    fcStatus.textContent = 'Please remove the files that could not be prepared.';
+    return;
+  }
+  if (pendingFilms.some(e => !e.stagingId)) {
+    fcStatus.textContent = pendingFilms.length > 1
+      ? 'Files not ready yet. Please wait a moment.'
+      : 'File not ready yet. Please wait a moment.';
+    return;
+  }
+  // Check before closing the table, so the user can fix settings and retry.
   if (selectedProviders().length === 0) {
     alert('Select at least one detection provider in Settings.');
     return;
@@ -222,9 +281,13 @@ document.getElementById('fc-start').addEventListener('click', () => {
   filmConfirm.style.display = 'none';
   // Merge the edited fields over the full retrieved record so nothing extra
   // (e.g. director_death_year) is lost.
-  const film = { ...pendingFilm };
-  for (const [k, v] of Object.entries(collectFilmFields())) film[k] = v;
-  startAnalysis(pendingStagingId, film);
+  const films = pendingFilms.map(e => ({
+    stagingId: e.stagingId,
+    film: { ...e.film, ...collectFilmFields(e) },
+  }));
+  pendingFilms = [];
+  if (films.length === 1) startAnalysis(films[0].stagingId, films[0].film);
+  else startBatch(films);
 });
 
 // Drag & Drop
@@ -242,17 +305,20 @@ function rejectFile() {
   errorArea.style.display = 'block';
 }
 
+// The video and audio files of those chosen; the others are left out.
+function takeFiles(fileList) {
+  const files = Array.from(fileList);
+  const media = files.filter(isMediaFile);
+  if (!media.length) { rejectFile(); return false; }
+  beginIdentify(media, files.filter(f => !isMediaFile(f)));
+  return true;
+}
+
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (!isMediaFile(file)) { rejectFile(); return; }
-  beginIdentify(file);
+  if (e.dataTransfer.files.length) takeFiles(e.dataTransfer.files);
 });
 fileInput.addEventListener('change', () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  if (!isMediaFile(file)) { rejectFile(); fileInput.value = ''; return; }
-  beginIdentify(file);
+  if (fileInput.files.length && !takeFiles(fileInput.files)) fileInput.value = '';
 });

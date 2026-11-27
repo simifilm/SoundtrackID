@@ -291,6 +291,58 @@ footer a { color: inherit; }
 .fc-id-link:not([href]) { display: none; }
 #fc-status { display: block; min-height: 1.1em; margin: 0.75rem 0 0; font-size: 0.8rem; color: #6b7280; }
 .fc-actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.75rem; flex-wrap: wrap; }
+.fc-actions[hidden], .steps[hidden] { display: none; }
+
+/* The films to confirm: a row each, with what became of it under it. */
+.fc-table-wrap { overflow-x: auto; }
+#fc-films { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+#fc-films th {
+  text-align: left; padding: 0 0.3rem 0.3rem; white-space: nowrap;
+  font-size: 0.75rem; color: #7c3aed; font-weight: 600;
+}
+/* Not the results tables' rows: a film's line under its status alone. */
+#fc-films td { padding: 0.3rem 0.3rem 0; vertical-align: middle; border-bottom: none; }
+#fc-films tbody tr:hover td { background: none; }
+#fc-films .fc-status-row td { border-bottom: 1px solid #f5f3ff; }
+.fc-file { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1e1b4b; }
+#fc-films input {
+  width: 100%; border: 1px solid #ddd6fe; border-radius: 7px; padding: 0.4rem 0.55rem;
+  font-size: 0.85rem; color: #1f2937; font-weight: 400;
+}
+#fc-films input:focus { outline: none; border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+#fc-films input:disabled { background: #f9fafb; }
+#fc-films input[data-field="title"] { min-width: 10rem; }
+#fc-films input[data-field="year"] { width: 4.5rem; }
+#fc-films input[data-field="director"] { min-width: 8rem; }
+#fc-films input[data-field="imdb_id"] { min-width: 7.5rem; }
+#fc-films input[data-field="tmdb_id"] { min-width: 6rem; }
+/* The year flags music that came out after the film: one missing shows. */
+.fc-film.no-year input[data-field="year"]:not(:disabled) { border-color: #f59e0b; background: #fffbeb; }
+.fc-row-actions { white-space: nowrap; }
+.fc-row-actions .enrich-btn { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+.fc-remove {
+  background: none; border: none; cursor: pointer; padding: 0.2rem 0.45rem; border-radius: 4px;
+  color: #9ca3af; font-size: 1.1rem; line-height: 1;
+}
+.fc-remove:hover { color: #ef4444; background: #fef2f2; }
+.fc-status-row td { padding-top: 0.15rem; padding-bottom: 0.4rem; }
+.fc-row-status { font-size: 0.78rem; color: #6b7280; }
+
+/* A batch's films, above the progress of the one under way. */
+#batch-queue { margin-bottom: 1.5rem; }
+#batch-heading { margin: 0 0 0.6rem; color: #4c1d95; font-size: 1rem; }
+#batch-films { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+.batch-film {
+  display: flex; align-items: center; gap: 1rem; padding: 0.45rem 0.75rem;
+  border: 1px solid #ede9fe; border-radius: 8px; font-size: 0.85rem; background: #ffffff;
+}
+.batch-film-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1e1b4b; }
+.batch-film-status { font-size: 0.8rem; color: #6b7280; }
+.batch-film.analyzing { border-color: #a78bfa; background: #faf8ff; }
+.batch-film.analyzing .batch-film-status { color: #7c3aed; }
+.batch-film.done .batch-film-status { color: #16a34a; }
+.batch-film.failed .batch-film-status { color: #dc2626; }
+.batch-film button.reset-btn { padding: 0.25rem 0.8rem; font-size: 0.8rem; }
 
 /* Choosing among the films found online. margin: auto centres the dialog,
    which the reset at the top of this file would otherwise pin to the corner. */

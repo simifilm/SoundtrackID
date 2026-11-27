@@ -14,6 +14,9 @@ async function followJobUnderWay() {
   if (!job) return;
   if (job.kind === 'resume') {
     if (await openRun(job.name)) followResume(job.id);
+  } else if (job.kind === 'batch') {
+    showProgress(true);
+    followAnalysis(job.id, handleBatchEvent);
   } else {
     showProgress();
     followAnalysis(job.id);
